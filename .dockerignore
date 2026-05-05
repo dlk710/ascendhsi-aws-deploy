@@ -7,6 +7,12 @@ __pycache__
 *.pyd
 frontend-react/node_modules
 frontend-react/dist
+docs
+tests
+web
+scripts
+deploy/aws/terraform
+.terraform
 data/db
 data/uploads
 data/drive_mirror
