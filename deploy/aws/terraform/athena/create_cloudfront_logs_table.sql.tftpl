@@ -1,0 +1,41 @@
+CREATE EXTERNAL TABLE IF NOT EXISTS cloudfront_access_logs (
+  event_date date,
+  event_time string,
+  edge_location string,
+  response_bytes bigint,
+  client_ip string,
+  method string,
+  host string,
+  uri_stem string,
+  status int,
+  referer string,
+  user_agent string,
+  uri_query string,
+  cookie string,
+  result_type string,
+  request_id string,
+  host_header string,
+  request_protocol string,
+  request_bytes bigint,
+  time_taken double,
+  xforwardedfor string,
+  ssl_protocol string,
+  ssl_cipher string,
+  response_result_type string,
+  http_version string,
+  fle_status string,
+  fle_encrypted_fields int,
+  c_port int,
+  time_to_first_byte double,
+  x_edge_detailed_result_type string,
+  content_type string,
+  content_len bigint,
+  range_start bigint,
+  range_end bigint
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t'
+LOCATION 's3://${logs_bucket}/cloudfront/'
+TBLPROPERTIES (
+  'skip.header.line.count' = '2'
+);

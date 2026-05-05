@@ -1,0 +1,11 @@
+CREATE EXTERNAL TABLE IF NOT EXISTS alb_access_logs_raw (
+  logline string
+)
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.RegexSerDe'
+WITH SERDEPROPERTIES (
+  'input.regex' = '^(.*)$'
+)
+LOCATION 's3://${logs_bucket}/alb/AWSLogs/${account_id}/'
+TBLPROPERTIES (
+  'skip.header.line.count' = '0'
+);

@@ -1,0 +1,11 @@
+{
+  "app_name": "Ascend HSI CaseOS",
+  "database_path": "data/db/ascend_suite.sqlite",
+  "upload_root": "data/uploads",
+  "drive_mirror_root": "data/drive_mirror",
+  "default_client": {
+    "client_id": "client_vas_001",
+    "case_id": "case_eb1a_001",
+    "display_name": "Vas"
+  }
+}

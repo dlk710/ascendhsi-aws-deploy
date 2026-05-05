@@ -1,0 +1,13 @@
+account_id                = "027903151318"
+aws_region                = "us-east-2"
+environment               = "dev"
+frontend_domain           = "app.ascendhsi.com"
+api_domain                = "api.ascendhsi.com"
+storage_bucket_base_name  = "client_data"
+archive_bucket_base_name  = "client_data-archive"
+create_acm_certificates   = false
+create_route53_records    = false
+frontend_certificate_arn  = "arn:aws:acm:us-east-1:027903151318:certificate/replace-me"
+api_certificate_arn       = "arn:aws:acm:us-east-2:027903151318:certificate/replace-me"
+backend_image             = "027903151318.dkr.ecr.us-east-2.amazonaws.com/ascend-dev-backend:latest"
+openai_api_key            = "replace-me"

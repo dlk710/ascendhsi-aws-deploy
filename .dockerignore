@@ -1,0 +1,15 @@
+.DS_Store
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+frontend-react/node_modules
+frontend-react/dist
+data/db
+data/uploads
+data/drive_mirror
+deliverables
+tmp
+*.log

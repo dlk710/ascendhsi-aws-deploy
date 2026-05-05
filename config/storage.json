@@ -1,0 +1,23 @@
+{
+  "enabled": false,
+  "provider": "s3",
+  "bucket": "",
+  "bucket_env": "ASCEND_STORAGE_BUCKET",
+  "archive_bucket": "",
+  "archive_bucket_env": "ASCEND_ARCHIVE_BUCKET",
+  "region": "",
+  "region_env": "AWS_REGION",
+  "endpoint_url": "",
+  "endpoint_url_env": "AWS_S3_ENDPOINT_URL",
+  "public_base_url": "",
+  "public_base_url_env": "ASCEND_STORAGE_PUBLIC_BASE_URL",
+  "key_prefix": "active",
+  "archive_prefix": "archive",
+  "active_storage_class": "INTELLIGENT_TIERING",
+  "archive_storage_class": "GLACIER_IR",
+  "url_ttl_seconds": 3600,
+  "server_side_encryption": "AES256",
+  "server_side_encryption_env": "ASCEND_S3_SERVER_SIDE_ENCRYPTION",
+  "kms_key_id": "",
+  "kms_key_id_env": "ASCEND_S3_KMS_KEY_ID"
+}

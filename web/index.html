@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ascend HSI Member Portal</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">Ascend HSI <span>CaseOS</span></div>
+      <nav>
+        <a class="active" href="/">Member Portal</a>
+        <a aria-disabled="true">Builder Portal</a>
+        <a aria-disabled="true">Attorney Portal</a>
+      </nav>
+      <p class="muted">Focused member workflow for evidence upload and tracking.</p>
+    </aside>
+
+    <main>
+      <header class="hero">
+        <p class="eyebrow">Member Portal</p>
+        <h1 id="welcome">Welcome Vas.</h1>
+        <p>Upload EB1A evidence by USCIS category, track readiness, and prepare evidence for profile builder review.</p>
+      </header>
+
+      <section class="metrics" id="metrics"></section>
+
+      <section class="grid">
+        <form id="upload-form" class="panel">
+          <div class="panel-head">
+            <h2>Upload Evidence</h2>
+            <span class="badge">Secure upload</span>
+          </div>
+          <label>
+            Criterion
+            <select name="criterion_code" id="criterion-select" required></select>
+          </label>
+          <label>
+            Evidence title
+            <input name="title" required placeholder="IEEE reviewer invitation" />
+          </label>
+          <label>
+            Description
+            <textarea name="description" placeholder="Add context the builder or attorney should know"></textarea>
+          </label>
+          <label>
+            File
+            <input name="file" type="file" required />
+          </label>
+          <button type="submit">Upload Evidence</button>
+          <p id="upload-status" class="status-line"></p>
+        </form>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Evidence By Criterion</h2>
+            <span class="badge">Live progress</span>
+          </div>
+          <div id="criteria-list" class="criteria-list"></div>
+        </section>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Uploaded Evidence By Category</h2>
+          <input id="search" class="search" placeholder="Search evidence..." />
+        </div>
+        <div id="evidence-list" class="evidence-list"></div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
