@@ -1343,6 +1343,36 @@ function SupportPanel({
   );
 }
 
+function PortalHydrationNotice({ title = "Loading latest portal data", detail = "The workspace is available while Ascend refreshes the live case data." }) {
+  return (
+    <section className="panel portal-hydration-panel" aria-live="polite">
+      <div>
+        <div className="section-kicker">Loading</div>
+        <h3 className="section-title">{title}</h3>
+        <p className="section-intro">{detail}</p>
+      </div>
+      <div className="portal-skeleton-lines" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+    </section>
+  );
+}
+
+function emptyMemberDashboard(member, criteria = []) {
+  return {
+    client: { display_name: member?.display_name || "Member" },
+    metrics: {
+      readiness_score: 0,
+      evidence_count: 0,
+      open_tasks: 0,
+      criteria_started: 0,
+    },
+    criteria,
+  };
+}
+
 function App() {
   const [authMode, setAuthMode] = useState(readStoredMember()?.role || "member");
   const [authReady, setAuthReady] = useState(false);
@@ -1350,6 +1380,7 @@ function App() {
   const [builderDashboard, setBuilderDashboard] = useState(null);
   const [builderMembers, setBuilderMembers] = useState([]);
   const [builderMemberDetail, setBuilderMemberDetail] = useState(null);
+  const [memberDetailLoading, setMemberDetailLoading] = useState(false);
   const [builderOpportunities, setBuilderOpportunities] = useState([]);
   const [selectedBuilderMemberId, setSelectedBuilderMemberId] = useState("");
   const [builderTaskForm, setBuilderTaskForm] = useState({ opportunity_id: "", title: "", description: "", criterion_code: "", due_date: "" });
@@ -2212,14 +2243,21 @@ function App() {
   }, [plannerItems]);
   useEffect(() => {
     if (!["builder", "leader", "attorney", "admin"].includes(authMember?.role) || !selectedBuilderMemberId) return;
+    if (loading || builderMemberDetail?.member?.client_id === selectedBuilderMemberId) return;
+    let active = true;
     const path = authMember?.role === "attorney" ? `/api/attorney/members/${selectedBuilderMemberId}` : `/api/builder/members/${selectedBuilderMemberId}`;
     const params = authMember?.role === "attorney" ? { attorney_email: authMember?.email || "" } : undefined;
+    setMemberDetailLoading(true);
     getJson(path, params).then((detail) => {
+      if (!active) return;
       setBuilderMemberDetail(detail);
       if (authMember?.role === "attorney") setProfile(detail.profile || null);
       if (["attorney", "leader"].includes(authMember?.role)) loadAttorneyEvidence(selectedBuilderMemberId);
-    }).catch(() => {});
-  }, [selectedBuilderMemberId, authMember?.role]);
+    }).catch(() => {}).finally(() => {
+      if (active) setMemberDetailLoading(false);
+    });
+    return () => { active = false; };
+  }, [selectedBuilderMemberId, authMember?.role, authMember?.email, loading, builderMemberDetail?.member?.client_id]);
   useEffect(() => {
     if (authMember?.role !== "attorney" || portalSection !== "petition" || !selectedBuilderMemberId) return;
     loadAttorneyPetition(selectedBuilderMemberId);
@@ -3025,13 +3063,7 @@ function App() {
     }
   }
 
-  const waitingForBuilderPortal = authMember?.role === "builder" && (loading || !builderDashboard);
-  const waitingForLeaderPortal = authMember?.role === "leader" && (loading || !builderDashboard);
-  const waitingForAttorneyPortal = authMember?.role === "attorney" && (loading || !dashboard || !builderMemberDetail);
-  const waitingForAdminPortal = authMember?.role === "admin" && (loading || !adminDashboard);
-  const waitingForMemberPortal = authMember?.role === "member" && (loading || !dashboard);
-
-  if (!authReady || loading || waitingForBuilderPortal || waitingForLeaderPortal || waitingForAttorneyPortal || waitingForAdminPortal || waitingForMemberPortal) {
+  if (!authReady) {
     return <main className="shell auth-shell"><div className="loading">Loading Ascend portal...</div></main>;
   }
 
@@ -3069,6 +3101,9 @@ function App() {
   }
 
   const selectedCriterion = dashboard?.criteria?.find((item) => item.code === view.criterionCode);
+  const memberDashboard = dashboard || emptyMemberDashboard(authMember, criteriaList);
+  const portalHydrating = Boolean(authMember && loading);
+  const selectedMemberHydrating = memberDetailLoading && Boolean(selectedBuilderMemberId);
   const memberInitials = `${(authMember.display_name || "M").slice(0, 1)}${(profile?.last_name || "").slice(0, 1)}`.toUpperCase();
   const portalTitle = authMember.role === "leader" ? "Leader Portal" : authMember.role === "attorney" ? "Attorney Portal" : authMember.role === "admin" ? "Admin Portal" : authMember.role === "builder" ? "Profile Builder Portal" : "Member Portal";
   const isLeaderExecutiveView = authMember.role === "leader" && leaderPerspective === "leader";
@@ -3430,6 +3465,18 @@ function App() {
                 </form>
               </section>
             </div>
+          ) : null}
+
+          {portalHydrating ? (
+            <PortalHydrationNotice
+              title={isLeaderExecutiveView ? "Loading leader workspace" : "Loading profile builder workspace"}
+              detail="The portal shell is ready while roster, opportunity, criteria, and selected member data refresh."
+            />
+          ) : selectedMemberHydrating ? (
+            <PortalHydrationNotice
+              title="Refreshing selected member"
+              detail="The current workspace stays available while Ascend loads the selected member detail."
+            />
           ) : null}
 
           {portalSection === "messages" ? (
@@ -4001,6 +4048,18 @@ function App() {
             </div>
           ) : null}
 
+          {portalHydrating ? (
+            <PortalHydrationNotice
+              title="Loading attorney workspace"
+              detail="Caseboard, criteria, selected member detail, and evidence are refreshing while the attorney shell stays usable."
+            />
+          ) : selectedMemberHydrating ? (
+            <PortalHydrationNotice
+              title="Refreshing selected case"
+              detail="The member-specific legal workspace will update as soon as the selected case data returns."
+            />
+          ) : null}
+
           {portalSection === "messages" ? (
             <React.Fragment>
               <header className="hero">
@@ -4418,6 +4477,13 @@ function App() {
               </div>
             </div>
 
+            {portalHydrating ? (
+              <PortalHydrationNotice
+                title="Loading admin workspace"
+                detail="Operations metrics, support tickets, health data, and member diagnostics are refreshing while the admin shell stays available."
+              />
+            ) : null}
+
             {portalSection === "messages" ? (
               <React.Fragment>
                 <header className="hero">
@@ -4695,14 +4761,14 @@ function App() {
           }}
         />
         <div className="side-card">
-          <strong>Welcome {dashboard.client.display_name}</strong>
+          <strong>Welcome {memberDashboard.client.display_name}</strong>
           <p>Your portal is focused only on evidence intake, organization, and next steps.</p>
         </div>
         <div className="side-card">
           <strong>At a glance</strong>
-          <p>Readiness: {dashboard.metrics.readiness_score}%</p>
-          <p>Evidence items: {dashboard.metrics.evidence_count}</p>
-          <p>Criteria started: {dashboard.metrics.criteria_started}</p>
+          <p>Readiness: {memberDashboard.metrics.readiness_score}%</p>
+          <p>Evidence items: {memberDashboard.metrics.evidence_count}</p>
+          <p>Criteria started: {memberDashboard.metrics.criteria_started}</p>
         </div>
         {profile ? (
           <div className="side-card">
@@ -4742,11 +4808,18 @@ function App() {
           </div>
         </div>
 
+        {portalHydrating ? (
+          <PortalHydrationNotice
+            title="Loading member workspace"
+            detail="Your member portal is open while evidence, planner, profile, and criteria data refresh in the background."
+          />
+        ) : null}
+
         {view.type === "home" ? (
           <React.Fragment>
             <header className="hero">
               <p className="eyebrow">Member Portal</p>
-              <h1>Welcome {dashboard.client.display_name}.</h1>
+              <h1>Welcome {memberDashboard.client.display_name}.</h1>
               <p>Capture evidence, let AI help classify and summarize it, and keep every criterion organized for the next phase of your EB1A journey.</p>
               <div className="hero-chips">
                 <span className="hero-chip">AI-assisted intake</span>
@@ -4756,10 +4829,10 @@ function App() {
             </header>
 
             <section className="metrics-grid">
-              <MetricCard label="Readiness" value={`${dashboard.metrics.readiness_score}%`} />
-              <MetricCard label="Evidence items" value={dashboard.metrics.evidence_count} />
-              <MetricCard label="Open tasks" value={dashboard.metrics.open_tasks} />
-              <MetricCard label="Criteria started" value={dashboard.metrics.criteria_started} />
+              <MetricCard label="Readiness" value={`${memberDashboard.metrics.readiness_score}%`} />
+              <MetricCard label="Evidence items" value={memberDashboard.metrics.evidence_count} />
+              <MetricCard label="Open tasks" value={memberDashboard.metrics.open_tasks} />
+              <MetricCard label="Criteria started" value={memberDashboard.metrics.criteria_started} />
             </section>
           </React.Fragment>
         ) : null}
@@ -4803,7 +4876,7 @@ function App() {
               <h3 className="section-title">Evidence By Criterion</h3>
               <p className="section-intro">Open a category to organize files, review summaries, search folders, and keep evidence easy to retrieve.</p>
               <div className="criteria-grid">
-                {dashboard.criteria.map((criterion) => <CriterionCard key={criterion.code} item={criterion} onOpen={(code) => setView({ type: "workspace", criterionCode: code })} />)}
+                {memberDashboard.criteria.map((criterion) => <CriterionCard key={criterion.code} item={criterion} onOpen={(code) => setView({ type: "workspace", criterionCode: code })} />)}
               </div>
             </section>
           </React.Fragment>
@@ -4839,7 +4912,7 @@ function App() {
                     <input value={row.issued_by} onChange={(event) => setPlannerRowField(row.id, "issued_by", event.target.value)} placeholder="IEEE, conference, journal, university" />
                     <select value={row.criterion_code} onChange={(event) => setPlannerRowField(row.id, "criterion_code", event.target.value)}>
                       <option value="">Choose category</option>
-                      {dashboard.criteria.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}
+                      {memberDashboard.criteria.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}
                     </select>
                     <input type="date" value={row.planned_completion_date || ""} onChange={(event) => setPlannerRowField(row.id, "planned_completion_date", event.target.value)} />
                     <select value={row.status || "planned"} onChange={(event) => setPlannerRowField(row.id, "status", event.target.value)}>
@@ -4890,7 +4963,7 @@ function App() {
                     <label>
                       Category
                       <select value={manualCategory} onChange={(event) => setManualCategory(event.target.value)}>
-                        {dashboard.criteria.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}
+                        {memberDashboard.criteria.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}
                       </select>
                     </label>
                     <label>
@@ -4925,7 +4998,7 @@ function App() {
                       <label>
                         Choose category
                         <select value={overrideCategory} onChange={(event) => setOverrideCategory(event.target.value)}>
-                          {dashboard.criteria.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}
+                          {memberDashboard.criteria.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}
                         </select>
                       </label>
                       <label>
