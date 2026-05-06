@@ -27,6 +27,21 @@ def service() -> EvidenceService:
     return EvidenceService()
 
 
+@app.get("/")
+def root() -> dict:
+    return {
+        "ok": True,
+        "service": "ascend-suite-api",
+        "message": "Ascend API is running. This endpoint is the backend API origin, not the product suite web UI.",
+        "endpoints": {
+            "health": "/health",
+            "readiness": "/ready",
+            "docs": "/docs",
+            "openapi": "/openapi.json",
+        },
+    }
+
+
 @app.get("/health")
 def health() -> dict:
     return {"ok": True, "service": "ascend-suite-api"}
