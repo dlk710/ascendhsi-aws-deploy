@@ -13,7 +13,7 @@ resource "aws_lb" "api" {
 
   access_logs {
     bucket  = aws_s3_bucket.logs.id
-    prefix  = "alb/AWSLogs/${local.account_id}"
+    prefix  = "alb"
     enabled = true
   }
 
@@ -39,7 +39,22 @@ resource "aws_lb_target_group" "api" {
   tags = local.tags
 }
 
-resource "aws_lb_listener" "http" {
+resource "aws_lb_listener" "http_forward" {
+  count = local.api_certificate == "" ? 1 : 0
+
+  load_balancer_arn = aws_lb.api.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.api.arn
+  }
+}
+
+resource "aws_lb_listener" "http_redirect" {
+  count = local.api_certificate != "" ? 1 : 0
+
   load_balancer_arn = aws_lb.api.arn
   port              = 80
   protocol          = "HTTP"
@@ -56,6 +71,8 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_lb_listener" "https" {
+  count = local.api_certificate != "" ? 1 : 0
+
   load_balancer_arn = aws_lb.api.arn
   port              = 443
   protocol          = "HTTPS"
@@ -77,16 +94,12 @@ resource "aws_ecs_task_definition" "backend" {
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "ARM64"
+  }
+
   container_definitions = jsonencode([
-    {
-      name      = "log-router"
-      image     = "public.ecr.aws/aws-observability/aws-for-fluent-bit:stable"
-      essential = true
-      firelensConfiguration = {
-        type = "fluentbit"
-      }
-      memoryReservation = 64
-    },
     {
       name      = "backend"
       image     = local.backend_image
@@ -104,6 +117,7 @@ resource "aws_ecs_task_definition" "backend" {
         { name = "ASCEND_UPLOAD_ROOT", value = "/tmp/ascend/uploads" },
         { name = "ASCEND_MIRROR_ROOT", value = "/tmp/ascend/mirror" },
         { name = "ASCEND_CORS_ORIGINS", value = join(",", local.cors_origins) },
+        { name = "ASCEND_S3_ENABLED", value = "true" },
         { name = "ASCEND_STORAGE_BUCKET", value = aws_s3_bucket.storage.id },
         { name = "ASCEND_ARCHIVE_BUCKET", value = aws_s3_bucket.archive.id },
         { name = "ASCEND_STORAGE_PUBLIC_BASE_URL", value = "" },
@@ -111,10 +125,7 @@ resource "aws_ecs_task_definition" "backend" {
         { name = "ASCEND_API_DOMAIN", value = var.api_domain },
         { name = "AWS_REGION", value = var.aws_region },
       ]
-      secrets = [
-        { name = "ASCEND_DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
-        { name = "OPENAI_API_KEY", valueFrom = aws_secretsmanager_secret.openai_api_key.arn },
-      ]
+      secrets = local.backend_secrets
       command = [
         "uvicorn",
         "app.api:app",
@@ -123,15 +134,6 @@ resource "aws_ecs_task_definition" "backend" {
         "--port",
         "8000",
       ]
-      logConfiguration = {
-        logDriver = "awsfirelens"
-        options = {
-          Name                      = "firehose"
-          region                    = var.aws_region
-          delivery_stream           = aws_kinesis_firehose_delivery_stream.application_logs.name
-          "log-driver-buffer-limit" = "2097152"
-        }
-      }
     },
   ])
 
@@ -157,7 +159,11 @@ resource "aws_ecs_service" "backend" {
     container_port   = 8000
   }
 
-  depends_on = [aws_lb_listener.https]
+  depends_on = [
+    aws_lb_listener.http_forward,
+    aws_lb_listener.http_redirect,
+    aws_lb_listener.https,
+  ]
 
   tags = local.tags
 }

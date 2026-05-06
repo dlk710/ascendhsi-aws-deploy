@@ -17,7 +17,7 @@ This folder contains deployment-ready scaffolding for running the Ascend product
 - `frontend.env.example`
   - example frontend environment variables
 - `terraform/`
-  - AWS infrastructure as code for ECS, RDS PostgreSQL, S3, Athena, Firehose, ALB, CloudFront, ECR, and Secrets Manager
+  - AWS infrastructure as code for ECS, RDS PostgreSQL, S3, Athena, ALB, CloudFront, ECR, and Secrets Manager
 
 ## Target AWS Shape
 
@@ -32,7 +32,7 @@ This folder contains deployment-ready scaffolding for running the Ascend product
 - Secrets:
   - AWS Secrets Manager
 - Monitoring:
-  - Athena-first log analysis over S3, with backend logs routed by FireLens + Firehose
+  - Athena-first log analysis over S3, starting with ALB and CloudFront logs
 
 ## Notes
 

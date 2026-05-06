@@ -32,13 +32,6 @@ resource "aws_athena_named_query" "create_alb_access_logs_table" {
   query     = templatefile("${path.module}/athena/create_alb_access_logs_table.sql.tftpl", { logs_bucket = aws_s3_bucket.logs.id, account_id = local.account_id })
 }
 
-resource "aws_athena_named_query" "create_backend_application_logs_table" {
-  name      = "create_backend_application_logs_table"
-  database  = aws_athena_database.observability.name
-  workgroup = aws_athena_workgroup.observability.name
-  query     = templatefile("${path.module}/athena/create_backend_application_logs_table.sql.tftpl", { logs_bucket = aws_s3_bucket.logs.id })
-}
-
 resource "aws_athena_named_query" "recent_alb_5xx" {
   name      = "recent_alb_5xx"
   database  = aws_athena_database.observability.name

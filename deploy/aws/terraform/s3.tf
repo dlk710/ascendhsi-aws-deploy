@@ -255,27 +255,6 @@ data "aws_iam_policy_document" "logs_bucket_policy" {
     ]
   }
 
-  statement {
-    sid = "AllowFirehoseWrite"
-
-    principals {
-      type        = "AWS"
-      identifiers = [aws_iam_role.firehose_delivery.arn]
-    }
-
-    actions = [
-      "s3:AbortMultipartUpload",
-      "s3:GetBucketLocation",
-      "s3:ListBucket",
-      "s3:ListBucketMultipartUploads",
-      "s3:PutObject",
-    ]
-
-    resources = [
-      aws_s3_bucket.logs.arn,
-      "${aws_s3_bucket.logs.arn}/application/*",
-    ]
-  }
 }
 
 resource "aws_s3_bucket_policy" "logs" {

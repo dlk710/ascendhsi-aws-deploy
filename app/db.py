@@ -1,5 +1,6 @@
 import sqlite3
 from pathlib import Path
+import re
 from typing import Any
 
 from app.config import AppConfig
@@ -426,6 +427,11 @@ class ConnectionAdapter:
         normalized = query
         if self.driver == "postgres":
             normalized = normalized.replace("CURRENT_TIMESTAMP", "(CURRENT_TIMESTAMP::text)")
+            normalized = normalized.replace("datetime('now', '-30 day')", "((CURRENT_TIMESTAMP - INTERVAL '30 days')::text)")
+            normalized = normalized.replace("datetime('now', '-14 day')", "((CURRENT_TIMESTAMP - INTERVAL '14 days')::text)")
+            normalized = normalized.replace("datetime('now', '-1 day')", "((CURRENT_TIMESTAMP - INTERVAL '1 day')::text)")
+            normalized = normalized.replace("%", "%%")
+            normalized = re.sub(r"(?<!:):([A-Za-z_][A-Za-z0-9_]*)", r"%(\1)s", normalized)
             normalized = normalized.replace("?", "%s")
         return normalized
 

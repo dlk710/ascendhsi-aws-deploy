@@ -14,7 +14,6 @@ This Terraform stack is the AWS deployment baseline for the separate `ascend-aws
   - archived uploads
   - operational logs
   - Athena query results
-- Amazon Data Firehose for backend log delivery into S3
 - Amazon Athena workgroup, database, and starter named queries
 - AWS Secrets Manager secrets for:
   - `ASCEND_DATABASE_URL`
@@ -25,7 +24,6 @@ This Terraform stack is the AWS deployment baseline for the separate `ascend-aws
 
 This stack is Athena-first for cost control:
 
-- backend logs land in S3 through FireLens + Firehose
 - ALB logs land in S3 directly
 - CloudFront logs land in S3 directly
 - Athena is used for analysis and saved queries

@@ -32,8 +32,6 @@ This document describes the AWS shape for deploying the Ascend product suite aft
   - stores `OPENAI_API_KEY` and any private application secrets
 - Amazon Athena
   - ad hoc and saved SQL analysis for ALB, CloudFront, and backend log data in S3
-- Amazon Data Firehose
-  - receives backend container logs from ECS FireLens and stores them in S3
 
 ### Strongly Recommended
 
@@ -72,9 +70,6 @@ This deployment repo intentionally avoids building a CloudWatch-centered monitor
 
 ### What Gets Logged
 
-- backend container logs
-  - routed from ECS through FireLens into Amazon Data Firehose
-  - delivered into S3 for Athena queries
 - Application Load Balancer access logs
   - delivered directly into S3
 - CloudFront access logs

@@ -36,7 +36,7 @@ class EvidenceService:
             self.config.drive_mirror_root,
             S3StorageClient(self.storage_config),
         )
-        self.conn = connect(self.config.database_path)
+        self.conn = connect(self.config)
         initialize(self.conn)
         seed_default_case(
             self.conn,
@@ -59,6 +59,15 @@ class EvidenceService:
             {"role": "leader", "key": "jonathan.price@ascendhsi.com", "name": "Jonathan Price", "email": "jonathan.price@ascendhsi.com"},
             {"role": "admin", "key": "admin@ascendhsi.com", "name": "Maya Thompson", "email": "admin@ascendhsi.com"},
         ]
+
+    def _database_driver(self) -> str:
+        return getattr(self.conn, "driver", "sqlite")
+
+    def _insert_ignore(self, sqlite_sql: str, postgres_sql: str, params: tuple) -> None:
+        self.conn.execute(postgres_sql if self._database_driver() == "postgres" else sqlite_sql, params)
+
+    def _stable_id(self, prefix: str, value: str) -> str:
+        return f"{prefix}_{hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]}"
 
     def _actor_identity(self, role: str, actor_email: str = "", actor_client_id: str = "") -> dict:
         role = role.strip().lower()
@@ -3995,10 +4004,15 @@ class EvidenceService:
                 self.conn.commit()
             return
         first_name, _, last_name = client["display_name"].partition(" ")
-        self.conn.execute(
+        self._insert_ignore(
+            """
+            INSERT OR IGNORE INTO member_profiles(client_id, case_id, first_name, last_name, preferred_name, email)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
             """
             INSERT INTO member_profiles(client_id, case_id, first_name, last_name, preferred_name, email)
             VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING
             """,
             (
                 client["client_id"],
@@ -4031,11 +4045,16 @@ class EvidenceService:
                 self.conn.commit()
             return
         profile = self.member_profile()
-        account_id = f"acct_{uuid.uuid4().hex[:12]}"
-        self.conn.execute(
+        account_id = self._stable_id("acct", f"{client['client_id']}:{client['case_id']}")
+        self._insert_ignore(
+            """
+            INSERT OR IGNORE INTO member_accounts(id, client_id, case_id, username, email, password_hash, last_password_changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
             """
             INSERT INTO member_accounts(id, client_id, case_id, username, email, password_hash, last_password_changed_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING
             """,
             (
                 account_id,
@@ -4060,23 +4079,33 @@ class EvidenceService:
         }
 
     def _ensure_default_builder(self) -> None:
-        existing = one(self.conn, "SELECT id FROM profile_builders LIMIT 1")
-        if existing:
+        builder = one(self.conn, "SELECT * FROM profile_builders ORDER BY created_at LIMIT 1")
+        if not builder:
+            builder_id = self._stable_id("bld", "builder@ascendhsi.com")
+            self._insert_ignore(
+                "INSERT OR IGNORE INTO profile_builders(id, display_name, email) VALUES (?, ?, ?)",
+                "INSERT INTO profile_builders(id, display_name, email) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+                (builder_id, "Ava Morales", "builder@ascendhsi.com"),
+            )
+            builder = one(self.conn, "SELECT * FROM profile_builders WHERE id = ?", (builder_id,)) or self.default_builder()
+        account = one(self.conn, "SELECT id FROM profile_builder_accounts WHERE username = ?", ("builder@ascendhsi.com",))
+        if account:
+            self.conn.commit()
             return
-        builder_id = f"bld_{uuid.uuid4().hex[:12]}"
-        account_id = f"bact_{uuid.uuid4().hex[:12]}"
-        self.conn.execute(
-            "INSERT INTO profile_builders(id, display_name, email) VALUES (?, ?, ?)",
-            (builder_id, "Ava Morales", "builder@ascendhsi.com"),
-        )
-        self.conn.execute(
+        account_id = self._stable_id("bact", "builder@ascendhsi.com")
+        self._insert_ignore(
+            """
+            INSERT OR IGNORE INTO profile_builder_accounts(id, builder_id, username, email, password_hash, last_password_changed_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
             """
             INSERT INTO profile_builder_accounts(id, builder_id, username, email, password_hash, last_password_changed_at)
             VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING
             """,
             (
                 account_id,
-                builder_id,
+                builder["id"],
                 "builder@ascendhsi.com",
                 "builder@ascendhsi.com",
                 self._hash_password(DEFAULT_MEMBER_PASSWORD),
@@ -4095,12 +4124,18 @@ class EvidenceService:
         )
         if existing:
             return
-        self.conn.execute(
+        assignment_id = self._stable_id("asg", f"{builder['builder_id']}:{client['client_id']}:{client['case_id']}")
+        self._insert_ignore(
+            """
+            INSERT OR IGNORE INTO builder_member_assignments(id, builder_id, client_id, case_id, status)
+            VALUES (?, ?, ?, ?, 'active')
+            """,
             """
             INSERT INTO builder_member_assignments(id, builder_id, client_id, case_id, status)
             VALUES (?, ?, ?, ?, 'active')
+            ON CONFLICT DO NOTHING
             """,
-            (f"asg_{uuid.uuid4().hex[:12]}", builder["builder_id"], client["client_id"], client["case_id"]),
+            (assignment_id, builder["builder_id"], client["client_id"], client["case_id"]),
         )
         self.conn.commit()
 
@@ -4114,9 +4149,11 @@ class EvidenceService:
             existing = one(self.conn, "SELECT id FROM attorneys WHERE email = ?", (email,))
             if existing:
                 continue
-            self.conn.execute(
-                "INSERT INTO attorneys(id, display_name, email, focus_domains) VALUES (?, ?, ?, ?)",
-                (f"att_{uuid.uuid4().hex[:12]}", display_name, email, focus_domains),
+            attorney_id = self._stable_id("att", email.strip().lower())
+            self._insert_ignore(
+                "INSERT OR IGNORE INTO attorneys(id, display_name, email, focus_domains) VALUES (?, ?, ?, ?)",
+                "INSERT INTO attorneys(id, display_name, email, focus_domains) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                (attorney_id, display_name, email, focus_domains),
             )
         self.conn.commit()
 
@@ -4127,15 +4164,25 @@ class EvidenceService:
         for user in self._system_users():
             accounts.append((user["role"], user["key"], user["email"].strip().lower()))
         for role, actor_key, email in accounts:
-            existing = one(self.conn, "SELECT id FROM staff_accounts WHERE role = ? AND actor_key = ?", (role, actor_key))
+            existing = one(
+                self.conn,
+                "SELECT id FROM staff_accounts WHERE username = ? OR (role = ? AND actor_key = ?)",
+                (email, role, actor_key),
+            )
             if existing:
                 continue
-            self.conn.execute(
+            staff_id = self._stable_id("staff", f"{role}:{actor_key}")
+            self._insert_ignore(
+                """
+                INSERT OR IGNORE INTO staff_accounts(id, role, actor_key, username, email, password_hash, last_password_changed_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
                 """
                 INSERT INTO staff_accounts(id, role, actor_key, username, email, password_hash, last_password_changed_at)
                 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT DO NOTHING
                 """,
-                (f"staff_{uuid.uuid4().hex[:12]}", role, actor_key, email, email, self._hash_password(DEFAULT_MEMBER_PASSWORD)),
+                (staff_id, role, actor_key, email, email, self._hash_password(DEFAULT_MEMBER_PASSWORD)),
             )
         self.conn.commit()
 
@@ -4151,12 +4198,18 @@ class EvidenceService:
         attorney = one(self.conn, "SELECT * FROM attorneys ORDER BY created_at LIMIT 1")
         if not attorney:
             return
-        self.conn.execute(
+        assignment_id = self._stable_id("aat", f"{attorney['id']}:{client['client_id']}:{client['case_id']}")
+        self._insert_ignore(
+            """
+            INSERT OR IGNORE INTO attorney_member_assignments(id, attorney_id, client_id, case_id, status)
+            VALUES (?, ?, ?, ?, 'active')
+            """,
             """
             INSERT INTO attorney_member_assignments(id, attorney_id, client_id, case_id, status)
             VALUES (?, ?, ?, ?, 'active')
+            ON CONFLICT DO NOTHING
             """,
-            (f"aat_{uuid.uuid4().hex[:12]}", attorney["id"], client["client_id"], client["case_id"]),
+            (assignment_id, attorney["id"], client["client_id"], client["case_id"]),
         )
         self.conn.commit()
 
@@ -4172,12 +4225,18 @@ class EvidenceService:
             existing = one(self.conn, "SELECT id FROM opportunity_library WHERE criterion_code = ? AND title = ?", (criterion_code, title))
             if existing:
                 continue
-            self.conn.execute(
+            opportunity_id = self._stable_id("opp", f"{criterion_code}:{title}")
+            self._insert_ignore(
+                """
+                INSERT OR IGNORE INTO opportunity_library(id, criterion_code, title, description, target_evidence_type, suggested_due_days, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'active')
+                """,
                 """
                 INSERT INTO opportunity_library(id, criterion_code, title, description, target_evidence_type, suggested_due_days, status)
                 VALUES (?, ?, ?, ?, ?, ?, 'active')
+                ON CONFLICT DO NOTHING
                 """,
-                (f"opp_{uuid.uuid4().hex[:12]}", criterion_code, title, description, doc_type, due_days),
+                (opportunity_id, criterion_code, title, description, doc_type, due_days),
             )
         self.conn.commit()
 

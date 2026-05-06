@@ -1,5 +1,6 @@
 {
   "enabled": false,
+  "enabled_env": "ASCEND_S3_ENABLED",
   "provider": "s3",
   "bucket": "",
   "bucket_env": "ASCEND_STORAGE_BUCKET",

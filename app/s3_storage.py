@@ -17,7 +17,13 @@ class S3StorageClient:
 
     @property
     def enabled(self) -> bool:
-        return bool(self.config.get("enabled")) and bool(self.bucket_name())
+        env_name = self.config.get("enabled_env", "ASCEND_S3_ENABLED")
+        raw_enabled = os.environ.get(env_name, "").strip().lower()
+        if raw_enabled:
+            enabled = raw_enabled in {"1", "true", "yes", "on"}
+        else:
+            enabled = bool(self.config.get("enabled"))
+        return enabled and bool(self.bucket_name())
 
     def bucket_name(self) -> str:
         env_name = self.config.get("bucket_env", "ASCEND_STORAGE_BUCKET")

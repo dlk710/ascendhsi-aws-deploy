@@ -108,6 +108,7 @@ variable "openai_api_key" {
   description = "OpenAI API key stored in Secrets Manager for the backend runtime."
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 variable "db_name" {
@@ -137,7 +138,7 @@ variable "db_allocated_storage" {
 variable "db_engine_version" {
   description = "PostgreSQL engine version."
   type        = string
-  default     = "16.4"
+  default     = "16.13"
 }
 
 variable "database_ssl_mode" {
@@ -167,7 +168,7 @@ variable "backend_memory" {
 variable "health_check_path" {
   description = "Backend target group health check path."
   type        = string
-  default     = "/ready"
+  default     = "/health"
 }
 
 variable "signed_url_ttl_seconds" {
