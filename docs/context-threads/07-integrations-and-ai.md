@@ -4,20 +4,21 @@
 
 This thread preserves the external integrations and AI behavior required for the Ascend suite to function.
 
-## Google Drive
+## Amazon S3 Storage
 
-The current suite uses Google Drive instead of local-only storage or production cloud object storage.
+The current AWS suite uses Amazon S3 for active evidence storage and archive routing.
 
 ### Current behavior
 
-- evidence uploads go to Google Drive
-- evidence path structure is organized by client, case, criterion, and evidence id
+- evidence uploads go to a private active S3 bucket
+- archive flows move or route records toward archive storage
+- object-key structure is organized by client, case, criterion, and evidence id
 - delete behavior should archive rather than physically remove the file
-- archive must preserve directory structure
+- archive must preserve retrievable evidence identity and folder context
 
 ### Product rule
 
-Member-facing UI should not talk about Google Drive, archive storage, or backend implementation details.
+Member-facing UI should not talk about S3, archive storage classes, signed URL mechanics, or backend implementation details.
 
 ## OpenAI
 
@@ -47,12 +48,13 @@ Fallback behavior is required whenever AI is unavailable, slow, or rate-limited.
 
 Current app model:
 
-- React frontend on `3000`
-- FastAPI backend on `8000`
+- React frontend builds to static assets served by CloudFront/S3 in AWS
+- FastAPI backend runs on ECS Fargate behind an ALB in AWS
+- local development may still use a dev server and local backend ports
 
-## SQLite
+## Database
 
-SQLite is the current persistence layer in the suite.
+SQLite is the local persistence layer. AWS dev uses RDS PostgreSQL through `ASCEND_DATABASE_URL`.
 
 It stores:
 
@@ -77,13 +79,16 @@ Operational events are used for:
 
 ## Key Files
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/openai_client.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/google_drive.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/storage.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/config.py`
+- `app/openai_client.py`
+- `app/storage.py`
+- `app/s3_storage.py`
+- `app/config.py`
+- `deploy/aws/terraform/`
+- `docs/aws-deployment.md`
 
 ## Next Good Enhancements
 
-- refresh-token handling for Google Drive
-- production storage abstraction for future non-Drive deployments
+- large-file upload hardening
+- object scan and retention workflows
+- stronger signed URL auditability
 - stronger AI observability by feature area

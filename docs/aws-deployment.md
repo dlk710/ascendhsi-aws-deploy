@@ -4,12 +4,40 @@ This document describes the AWS shape for deploying the Ascend product suite aft
 
 ## What Is In This Branch
 
-- S3-first storage instead of Google Drive
+- S3-first storage for active evidence and archive routing
 - runtime-configurable frontend API host
 - backend CORS and path configuration driven by environment
 - readiness endpoint for load balancers and container health checks
 - Athena-first operational analysis with logs routed to S3 instead of a CloudWatch-centric monitoring stack
+- non-blocking portal hydration after login, so role shells render while live data refreshes
 - Dockerfiles and AWS deployment artifacts under `deploy/aws/`
+
+## Current Dev Deployment
+
+The active dev environment is deployed in AWS account `027903151318`, region `us-east-2`.
+
+| Layer | AWS resource |
+|---|---|
+| Frontend CDN | CloudFront distribution `EV6WT9DUO1GQH` |
+| Frontend origin | S3 bucket `ascend-frontend-dev-027903151318` |
+| Backend compute | ECS Fargate service `ascend-dev-backend` on cluster `ascend-dev-cluster` |
+| Backend image | ECR repository `027903151318.dkr.ecr.us-east-2.amazonaws.com/ascend-dev-backend` |
+| API origin | ALB `ascend-dev-api` |
+| Database | RDS PostgreSQL `ascend-dev-postgres` |
+| Active files | S3 bucket `client-data-dev-027903151318` |
+| Archive files | S3 bucket `client-data-archive-dev-027903151318` |
+| Log storage | S3 bucket `ascend-observability-logs-dev-027903151318` |
+| Athena results | S3 bucket `ascend-athena-results-dev-027903151318` |
+| Observability queries | Athena workgroup `ascend-dev-observability`, database `ascend_dev_observability` |
+| Secrets | `ascend-dev/backend/database-url`, `ascend-dev/backend/openai-api-key` |
+
+The current public dev endpoint is:
+
+```text
+https://dq5ab404dg57q.cloudfront.net
+```
+
+The ALB DNS name is an API origin, not the product-suite user URL.
 
 ## Recommended AWS Services
 
@@ -103,8 +131,37 @@ This is cheaper and simpler for historical analysis, but it is not real-time ale
 
 ### Data
 
-- short-term deployment can mount SQLite on persistent storage for non-production demos
-- scaled production deployment should move to PostgreSQL before multi-task backend scaling
+- local development can use SQLite
+- AWS dev uses RDS PostgreSQL through `ASCEND_DATABASE_URL`
+- multi-task backend scaling should use PostgreSQL or Aurora PostgreSQL-compatible storage
+
+## Release Procedure
+
+### Frontend
+
+1. Run `pnpm install --frozen-lockfile` if dependencies are not present.
+2. Run `pnpm run build` from `frontend-react/`.
+3. Sync `frontend-react/dist/` to `s3://ascend-frontend-dev-027903151318/`.
+4. Create a CloudFront invalidation for distribution `EV6WT9DUO1GQH`.
+5. Verify the live `index.html` references the new hashed assets.
+
+### Backend
+
+1. Build the backend image from `deploy/aws/backend.Dockerfile`.
+2. Push the image to ECR repository `ascend-dev-backend`.
+3. Apply Terraform with the image digest, not a mutable tag, when possible.
+4. Confirm ECS service `ascend-dev-backend` reaches the expected running task count.
+5. Verify `/health`, `/ready`, and role login APIs through CloudFront.
+
+### Verification Commands
+
+```bash
+python3 -m pytest -q
+cd frontend-react && pnpm run build
+curl -sS https://dq5ab404dg57q.cloudfront.net/ready
+```
+
+For portal smoke tests, validate login and initial data APIs for Member, Profile Builder, Leader, Attorney, and Admin.
 
 ## Environment Variables
 

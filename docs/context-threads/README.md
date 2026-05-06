@@ -8,27 +8,27 @@ They are written to be usable by both humans and AI assistants. A new contributo
 
 ## Thread Index
 
-1. [00-suite-overview.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/00-suite-overview.md)
-2. [01-member-portal.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/01-member-portal.md)
-3. [02-profile-builder-portal.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/02-profile-builder-portal.md)
-4. [03-leader-portal.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/03-leader-portal.md)
-5. [04-attorney-portal.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/04-attorney-portal.md)
-6. [05-admin-operations-portal.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/05-admin-operations-portal.md)
-7. [06-messaging-and-collaboration.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/06-messaging-and-collaboration.md)
-8. [07-integrations-and-ai.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/07-integrations-and-ai.md)
-9. [08-api-and-function-map.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/08-api-and-function-map.md)
-10. [09-development-skill-index.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/09-development-skill-index.md)
-11. [10-react-portal-engineering.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/10-react-portal-engineering.md)
-12. [11-fastapi-backend-engineering.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/11-fastapi-backend-engineering.md)
-13. [12-data-modeling-and-migrations.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/12-data-modeling-and-migrations.md)
-14. [13-role-based-product-and-eb1a-domain.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/13-role-based-product-and-eb1a-domain.md)
-15. [14-ai-integration-and-observability.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/14-ai-integration-and-observability.md)
-16. [15-storage-and-google-drive.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/15-storage-and-google-drive.md)
-17. [16-messaging-collaboration-systems.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/16-messaging-collaboration-systems.md)
-18. [17-admin-operations-and-production-readiness.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/17-admin-operations-and-production-readiness.md)
-19. [18-testing-qa-and-release-discipline.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/18-testing-qa-and-release-discipline.md)
-20. [19-chat-change-inventory.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/19-chat-change-inventory.md)
-21. [20-thread-to-file-map.md](/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/20-thread-to-file-map.md)
+1. [00-suite-overview.md](00-suite-overview.md)
+2. [01-member-portal.md](01-member-portal.md)
+3. [02-profile-builder-portal.md](02-profile-builder-portal.md)
+4. [03-leader-portal.md](03-leader-portal.md)
+5. [04-attorney-portal.md](04-attorney-portal.md)
+6. [05-admin-operations-portal.md](05-admin-operations-portal.md)
+7. [06-messaging-and-collaboration.md](06-messaging-and-collaboration.md)
+8. [07-integrations-and-ai.md](07-integrations-and-ai.md)
+9. [08-api-and-function-map.md](08-api-and-function-map.md)
+10. [09-development-skill-index.md](09-development-skill-index.md)
+11. [10-react-portal-engineering.md](10-react-portal-engineering.md)
+12. [11-fastapi-backend-engineering.md](11-fastapi-backend-engineering.md)
+13. [12-data-modeling-and-migrations.md](12-data-modeling-and-migrations.md)
+14. [13-role-based-product-and-eb1a-domain.md](13-role-based-product-and-eb1a-domain.md)
+15. [14-ai-integration-and-observability.md](14-ai-integration-and-observability.md)
+16. [15-storage-and-aws-s3.md](15-storage-and-aws-s3.md)
+17. [16-messaging-collaboration-systems.md](16-messaging-collaboration-systems.md)
+18. [17-admin-operations-and-production-readiness.md](17-admin-operations-and-production-readiness.md)
+19. [18-testing-qa-and-release-discipline.md](18-testing-qa-and-release-discipline.md)
+20. [19-chat-change-inventory.md](19-chat-change-inventory.md)
+21. [20-thread-to-file-map.md](20-thread-to-file-map.md)
 
 ## Current Product Shape
 
@@ -58,20 +58,24 @@ Shared capabilities include:
 ## Code Locations
 
 Frontend:
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/App.jsx`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/styles.css`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/index.html`
+- `frontend-react/src/App.jsx`
+- `frontend-react/src/styles.css`
+- `frontend-react/index.html`
 
 Backend:
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/api.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/services.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/openai_client.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/db.py`
+- `app/api.py`
+- `app/services.py`
+- `app/openai_client.py`
+- `app/db.py`
+- `app/storage.py`
+- `app/s3_storage.py`
 
 Tests:
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_api.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_openai_client.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_db.py`
+- `tests/test_api.py`
+- `tests/test_openai_client.py`
+- `tests/test_db.py`
+- `tests/test_storage.py`
+- `tests/test_s3_storage.py`
 
 ## Continuation Guidance
 

@@ -4,16 +4,16 @@
 
 This file captures the working inventory of files that were changed across the product-building chat, grouped by responsibility so development can continue without reconstructing the history from memory.
 
-Because `/Users/lohithdeshpande/Documents/Codex/ascend_mvp` is not currently a git repository, this is a curated continuation inventory rather than an exact commit diff.
+This is a curated continuation inventory for the active product and AWS deployment repositories. Use it together with git history for exact diffs.
 
 ## Primary Files Changed During This Build Cycle
 
 ### Frontend shell and shared UX
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/App.jsx`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/styles.css`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/index.html`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/main.jsx`
+- `frontend-react/src/App.jsx`
+- `frontend-react/src/styles.css`
+- `frontend-react/index.html`
+- `frontend-react/src/main.jsx`
 
 These files absorbed most of the portal UX work, including:
 
@@ -26,31 +26,32 @@ These files absorbed most of the portal UX work, including:
 - threaded messaging
 - attorney petition generator
 - cache-buster updates for frontend refreshes
+- non-blocking portal hydration after login
 
 ### Frontend branding assets
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/public/ascend-logo.webp`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/public/favicon.png`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/public/favicon.ico`
+- `frontend-react/public/ascend-logo.webp`
+- `frontend-react/public/favicon.png`
+- `frontend-react/public/favicon.ico`
 
 These support Ascend branding in the browser tab and UI shell.
 
 ### Backend API and application behavior
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/api.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/services.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/openai_client.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/db.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/google_drive.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/storage.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/config.py`
+- `app/api.py`
+- `app/services.py`
+- `app/openai_client.py`
+- `app/db.py`
+- `app/storage.py`
+- `app/s3_storage.py`
+- `app/config.py`
 
 These files carry the working backend for:
 
 - role-based auth
 - member profile and planner data
 - evidence analysis and upload
-- Google Drive storage behavior
+- S3 storage and signed/private file access behavior
 - foldering and archive behavior
 - messaging and read/unread logic
 - leader assignment flows
@@ -59,13 +60,13 @@ These files carry the working backend for:
 
 ### Tests used to hold the suite together
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_api.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_openai_client.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_db.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_google_drive.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_storage.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_config.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_server.py`
+- `tests/test_api.py`
+- `tests/test_openai_client.py`
+- `tests/test_db.py`
+- `tests/test_s3_storage.py`
+- `tests/test_storage.py`
+- `tests/test_config.py`
+- `tests/test_server.py`
 
 These cover the highest-risk backend behaviors and were expanded as new features were introduced.
 
@@ -91,7 +92,7 @@ These cover the highest-risk backend behaviors and were expanded as new features
 ### Shared platform systems
 
 - threaded messaging with reply and nested reply behavior
-- Google Drive storage integration
+- S3 storage integration
 - OpenAI evidence and petition generation
 - operational fallback behavior when AI or integrations fail
 
@@ -99,12 +100,14 @@ These cover the highest-risk backend behaviors and were expanded as new features
 
 If someone needs to resume development quickly, start here first:
 
-1. `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/App.jsx`
-2. `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/styles.css`
-3. `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/services.py`
-4. `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/api.py`
-5. `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/db.py`
-6. `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/openai_client.py`
+1. `frontend-react/src/App.jsx`
+2. `frontend-react/src/styles.css`
+3. `app/services.py`
+4. `app/api.py`
+5. `app/db.py`
+6. `app/openai_client.py`
+7. `deploy/aws/terraform/`
+8. `docs/aws-deployment.md`
 
 ## Continuation Guidance
 

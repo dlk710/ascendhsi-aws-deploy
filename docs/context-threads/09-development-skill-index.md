@@ -108,6 +108,7 @@ Read:
 
 - `14-ai-integration-and-observability.md`
 - `07-integrations-and-ai.md`
+- `docs/aws-deployment.md` when changing cloud runtime behavior
 
 Use when changing:
 
@@ -117,21 +118,24 @@ Use when changing:
 - AI fallbacks
 - OpenAI usage tracking
 - admin AI metrics
+- OpenAI secrets and model configuration in cloud deployments
 
-### Storage And Google Drive Integration
+### Storage And AWS S3 Integration
 
 Read:
 
-- `15-storage-and-google-drive.md`
+- `15-storage-and-aws-s3.md`
 - `07-integrations-and-ai.md`
+- `docs/aws-deployment.md`
 
 Use when changing:
 
-- `app/google_drive.py`
 - `app/storage.py`
+- `app/s3_storage.py`
 - evidence upload/archive behavior
 - folder sync
 - future production storage abstraction
+- signed URL access to active or archived files
 
 ### Messaging And Collaboration Systems
 
@@ -154,6 +158,8 @@ Read:
 
 - `17-admin-operations-and-production-readiness.md`
 - `05-admin-operations-portal.md`
+- `docs/aws-deployment.md`
+- `deploy/aws/README.md`
 
 Use when changing:
 
@@ -163,12 +169,14 @@ Use when changing:
 - session remediation
 - alerts
 - production deployment posture
+- Terraform modules, ECS, ALB, CloudFront, RDS, S3, Athena, IAM, or Secrets Manager
 
 ### Testing, QA, And Release Discipline
 
 Read:
 
 - `18-testing-qa-and-release-discipline.md`
+- `docs/verification-notes.md`
 
 Use before merging or deploying any change.
 

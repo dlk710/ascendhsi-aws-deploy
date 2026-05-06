@@ -127,7 +127,7 @@ This is the quickest backend continuation map for the current Ascend suite.
 
 The React frontend still centralizes much of the portal rendering in:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/App.jsx`
+- `frontend-react/src/App.jsx`
 
 That file currently contains:
 

@@ -17,10 +17,11 @@ Current test areas:
 - API behavior
 - config loading
 - database initialization
-- Google Drive integration
+- S3 storage integration
 - OpenAI client fallback behavior
 - server behavior
 - storage behavior
+- AWS deployment smoke checks
 
 ## Required Skill
 
@@ -32,6 +33,7 @@ Developers must be able to:
 - keep tests independent of real external services
 - verify frontend build when UI changes
 - define release checks before deployment
+- validate live AWS role login and initial data APIs after deployment changes
 
 ## Formal Development Workflow
 
@@ -42,6 +44,7 @@ Before finishing a change:
 3. Run the React build for frontend changes.
 4. Manually verify critical role flows when UI behavior changes.
 5. Document any residual risk.
+6. If deployed to AWS, verify CloudFront `/ready` and role-specific login/data APIs.
 
 ## Production-Grade Expectations
 
@@ -52,7 +55,8 @@ A production-ready change should have:
 - fallback tests for AI or storage changes
 - schema tests for database changes
 - frontend build verification for UI changes
-- no dependency on live OpenAI or Google Drive in tests
+- no dependency on live OpenAI or S3 in unit tests
+- explicit live smoke checks for deployed AWS environments
 
 ## Release Checklist
 
@@ -67,10 +71,12 @@ Before production deployment:
 - admin health reflects integration status
 - database backup and migration plan exists
 - rollback path is known
+- CloudFront serves the expected hashed frontend assets
+- ECS service reaches the expected running task count after backend deployment
+- S3 signed/private file access is verified for evidence links
 
 ## Chat Thread Starter
 
 ```text
 Use the Testing, QA, And Release Discipline thread. Add tests before treating the feature as complete.
 ```
-

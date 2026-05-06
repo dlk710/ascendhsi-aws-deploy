@@ -2,6 +2,58 @@
 
 This document records recent live verification results for the Ascend product suite so future contributors can distinguish product behavior from environment-specific gaps.
 
+## Verification Run: 2026-05-06
+
+### Scope
+
+- Live AWS frontend at `https://dq5ab404dg57q.cloudfront.net`
+- CloudFront distribution `EV6WT9DUO1GQH`
+- Frontend S3 bucket `ascend-frontend-dev-027903151318`
+- Backend ECS Fargate service `ascend-dev-backend`
+- RDS PostgreSQL database `ascend-dev-postgres`
+- S3 active/archive storage buckets
+- Portal login and initial data smoke checks across Member, Profile Builder, Leader, Attorney, and Admin
+
+### Overall Result
+
+Status: pass
+
+The AWS-hosted product suite is functioning and the recent login performance change is live. The frontend now renders the portal shell immediately after authentication and hydrates role-specific data inside the portal instead of holding users on a full-screen loading state.
+
+### Runtime Health
+
+- `GET /ready` through CloudFront returned HTTP `200`
+- S3 storage reported healthy for `client-data-dev-027903151318`
+- OpenAI reported healthy with configured model detail
+- CloudFront served the new hashed frontend assets after invalidation
+
+### Portal Smoke Results
+
+The following login and initial data checks returned HTTP `200`:
+
+- Member: `POST /api/auth/login`, `/api/member/dashboard`, `/api/evidence`, `/api/member/planner`, `/api/member/profile`, `/api/criteria`, `/api/messages`
+- Profile Builder: `POST /api/builder/auth/login`, `/api/builder/dashboard`, `/api/builder/members`, `/api/builder/opportunities`, `/api/criteria`
+- Leader: `POST /api/staff/auth/login`, `/api/leader/dashboard`, `/api/criteria`, `/api/builder/opportunities`
+- Attorney: `POST /api/staff/auth/login`, `/api/attorney/members`, `/api/criteria`
+- Admin: `POST /api/staff/auth/login`, `/api/admin/operations`, `/api/builder/dashboard`, `/api/builder/members`, `/api/criteria`
+
+Selected-member detail and evidence checks also passed for Builder, Leader, Attorney, and Admin contexts.
+
+### Performance Observation
+
+Login APIs completed in roughly `0.3s` to `0.5s` during the verification pass, and initial data APIs completed within sub-second timings. The frontend no longer blocks the whole portal on those data calls after authentication.
+
+### Automated Checks
+
+- React production build: pass
+- Python regression suite: `77 passed`
+- Diff whitespace validation: pass
+
+### Notes
+
+- Local macOS build shells can reject Rollup native optional binaries because of code signing. The repo includes `@rollup/wasm-node`; use the wasm Rollup path when this local environment issue appears.
+- The active remotes for this work are GitHub repositories, not Bitbucket remotes.
+
 ## Verification Run: 2026-05-05
 
 ### Scope

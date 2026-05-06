@@ -4,153 +4,181 @@
 
 This file maps each continuation thread to the code files that most directly support it.
 
-Use it when you know the portal or integration you want to work on, but need the fastest jump from product context to implementation.
+Use it when you know the portal, integration, or deployment area you want to work on, but need the fastest jump from product context to implementation.
 
 ## Member Portal
 
 Context thread:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/01-member-portal.md`
+- `01-member-portal.md`
 
 Primary files:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/App.jsx`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/styles.css`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/api.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/services.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/db.py`
+- `frontend-react/src/App.jsx`
+- `frontend-react/src/styles.css`
+- `app/api.py`
+- `app/services.py`
+- `app/db.py`
 
 ## Profile Builder Portal
 
 Context thread:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/02-profile-builder-portal.md`
+- `02-profile-builder-portal.md`
 
 Primary files:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/App.jsx`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/styles.css`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/api.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/services.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/db.py`
+- `frontend-react/src/App.jsx`
+- `frontend-react/src/styles.css`
+- `app/api.py`
+- `app/services.py`
+- `app/db.py`
 
 ## Leader Portal
 
 Context thread:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/03-leader-portal.md`
+- `03-leader-portal.md`
 
 Primary files:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/App.jsx`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/styles.css`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/api.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/services.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/db.py`
+- `frontend-react/src/App.jsx`
+- `frontend-react/src/styles.css`
+- `app/api.py`
+- `app/services.py`
+- `app/db.py`
 
 ## Attorney Portal
 
 Context thread:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/04-attorney-portal.md`
+- `04-attorney-portal.md`
 
 Primary files:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/App.jsx`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/styles.css`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/api.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/services.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/openai_client.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/db.py`
+- `frontend-react/src/App.jsx`
+- `frontend-react/src/styles.css`
+- `app/api.py`
+- `app/services.py`
+- `app/openai_client.py`
+- `app/db.py`
 
 ## Admin / Operations Portal
 
-Context thread:
+Context threads:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/05-admin-operations-portal.md`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/17-admin-operations-and-production-readiness.md`
+- `05-admin-operations-portal.md`
+- `17-admin-operations-and-production-readiness.md`
 
 Primary files:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/App.jsx`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/styles.css`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/api.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/services.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/db.py`
+- `frontend-react/src/App.jsx`
+- `frontend-react/src/styles.css`
+- `app/api.py`
+- `app/services.py`
+- `app/db.py`
+- `docs/aws-deployment.md`
+- `deploy/aws/README.md`
 
 ## Messaging
 
 Context threads:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/06-messaging-and-collaboration.md`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/16-messaging-collaboration-systems.md`
+- `06-messaging-and-collaboration.md`
+- `16-messaging-collaboration-systems.md`
 
 Primary files:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/App.jsx`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/frontend-react/src/styles.css`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/api.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/services.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/db.py`
+- `frontend-react/src/App.jsx`
+- `frontend-react/src/styles.css`
+- `app/api.py`
+- `app/services.py`
+- `app/db.py`
 
-## AI and OpenAI-driven flows
+## AI And OpenAI-Driven Flows
 
 Context threads:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/07-integrations-and-ai.md`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/14-ai-integration-and-observability.md`
+- `07-integrations-and-ai.md`
+- `14-ai-integration-and-observability.md`
 
 Primary files:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/openai_client.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/services.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/api.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_openai_client.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_api.py`
+- `app/openai_client.py`
+- `app/services.py`
+- `app/api.py`
+- `tests/test_openai_client.py`
+- `tests/test_api.py`
+- `docs/aws-deployment.md`
 
-## Storage and Google Drive
+## Storage And AWS S3
 
 Context thread:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/15-storage-and-google-drive.md`
+- `15-storage-and-aws-s3.md`
 
 Primary files:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/google_drive.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/storage.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/services.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_google_drive.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_storage.py`
+- `app/storage.py`
+- `app/s3_storage.py`
+- `app/services.py`
+- `tests/test_s3_storage.py`
+- `tests/test_storage.py`
+- `config/storage.json`
+- `deploy/aws/terraform/s3.tf`
 
-## Data model and migrations
+## AWS Cloud Deployment
+
+Primary docs:
+
+- `docs/aws-deployment.md`
+- `deploy/aws/README.md`
+- `docs/solution-architecture.md`
+- `docs/verification-notes.md`
+
+Primary files:
+
+- `deploy/aws/terraform/`
+- `deploy/aws/backend.Dockerfile`
+- `deploy/aws/frontend.Dockerfile`
+- `deploy/aws/backend.env.example`
+- `deploy/aws/frontend.env.example`
+- `frontend-react/public/runtime-config.js`
+
+## Data Model And Migrations
 
 Context thread:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/12-data-modeling-and-migrations.md`
+- `12-data-modeling-and-migrations.md`
 
 Primary files:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/db.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/app/services.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_db.py`
+- `app/db.py`
+- `app/services.py`
+- `tests/test_db.py`
+- `docs/database-configuration.md`
 
-## Testing and release confidence
+## Testing And Release Confidence
 
 Context thread:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/18-testing-qa-and-release-discipline.md`
+- `18-testing-qa-and-release-discipline.md`
 
 Primary files:
 
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_api.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_openai_client.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_db.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_google_drive.py`
-- `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/tests/test_storage.py`
+- `tests/test_api.py`
+- `tests/test_openai_client.py`
+- `tests/test_db.py`
+- `tests/test_s3_storage.py`
+- `tests/test_storage.py`
+- `frontend-react/src/App.jsx`
+- `frontend-react/src/styles.css`
+- `docs/verification-notes.md`
 
 ## Recommended Resume Order
 
-1. read `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/19-chat-change-inventory.md`
-2. read the relevant portal thread
-3. read this file to jump into the right implementation files
-4. read `/Users/lohithdeshpande/Documents/Codex/ascend_mvp/docs/context-threads/08-api-and-function-map.md`
+1. Read `19-chat-change-inventory.md`.
+2. Read the relevant portal or integration thread.
+3. Read this file to jump into the right implementation files.
+4. Read `08-api-and-function-map.md`.
+5. For AWS work, read `docs/aws-deployment.md` and `deploy/aws/README.md`.

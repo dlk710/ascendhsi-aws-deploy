@@ -88,8 +88,9 @@ Current health areas include:
 - Attorney Portal
 - Admin Portal
 - FastAPI
-- SQLite
-- Google Drive
+- PostgreSQL / SQLite depending on environment
+- Amazon S3
+- ECS / ALB / CloudFront health through runtime checks and log review
 - OpenAI
 
 ## Next Good Enhancements

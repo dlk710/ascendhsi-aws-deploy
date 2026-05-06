@@ -69,7 +69,7 @@ Frontend changes should include:
 - no text overflow in buttons, cards, tables, or sidebars
 - visible but restrained error states
 - clear disabled/loading states for async actions
-- no member-facing references to Google Drive, backend internals, or fallback mechanics
+- no member-facing references to S3, backend internals, signed URL mechanics, or fallback mechanics
 
 ## Chat Thread Starter
 

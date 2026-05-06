@@ -2,7 +2,7 @@
 
 ## Objective
 
-Ascend HSI needs a unified EB1A operations platform to replace fragmented work currently spread across Google Drive, Gmail, local downloads, offline drafting, and manual coordination.
+Ascend HSI needs a unified EB1A operations platform to replace fragmented work currently spread across shared drives, email, local downloads, offline drafting, and manual coordination.
 
 ## Product Vision
 
@@ -83,9 +83,10 @@ The suite has moved away from one giant page and now uses child pages per role. 
 
 - frontend: React
 - backend: FastAPI
-- database: SQLite
-- file storage: Google Drive
+- database: SQLite locally, RDS PostgreSQL in AWS dev
+- file storage: Amazon S3 active and archive buckets
 - AI: OpenAI API with fallback behavior
+- deployment: CloudFront + S3 frontend, ECS Fargate backend, ALB API origin, Athena/S3 observability
 
 ## Core Product Principle
 

@@ -70,8 +70,8 @@ python3 -m venv .venv
 
 ```bash
 cd frontend-react
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
 Then open:
@@ -115,8 +115,32 @@ Primary config files:
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests
+python3 -m pytest -q
+cd frontend-react && pnpm run build
 ```
+
+If `pytest` is not available in the active Python environment, create a local virtual environment and install `requirements.txt` plus `pytest`. Do not install test dependencies globally on managed macOS/Python environments.
+
+## Live AWS dev deployment
+
+The current dev deployment runs in AWS account `027903151318`, region `us-east-2`.
+
+- Frontend: CloudFront distribution `EV6WT9DUO1GQH` backed by S3 bucket `ascend-frontend-dev-027903151318`
+- Backend: ECS Fargate service `ascend-dev-backend` in cluster `ascend-dev-cluster`
+- API entry: Application Load Balancer `ascend-dev-api`
+- Database: RDS PostgreSQL instance `ascend-dev-postgres`
+- Active evidence storage: S3 bucket `client-data-dev-027903151318`
+- Archive storage: S3 bucket `client-data-archive-dev-027903151318`
+- Observability: ALB/CloudFront logs in S3 with Athena workgroup `ascend-dev-observability`
+- Secrets: AWS Secrets Manager entries for database URL and OpenAI API key
+
+The public dev URL is:
+
+```text
+https://dq5ab404dg57q.cloudfront.net
+```
+
+After frontend changes, build the React app, sync `frontend-react/dist/` to the frontend S3 bucket, and invalidate CloudFront.
 
 ## Continuation guidance
 
@@ -145,3 +169,4 @@ AWS deployment artifacts and environment examples are under:
 - `deploy/aws/README.md`
 - `deploy/aws/backend.Dockerfile`
 - `deploy/aws/frontend.Dockerfile`
+- `deploy/aws/terraform/`
