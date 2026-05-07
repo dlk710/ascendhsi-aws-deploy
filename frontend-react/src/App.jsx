@@ -3067,6 +3067,10 @@ function App() {
     const token = authToken();
     if (!token) {
       if (route.portal) setAuthMode(route.portal);
+      if (route.portal && route.portal !== "member") {
+        setPortalSection(requestedPortalSection(route.portal, "home"));
+        setSelectedBuilderMemberId(route.memberId || "");
+      }
       setAuthReady(true);
       setLoading(false);
       return;
@@ -3462,15 +3466,20 @@ function App() {
         setAuthMember(payloadUser);
         setLoginForm({ username: "", password: "" });
         setAuthReady(true);
+        const route = readPortalRoute();
+        if (expectedRole !== "member") {
+          setPortalSection(requestedPortalSection(expectedRole, portalSection || "home"));
+          if (route.memberId) setSelectedBuilderMemberId(route.memberId);
+        }
         if (authMode === "builder") {
-          await loadBuilderDashboard();
+          await loadBuilderDashboard(route.memberId || selectedBuilderMemberId);
         } else if (authMode === "leader") {
           setLeaderPerspective("leader");
-          await loadLeaderPortal();
+          await loadLeaderPortal(route.memberId || selectedBuilderMemberId);
         } else if (authMode === "attorney") {
-          await loadReviewPortals(selectedBuilderMemberId, payloadUser.email || "");
+          await loadReviewPortals(route.memberId || selectedBuilderMemberId, payloadUser.email || "");
         } else if (authMode === "admin") {
-          await loadAdminPortal();
+          await loadAdminPortal(route.memberId || selectedBuilderMemberId);
         } else {
           await loadHome();
         }
@@ -3526,15 +3535,20 @@ function App() {
         setAuthMember(payloadUser);
         setLoginForm({ username: "", password: "" });
         setAuthReady(true);
+        const route = readPortalRoute();
+        if (expectedRole !== "member") {
+          setPortalSection(requestedPortalSection(expectedRole, portalSection || "home"));
+          if (route.memberId) setSelectedBuilderMemberId(route.memberId);
+        }
         if (authMode === "builder") {
-          await loadBuilderDashboard();
+          await loadBuilderDashboard(route.memberId || selectedBuilderMemberId);
         } else if (authMode === "leader") {
           setLeaderPerspective("leader");
-          await loadLeaderPortal();
+          await loadLeaderPortal(route.memberId || selectedBuilderMemberId);
         } else if (authMode === "attorney") {
-          await loadReviewPortals(selectedBuilderMemberId, payloadUser.email || "");
+          await loadReviewPortals(route.memberId || selectedBuilderMemberId, payloadUser.email || "");
         } else if (authMode === "admin") {
-          await loadAdminPortal();
+          await loadAdminPortal(route.memberId || selectedBuilderMemberId);
         } else {
           await loadHome();
         }
