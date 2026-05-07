@@ -1014,6 +1014,17 @@ class EvidenceService:
             LIMIT 10
             """,
         )
+        login_audit = rows(
+            self.conn,
+            """
+            SELECT id, event_type, status, portal, actor_role, actor_key, client_id, case_id,
+                   endpoint, error_code, message, metadata, created_at
+            FROM operational_events
+            WHERE event_type IN ('member_auth', 'builder_auth', 'leader_auth', 'attorney_auth', 'admin_auth', 'staff_auth')
+            ORDER BY created_at DESC
+            LIMIT 25
+            """,
+        )
         member = self.config.default_client
         debug_member = self.member_issue_debug(member["client_id"])
         database_backend = self.config.database_backend
@@ -1053,6 +1064,7 @@ class EvidenceService:
                 {"name": "OpenAI", "status": "healthy" if self.openai.enabled else "degraded", "detail": self.openai.config.get("model", "not configured")},
             ],
             "recent_errors": recent_errors,
+            "login_audit": login_audit,
             "member_debug": debug_member,
             "support_summary": {
                 "total_count": int(support_counts.get("total_count") or 0),
