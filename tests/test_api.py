@@ -213,7 +213,7 @@ class ApiTests(unittest.TestCase):
         service.staff_session.return_value = {"display_name": "Ava Morales", "role": "leader"}
         with patch("app.api.service", return_value=service):
             response = self.client.get("/api/admin/operations", headers={"Authorization": "Bearer ssess_leader"})
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
         service.admin_operational_dashboard.assert_not_called()
 
     def test_admin_operations_rejects_member_token(self):
@@ -250,7 +250,7 @@ class ApiTests(unittest.TestCase):
         service.staff_session.return_value = {"display_name": "Ava Morales", "role": "leader"}
         with patch("app.api.service", return_value=service):
             response = self.client.get("/api/admin/costs", headers={"Authorization": "Bearer ssess_leader"})
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
         service.admin_cost_dashboard.assert_not_called()
 
     def test_admin_issue_log_uses_service(self):
@@ -267,7 +267,7 @@ class ApiTests(unittest.TestCase):
         service.staff_session.return_value = {"display_name": "Ava Morales", "role": "leader"}
         with patch("app.api.service", return_value=service):
             response = self.client.get("/api/admin/issue-log", headers={"Authorization": "Bearer ssess_leader"})
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
         service.issue_log_backlog.assert_not_called()
 
     def test_create_admin_issue_log_uses_service(self):

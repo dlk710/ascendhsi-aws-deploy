@@ -135,7 +135,7 @@ def require_staff_role(expected_roles: set[str], authorization: str | None = Hea
         _auth_error(str(exc))
     role = str(user.get("role", "")).strip().lower()
     if role not in expected_roles:
-        _auth_error("Insufficient permissions", status_code=403)
+        _auth_error("Insufficient permissions")
     return user
 
 
