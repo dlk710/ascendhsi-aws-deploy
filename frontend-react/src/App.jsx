@@ -139,6 +139,38 @@ function requestedPortalSection(role, fallback = "home") {
   return allowed[role]?.has(requested) ? requested : fallback;
 }
 
+const MEMBER_PAGE_ALIASES = {
+  home: "home",
+  profile: "profile",
+  planner: "planner",
+  events: "planner",
+  event_planner: "planner",
+  "event-planner": "planner",
+  intake: "intake",
+  evidence_intake: "intake",
+  "evidence-intake": "intake",
+  messages: "messages",
+};
+
+function requestedMemberView(criteria = []) {
+  const params = new URLSearchParams(window.location.search);
+  const criterion = params.get("criterion") || "";
+  const folder = params.get("folder") || "";
+  const rawPage = (params.get("page") || "home").trim().toLowerCase();
+  if (criterion) {
+    const knownCriterion = !criteria.length || criteria.some((item) => item.code === criterion);
+    return {
+      view: knownCriterion ? { type: "workspace", criterionCode: criterion } : { type: "home", criterionCode: "" },
+      folderId: knownCriterion ? folder : "",
+      invalidPage: knownCriterion ? "" : criterion,
+      invalidKind: knownCriterion ? "" : "criterion",
+    };
+  }
+  const page = MEMBER_PAGE_ALIASES[rawPage];
+  if (page) return { view: { type: page, criterionCode: "" }, folderId: "", invalidPage: "", invalidKind: "" };
+  return { view: { type: "home", criterionCode: "" }, folderId: "", invalidPage: rawPage, invalidKind: "page" };
+}
+
 function isPreviewRole(role) {
   return PREVIEW_ROLES.includes(role);
 }
@@ -1900,6 +1932,7 @@ function App() {
   const [overrideCategory, setOverrideCategory] = useState("");
   const [overrideDocumentType, setOverrideDocumentType] = useState("Other");
   const [consent, setConsent] = useState(false);
+  const [draftApprovalError, setDraftApprovalError] = useState("");
   const [uploadBusy, setUploadBusy] = useState(false);
   const [duplicateState, setDuplicateState] = useState(null);
 
@@ -2124,11 +2157,13 @@ function App() {
     });
   }
 
-  function syncCriterionUrl(code) {
+  function syncMemberUrl(nextView) {
     const url = new URL(window.location.href);
-    if (code) {
-      url.searchParams.set("criterion", code);
+    if (nextView?.type === "workspace" && nextView.criterionCode) {
+      url.searchParams.set("page", "workspace");
+      url.searchParams.set("criterion", nextView.criterionCode);
     } else {
+      url.searchParams.set("page", nextView?.type || "home");
       url.searchParams.delete("criterion");
       url.searchParams.delete("folder");
     }
@@ -2158,10 +2193,13 @@ function App() {
       });
       if (!manualCategory && dashboardData.criteria.length) setManualCategory(dashboardData.criteria[0].code);
       if (!manualDocumentType) setManualDocumentType("Other");
-      const criterionFromUrl = new URLSearchParams(window.location.search).get("criterion");
-      const folderFromUrl = new URLSearchParams(window.location.search).get("folder");
-      if (folderFromUrl) setSelectedFolderId(folderFromUrl);
-      if (criterionFromUrl) setView({ type: "workspace", criterionCode: criterionFromUrl });
+      const route = requestedMemberView(dashboardData.criteria);
+      setSelectedFolderId(route.folderId || "");
+      setView(route.view);
+      if (route.invalidPage) {
+        const label = route.invalidKind === "criterion" ? "criterion" : "page";
+        setMessage({ type: "error", text: `${label.charAt(0).toUpperCase()} "${route.invalidPage}" was not found, so we returned you to Member Home.` });
+      }
     } catch (_error) {
       setMessage({ type: "error", text: "Could not load member portal." });
     } finally {
@@ -2788,10 +2826,10 @@ function App() {
     if (["builder", "leader", "attorney", "admin"].includes(authMember?.role)) return;
     if (!authMember) return;
     if (view.type === "workspace" && view.criterionCode) {
-      syncCriterionUrl(view.criterionCode);
+      syncMemberUrl(view);
       loadWorkspace(view.criterionCode, workspaceQuery);
     } else {
-      syncCriterionUrl("");
+      syncMemberUrl(view);
     }
   }, [view, workspaceQuery]);
   useEffect(() => {
@@ -3087,6 +3125,7 @@ function App() {
     setOverrideDocumentType("Other");
     setManualDocumentType("Other");
     setConsent(false);
+    setDraftApprovalError("");
     setDuplicateState(null);
     const picker = document.getElementById("member-file");
     if (picker) picker.value = "";
@@ -3472,6 +3511,7 @@ function App() {
           setOverrideCategory(result.payload.criterion_code);
           setOverrideDocumentType(result.payload.document_type || inferDocumentType(`${selectedFile?.name || ""} ${memberContext}`));
           setConsent(false);
+          setDraftApprovalError("");
         } else {
           setMessage({ type: "error", text: "Evidence review failed. Please try again or contact Ascend support." });
         }
@@ -3497,9 +3537,12 @@ function App() {
       });
     } else {
       if (!draft || !consent) {
-        setMessage({ type: "error", text: "Please approve the AI draft before saving." });
+        const approvalMessage = "Please approve the evidence draft before saving.";
+        setDraftApprovalError(approvalMessage);
+        setMessage({ type: "error", text: approvalMessage });
         return;
       }
+      setDraftApprovalError("");
       formData = buildUploadForm({
         criterionCode: aiFeedback === "accept" ? draft.criterion_code : overrideCategory,
         documentType: aiFeedback === "accept" ? (draft.document_type || "Other") : overrideDocumentType,
@@ -5859,7 +5902,18 @@ function App() {
                       </label>
                     </React.Fragment>
                   ) : null}
-                  <label className="consent-line"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I approve this evidence draft and want to save it.</span></label>
+                  <label className="consent-line">
+                    <input
+                      type="checkbox"
+                      checked={consent}
+                      onChange={(event) => {
+                        setConsent(event.target.checked);
+                        if (event.target.checked) setDraftApprovalError("");
+                      }}
+                    />
+                    <span>I approve this evidence draft and want to save it.</span>
+                  </label>
+                  {draftApprovalError ? <p className="inline-error">{draftApprovalError}</p> : null}
                   <div className="form-actions">
                     <button className="primary compact-btn" type="button" disabled={uploadBusy} onClick={() => handleSaveDraft("")}>{uploadBusy ? "Saving..." : "Save Evidence"}</button>
                     <button className="ghost compact-btn" type="button" onClick={() => setDraft(null)}>Start over</button>

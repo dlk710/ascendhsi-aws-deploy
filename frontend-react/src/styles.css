@@ -912,6 +912,12 @@ input::placeholder, textarea::placeholder {
   font-weight: 900;
 }
 .intake-helper { color: var(--muted); font-size: 0.9rem; margin: 12px 0 14px; }
+.inline-error {
+  margin: 8px 0 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
 .route-toggle {
   display: inline-grid;
   grid-template-columns: repeat(2, auto);

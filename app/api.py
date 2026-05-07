@@ -79,6 +79,17 @@ def _auth_error(error: str, status_code: int = 401) -> None:
     raise HTTPException(status_code=status_code, detail={"ok": False, "status": "failed", "error": error})
 
 
+def optional_member_user(token: str = "") -> dict | None:
+    parsed = token.removeprefix("Bearer ").strip()
+    if not parsed:
+        return None
+    try:
+        return service().member_session(parsed)
+    except ValueError as exc:
+        _auth_error(str(exc))
+    return None
+
+
 def require_admin_user(authorization: str | None = Header(None)) -> dict:
     parsed = bearer_token(authorization)
     try:
@@ -678,22 +689,17 @@ def update_builder_task(task_id: str, status: str = Form(""), due_date: str = Fo
 
 @app.get("/api/member/dashboard")
 def dashboard(token: str = Header(alias="Authorization", default="")) -> dict:
-    parsed = token.removeprefix("Bearer ").strip()
-    if not parsed:
+    member = optional_member_user(token)
+    if not member:
         return service().dashboard()
-    try:
-        member = service().member_session(parsed)
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
     return service().member_dashboard(member["client_id"], member["case_id"], member.get("display_name", ""))
 
 
 @app.get("/api/member/profile")
 def member_profile(token: str = Header(alias="Authorization", default="")) -> dict:
-    parsed = token.removeprefix("Bearer ").strip()
-    if not parsed:
+    member = optional_member_user(token)
+    if not member:
         return service().member_profile()
-    member = service().member_session(parsed)
     return service().member_profile(member["client_id"], member["case_id"])
 
 
@@ -739,8 +745,7 @@ def update_member_profile(
     profile_confirmed: bool = Form(False),
 ) -> dict:
     try:
-        parsed = token.removeprefix("Bearer ").strip()
-        member = service().member_session(parsed) if parsed else None
+        member = optional_member_user(token)
         return service().update_member_profile(
             client_id=member["client_id"] if member else None,
             case_id=member["case_id"] if member else None,
@@ -798,10 +803,9 @@ def evidence(q: str = "") -> list[dict]:
 
 @app.get("/api/member/planner")
 def planner_items(token: str = Header(alias="Authorization", default="")) -> list[dict]:
-    parsed = token.removeprefix("Bearer ").strip()
-    if not parsed:
+    member = optional_member_user(token)
+    if not member:
         return service().planner_items()
-    member = service().member_session(parsed)
     return service().planner_items(member["client_id"], member["case_id"])
 
 
@@ -819,8 +823,7 @@ def create_planner_item(
     folder_id: str = Form(""),
 ) -> dict:
     try:
-        parsed = token.removeprefix("Bearer ").strip()
-        member = service().member_session(parsed) if parsed else None
+        member = optional_member_user(token)
         return service().create_planner_item(
             member_role=member_role,
             issued_by=issued_by,
@@ -853,8 +856,7 @@ def update_planner_item(
     folder_id: str = Form(""),
 ) -> dict:
     try:
-        parsed = token.removeprefix("Bearer ").strip()
-        member = service().member_session(parsed) if parsed else None
+        member = optional_member_user(token)
         kwargs = {}
         for key, value in {
             "member_role": member_role,
@@ -882,8 +884,7 @@ def update_planner_item(
 @app.delete("/api/member/planner/{item_id}")
 def delete_planner_item(item_id: str, token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        parsed = token.removeprefix("Bearer ").strip()
-        member = service().member_session(parsed) if parsed else None
+        member = optional_member_user(token)
         return service().delete_planner_item(item_id, member["client_id"] if member else None, member["case_id"] if member else None)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
@@ -892,8 +893,7 @@ def delete_planner_item(item_id: str, token: str = Header(alias="Authorization",
 @app.get("/api/criteria/{criterion_code}/workspace")
 def criterion_workspace(criterion_code: str, q: str = "", token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        parsed = token.removeprefix("Bearer ").strip()
-        member = service().member_session(parsed) if parsed else None
+        member = optional_member_user(token)
         return service().criterion_workspace(
             criterion_code,
             q.strip(),
@@ -937,8 +937,7 @@ async def upload_evidence(
 ) -> dict:
     try:
         payload = await file.read()
-        parsed = token.removeprefix("Bearer ").strip()
-        member = service().member_session(parsed) if parsed else None
+        member = optional_member_user(token)
         return service().upload_evidence(
             criterion_code=criterion_code,
             document_type=document_type,
@@ -976,8 +975,7 @@ async def upload_evidence(
 @app.post("/api/criteria/{criterion_code}/folders")
 def create_folder(criterion_code: str, name: str = Form(...), parent_id: str = Form(""), color: str = Form("#1f6f5b"), token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        parsed = token.removeprefix("Bearer ").strip()
-        member = service().member_session(parsed) if parsed else None
+        member = optional_member_user(token)
         return service().create_folder(
             criterion_code,
             name,
@@ -993,8 +991,7 @@ def create_folder(criterion_code: str, name: str = Form(...), parent_id: str = F
 @app.patch("/api/folders/{folder_id}")
 def update_folder(folder_id: str, name: str = Form(""), color: str = Form(""), parent_id: str = Form(""), token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        parsed = token.removeprefix("Bearer ").strip()
-        member = service().member_session(parsed) if parsed else None
+        member = optional_member_user(token)
         kwargs = {}
         if name != "":
             kwargs["name"] = name
@@ -1014,8 +1011,7 @@ def update_folder(folder_id: str, name: str = Form(""), color: str = Form(""), p
 @app.delete("/api/folders/{folder_id}")
 def delete_folder(folder_id: str, token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        parsed = token.removeprefix("Bearer ").strip()
-        member = service().member_session(parsed) if parsed else None
+        member = optional_member_user(token)
         return service().delete_folder(folder_id, member["client_id"] if member else None, member["case_id"] if member else None)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
@@ -1024,8 +1020,7 @@ def delete_folder(folder_id: str, token: str = Header(alias="Authorization", def
 @app.patch("/api/evidence/{evidence_id}/folder")
 def move_evidence(evidence_id: str, folder_id: str = Form(""), token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        parsed = token.removeprefix("Bearer ").strip()
-        member = service().member_session(parsed) if parsed else None
+        member = optional_member_user(token)
         return service().move_evidence_to_folder(
             evidence_id,
             folder_id or None,
@@ -1038,8 +1033,7 @@ def move_evidence(evidence_id: str, folder_id: str = Form(""), token: str = Head
 
 @app.delete("/api/evidence/{evidence_id}")
 def delete_evidence(evidence_id: str, token: str = Header(alias="Authorization", default="")) -> dict:
-    parsed = token.removeprefix("Bearer ").strip()
-    member = service().member_session(parsed) if parsed else None
+    member = optional_member_user(token)
     result = service().archive_evidence(
         evidence_id,
         "member_delete",

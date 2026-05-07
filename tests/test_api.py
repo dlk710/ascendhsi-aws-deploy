@@ -169,6 +169,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         service.admin_operational_dashboard.assert_not_called()
 
+    def test_admin_operations_rejects_member_token(self):
+        service = Mock()
+        service.staff_session.side_effect = ValueError("Session not found")
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/admin/operations", headers={"Authorization": "Bearer sess_member"})
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"]["status"], "failed")
+        service.admin_operational_dashboard.assert_not_called()
+
     def test_admin_costs_uses_service(self):
         service = Mock()
         service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
@@ -490,6 +499,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.headers["content-type"].split(";")[0], "application/json")
         self.assertEqual(response.json()["detail"]["status"], "failed")
 
+    def test_member_profile_rejects_non_member_token_as_json(self):
+        service = Mock()
+        service.member_session.side_effect = ValueError("Session not found")
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/member/profile", headers={"Authorization": "Bearer ssess_leader"})
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers["content-type"].split(";")[0], "application/json")
+        self.assertEqual(response.json()["detail"]["status"], "failed")
+
     def test_update_member_profile_calls_service(self):
         service = Mock()
         service.update_member_profile.return_value = {"first_name": "Vas", "last_name": "D", "email": "vas@ascend.com"}
@@ -576,6 +594,15 @@ class ApiTests(unittest.TestCase):
             response = self.client.get("/api/member/planner")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]["member_role"], "Reviewer")
+
+    def test_planner_items_rejects_non_member_token_as_json(self):
+        service = Mock()
+        service.member_session.side_effect = ValueError("Session not found")
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/member/planner", headers={"Authorization": "Bearer ssess_leader"})
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers["content-type"].split(";")[0], "application/json")
+        self.assertEqual(response.json()["detail"]["status"], "failed")
 
     def test_create_planner_item_calls_service(self):
         service = Mock()
