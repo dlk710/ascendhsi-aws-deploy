@@ -1680,6 +1680,9 @@ class EvidenceService:
                 "title": "AWS Cloud Costs",
                 "detail": "AWS Cost Explorer has not been refreshed yet.",
                 "currency": "USD",
+                "source": "AWS Cost Explorer",
+                "metric": "UnblendedCost",
+                "precision_note": "Sub-cent AWS charges are preserved by the API and shown as < $0.01 in the portal.",
                 "recurring": [],
                 "services": [],
                 "trend": [],
@@ -1689,6 +1692,9 @@ class EvidenceService:
                 "title": "OpenAI Costs",
                 "detail": "OpenAI billing has not been refreshed yet.",
                 "currency": "USD",
+                "billing_configured": False,
+                "required_secret": "OPENAI_ADMIN_API_KEY",
+                "usage_source": "Portal operational audit log",
                 "recurring": [],
                 "line_items": [],
                 "trend": [],
@@ -1779,6 +1785,9 @@ class EvidenceService:
                 "title": "AWS Cloud Costs",
                 "detail": "Install boto3 and provide AWS Cost Explorer credentials to enable this refresh.",
                 "currency": "USD",
+                "source": "AWS Cost Explorer",
+                "metric": "UnblendedCost",
+                "precision_note": "Sub-cent AWS charges are preserved by the API and shown as < $0.01 in the portal.",
                 "recurring": [],
                 "services": [],
                 "trend": [],
@@ -1828,10 +1837,13 @@ class EvidenceService:
                 "title": "AWS Cloud Costs",
                 "detail": detail,
                 "currency": "USD",
+                "source": "AWS Cost Explorer",
+                "metric": "UnblendedCost",
+                "precision_note": "AWS Cost Explorer may lag the AWS Console by up to 24 hours. Sub-cent actuals are shown as < $0.01 instead of $0.00.",
                 "recurring": [
-                    {"period": "Daily", "actual": round(daily_actual, 2), "projected": round(daily_projected, 2), "basis": "Trailing 30-day average vs current monthly forecast run rate."},
-                    {"period": "Monthly", "actual": round(month_actual, 2), "projected": round(month_projected, 2), "basis": projection_basis},
-                    {"period": "Yearly", "actual": round(year_actual, 2), "projected": round(yearly_projected, 2), "basis": "Year-to-date actual vs annualized current monthly forecast."},
+                    {"period": "Daily", "actual": self._normalize_cost_amount(daily_actual), "projected": self._normalize_cost_amount(daily_projected), "basis": "Trailing 30-day average vs current monthly forecast run rate."},
+                    {"period": "Monthly", "actual": self._normalize_cost_amount(month_actual), "projected": self._normalize_cost_amount(month_projected), "basis": projection_basis},
+                    {"period": "Yearly", "actual": self._normalize_cost_amount(year_actual), "projected": self._normalize_cost_amount(yearly_projected), "basis": "Year-to-date actual vs annualized current monthly forecast."},
                 ],
                 "services": self._aws_service_breakdown(service_costs),
                 "trend": self._aws_daily_trend(month_daily or trailing_daily),
@@ -1849,6 +1861,9 @@ class EvidenceService:
                 "title": "AWS Cloud Costs",
                 "detail": detail,
                 "currency": "USD",
+                "source": "AWS Cost Explorer",
+                "metric": "UnblendedCost",
+                "precision_note": "Sub-cent AWS charges are preserved by the API and shown as < $0.01 in the portal.",
                 "recurring": [],
                 "services": [],
                 "trend": [],
@@ -1859,6 +1874,9 @@ class EvidenceService:
                 "title": "AWS Cloud Costs",
                 "detail": f"AWS Cost Explorer refresh failed: {exc}",
                 "currency": "USD",
+                "source": "AWS Cost Explorer",
+                "metric": "UnblendedCost",
+                "precision_note": "Sub-cent AWS charges are preserved by the API and shown as < $0.01 in the portal.",
                 "recurring": [],
                 "services": [],
                 "trend": [],
@@ -1884,6 +1902,12 @@ class EvidenceService:
             if not next_token:
                 break
         return results
+
+    def _normalize_cost_amount(self, amount: float) -> float:
+        value = float(amount or 0.0)
+        if abs(value) < 0.0000000001:
+            return 0.0
+        return round(value, 10)
 
     def _aws_forecast_total(self, client, start: date, end: date, granularity: str) -> float:
         response = client.get_cost_forecast(
@@ -1911,7 +1935,7 @@ class EvidenceService:
                 amount = float(((group.get("Metrics") or {}).get("UnblendedCost") or {}).get("Amount") or 0.0)
                 grouped[name] = grouped.get(name, 0.0) + amount
         return [
-            {"name": name, "amount": round(amount, 2)}
+            {"name": name, "amount": self._normalize_cost_amount(amount)}
             for name, amount in sorted(grouped.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
         ]
 
@@ -1921,7 +1945,7 @@ class EvidenceService:
             trend.append(
                 {
                     "date": item.get("TimePeriod", {}).get("Start", ""),
-                    "amount": round(float(((item.get("Total") or {}).get("UnblendedCost") or {}).get("Amount") or 0.0), 2),
+                    "amount": self._normalize_cost_amount(float(((item.get("Total") or {}).get("UnblendedCost") or {}).get("Amount") or 0.0)),
                 }
             )
         return trend
@@ -1932,8 +1956,11 @@ class EvidenceService:
             return {
                 "status": "unavailable",
                 "title": "OpenAI Costs",
-                "detail": "Set OPENAI_ADMIN_API_KEY to enable OpenAI organization cost refresh.",
+                "detail": "OpenAI actual billing is not connected. Add OPENAI_ADMIN_API_KEY to AWS Secrets Manager/ECS to fetch organization costs; operational AI usage below is still tracked from portal audit logs.",
                 "currency": "USD",
+                "billing_configured": False,
+                "required_secret": "OPENAI_ADMIN_API_KEY",
+                "usage_source": "Portal operational audit log",
                 "recurring": [],
                 "line_items": [],
                 "trend": [],
@@ -1965,10 +1992,13 @@ class EvidenceService:
                 "title": "OpenAI Costs",
                 "detail": "Refreshed from the OpenAI organization costs endpoint.",
                 "currency": "USD",
+                "billing_configured": True,
+                "required_secret": "OPENAI_ADMIN_API_KEY",
+                "usage_source": "OpenAI organization costs endpoint plus portal operational audit log",
                 "recurring": [
-                    {"period": "Daily", "actual": round(daily_actual, 2), "projected": round(daily_projected, 2), "basis": "Trailing 30-day average vs current month run rate."},
-                    {"period": "Monthly", "actual": round(month_actual, 2), "projected": round(month_projected, 2), "basis": "Month-to-date actual vs current month run rate projection."},
-                    {"period": "Yearly", "actual": round(year_actual, 2), "projected": round(yearly_projected, 2), "basis": "Year-to-date actual vs annualized current monthly run rate."},
+                    {"period": "Daily", "actual": self._normalize_cost_amount(daily_actual), "projected": self._normalize_cost_amount(daily_projected), "basis": "Trailing 30-day average vs current month run rate."},
+                    {"period": "Monthly", "actual": self._normalize_cost_amount(month_actual), "projected": self._normalize_cost_amount(month_projected), "basis": "Month-to-date actual vs current month run rate projection."},
+                    {"period": "Yearly", "actual": self._normalize_cost_amount(year_actual), "projected": self._normalize_cost_amount(yearly_projected), "basis": "Year-to-date actual vs annualized current monthly run rate."},
                 ],
                 "line_items": self._openai_line_item_breakdown(line_item_buckets),
                 "trend": self._openai_daily_trend(month_buckets),
@@ -1982,6 +2012,9 @@ class EvidenceService:
                 "title": "OpenAI Costs",
                 "detail": f"OpenAI billing refresh failed: {exc}",
                 "currency": "USD",
+                "billing_configured": bool(admin_key),
+                "required_secret": "OPENAI_ADMIN_API_KEY",
+                "usage_source": "Portal operational audit log",
                 "recurring": [],
                 "line_items": [],
                 "trend": [],
@@ -2023,7 +2056,7 @@ class EvidenceService:
                 name = result.get("line_item") or "Unspecified"
                 grouped[name] = grouped.get(name, 0.0) + float(((result.get("amount") or {}).get("value")) or 0.0)
         return [
-            {"name": name, "amount": round(amount, 2)}
+            {"name": name, "amount": self._normalize_cost_amount(amount)}
             for name, amount in sorted(grouped.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
         ]
 
@@ -2033,10 +2066,7 @@ class EvidenceService:
             trend.append(
                 {
                     "date": datetime.fromtimestamp(int(bucket.get("start_time") or 0), tz=timezone.utc).strftime("%Y-%m-%d"),
-                    "amount": round(
-                        sum(float(((result.get("amount") or {}).get("value")) or 0.0) for result in bucket.get("results", [])),
-                        2,
-                    ),
+                    "amount": self._normalize_cost_amount(sum(float(((result.get("amount") or {}).get("value")) or 0.0) for result in bucket.get("results", []))),
                 }
             )
         return trend

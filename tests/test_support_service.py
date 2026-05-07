@@ -131,6 +131,50 @@ class SupportTicketServiceTests(unittest.TestCase):
         self.assertEqual(summary["recurring"][1]["actual"], 2.0)
         self.assertEqual(summary["services"][0]["name"], "Amazon Simple Storage Service")
 
+    def test_aws_cost_summary_preserves_sub_cent_actuals(self):
+        class FakeCostExplorerClient:
+            def get_cost_and_usage(self, **request):
+                if request.get("GroupBy"):
+                    return {
+                        "ResultsByTime": [
+                            {
+                                "Groups": [
+                                    {
+                                        "Keys": ["Amazon Elastic Load Balancing"],
+                                        "Metrics": {"UnblendedCost": {"Amount": "0.0042", "Unit": "USD"}},
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                return {
+                    "ResultsByTime": [
+                        {
+                            "TimePeriod": {"Start": "2026-05-01"},
+                            "Total": {"UnblendedCost": {"Amount": "0.0021", "Unit": "USD"}},
+                        },
+                        {
+                            "TimePeriod": {"Start": "2026-05-02"},
+                            "Total": {"UnblendedCost": {"Amount": "0.0021", "Unit": "USD"}},
+                        },
+                    ]
+                }
+
+            def get_cost_forecast(self, **_request):
+                raise ClientError(
+                    {"Error": {"Code": "DataUnavailableException", "Message": "Insufficient amount of historical data."}},
+                    "GetCostForecast",
+                )
+
+        with patch("boto3.client", return_value=FakeCostExplorerClient()):
+            summary = self.service._fetch_aws_cost_summary()
+
+        self.assertEqual(summary["status"], "available")
+        self.assertEqual(summary["recurring"][1]["actual"], 0.0042)
+        self.assertEqual(summary["services"][0]["amount"], 0.0042)
+        self.assertEqual(summary["trend"][0]["amount"], 0.0021)
+        self.assertIn("Sub-cent", summary["precision_note"])
+
     def test_member_support_ticket_requires_description_for_each_attachment(self):
         with self.assertRaisesRegex(ValueError, "description is required for each attachment"):
             self.service.report_support_ticket(

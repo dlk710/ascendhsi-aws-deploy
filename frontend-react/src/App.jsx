@@ -630,6 +630,17 @@ function formatMoney(value, currency = "USD") {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: currency || "USD", maximumFractionDigits: 2 }).format(amount);
 }
 
+function formatCostAmount(value, currency = "USD") {
+  if (value === null || value === undefined || value === "") return "N/A";
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "N/A";
+  if (amount !== 0 && Math.abs(amount) < 0.01) {
+    const penny = new Intl.NumberFormat("en-US", { style: "currency", currency: currency || "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(0.01);
+    return `${amount < 0 ? "-" : ""}< ${penny}`;
+  }
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: currency || "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
+}
+
 function formatResponseMs(value) {
   const amount = Number(value || 0);
   if (!amount) return "N/A";
@@ -5767,6 +5778,10 @@ function App() {
     const costData = adminCosts || {};
     const awsCosts = costData.aws || {};
     const openaiCosts = costData.openai || {};
+    const costTrendRows = [
+      ...(awsCosts.trend || []).slice(-7).map((item) => ({ ...item, source: "AWS", currency: awsCosts.currency })),
+      ...(openaiCosts.trend || []).slice(-7).map((item) => ({ ...item, source: "OpenAI", currency: openaiCosts.currency })),
+    ];
     const debugMember = adminDashboard?.member_debug;
     const supportSummary = adminDashboard?.support_summary || {};
     const supportTickets = adminDashboard?.support_tickets || [];
@@ -5948,119 +5963,187 @@ function App() {
                   </div>
                 </section>
 
-                <section className="builder-layout" style={{ marginTop: "18px" }}>
-                  <section className="panel">
-                    <div className="section-kicker">AWS Cloud</div>
-                    <h3 className="section-title">Actuals vs projected</h3>
+                <section className="cost-explorer-grid">
+                  <section className="panel cost-ledger-panel">
+                    <div className="cost-section-head">
+                      <div>
+                        <div className="section-kicker">AWS Cloud</div>
+                        <h3 className="section-title">Actuals vs projected</h3>
+                      </div>
+                      <span className={`status-pill ${healthStatusClass(awsCosts.status)}`}>{awsCosts.status || "unavailable"}</span>
+                    </div>
                     <p className="section-intro">{awsCosts.detail || "AWS cost data is not available yet."}</p>
-                    <div className="task-mini-list">
+                    <div className="cost-ledger-table">
+                      <div className="cost-ledger-row cost-ledger-head">
+                        <span>Period</span>
+                        <span>Actual</span>
+                        <span>Projected</span>
+                        <span>Basis</span>
+                      </div>
                       {(awsCosts.recurring || []).length ? awsCosts.recurring.map((item) => (
-                        <article key={item.period} className="task-mini-item">
+                        <div key={item.period} className="cost-ledger-row">
                           <strong>{item.period}</strong>
-                          <p>Actual {formatMoney(item.actual, awsCosts.currency)} • Projected {formatMoney(item.projected, awsCosts.currency)}</p>
-                          <div className="task-mini-meta">
-                            <span>{item.basis}</span>
-                            <span className={`status-pill ${awsCosts.status === "available" ? "completed" : "blocked"}`}>{awsCosts.status || "unavailable"}</span>
-                          </div>
-                        </article>
-                      )) : <p className="empty-state">No AWS cost data available. Configure AWS Cost Explorer credentials and run Refresh.</p>}
+                          <span>{formatCostAmount(item.actual, awsCosts.currency)}</span>
+                          <span>{formatCostAmount(item.projected, awsCosts.currency)}</span>
+                          <small>{item.basis}</small>
+                        </div>
+                      )) : (
+                        <div className="cost-ledger-row cost-ledger-empty">
+                          <span>No AWS cost data yet. Refresh after Cost Explorer credentials are available.</span>
+                        </div>
+                      )}
                     </div>
+                    <p className="cost-source-note">{awsCosts.source || "AWS Cost Explorer"} • {awsCosts.metric || "UnblendedCost"} • {awsCosts.precision_note || "Sub-cent amounts are preserved."}</p>
                   </section>
 
-                  <section className="panel">
-                    <div className="section-kicker">AWS Breakdown</div>
-                    <h3 className="section-title">Top services</h3>
-                    <p className="section-intro">Current month spend split by AWS service.</p>
-                    <div className="task-mini-list">
+                  <section className="panel cost-ledger-panel">
+                    <div className="cost-section-head">
+                      <div>
+                        <div className="section-kicker">AWS Breakdown</div>
+                        <h3 className="section-title">Current month by service</h3>
+                      </div>
+                    </div>
+                    <p className="section-intro">Service-level month-to-date actuals from AWS Cost Explorer.</p>
+                    <div className="cost-service-table">
+                      <div className="cost-service-row cost-ledger-head">
+                        <span>Service</span>
+                        <span>MTD actual</span>
+                      </div>
                       {(awsCosts.services || []).length ? awsCosts.services.map((item) => (
-                        <article key={item.name} className="task-mini-item">
+                        <div key={item.name} className="cost-service-row">
                           <strong>{item.name}</strong>
-                          <div className="task-mini-meta">
-                            <span>{formatMoney(item.amount, awsCosts.currency)}</span>
-                          </div>
-                        </article>
-                      )) : <p className="empty-state">No AWS service breakdown available yet.</p>}
+                          <span>{formatCostAmount(item.amount, awsCosts.currency)}</span>
+                        </div>
+                      )) : (
+                        <div className="cost-service-row cost-ledger-empty">
+                          <span>No AWS service breakdown available yet.</span>
+                        </div>
+                      )}
                     </div>
                   </section>
                 </section>
 
-                <section className="builder-layout" style={{ marginTop: "18px" }}>
-                  <section className="panel">
-                    <div className="section-kicker">OpenAI Billing</div>
-                    <h3 className="section-title">Actuals vs projected</h3>
+                <section className="cost-explorer-grid">
+                  <section className="panel cost-ledger-panel">
+                    <div className="cost-section-head">
+                      <div>
+                        <div className="section-kicker">OpenAI Billing</div>
+                        <h3 className="section-title">Actuals vs projected</h3>
+                      </div>
+                      <span className={`status-pill ${healthStatusClass(openaiCosts.status)}`}>{openaiCosts.status || "unavailable"}</span>
+                    </div>
                     <p className="section-intro">{openaiCosts.detail || "OpenAI billing data is not available yet."}</p>
-                    <div className="task-mini-list">
+                    <div className="cost-ledger-table">
+                      <div className="cost-ledger-row cost-ledger-head">
+                        <span>Period</span>
+                        <span>Actual</span>
+                        <span>Projected</span>
+                        <span>Basis</span>
+                      </div>
                       {(openaiCosts.recurring || []).length ? openaiCosts.recurring.map((item) => (
-                        <article key={item.period} className="task-mini-item">
+                        <div key={item.period} className="cost-ledger-row">
                           <strong>{item.period}</strong>
-                          <p>Actual {formatMoney(item.actual, openaiCosts.currency)} • Projected {formatMoney(item.projected, openaiCosts.currency)}</p>
-                          <div className="task-mini-meta">
-                            <span>{item.basis}</span>
-                            <span className={`status-pill ${openaiCosts.status === "available" ? "completed" : "blocked"}`}>{openaiCosts.status || "unavailable"}</span>
-                          </div>
-                        </article>
-                      )) : <p className="empty-state">No OpenAI billing data available. Set an admin billing key and run Refresh.</p>}
+                          <span>{formatCostAmount(item.actual, openaiCosts.currency)}</span>
+                          <span>{formatCostAmount(item.projected, openaiCosts.currency)}</span>
+                          <small>{item.basis}</small>
+                        </div>
+                      )) : (
+                        <div className="cost-ledger-row cost-ledger-empty">
+                          <span>Actual OpenAI billing is unavailable until {openaiCosts.required_secret || "OPENAI_ADMIN_API_KEY"} is configured.</span>
+                        </div>
+                      )}
                     </div>
+                    <p className="cost-source-note">Usage source: {openaiCosts.usage_source || "Portal operational audit log"}</p>
                   </section>
 
-                  <section className="panel">
-                    <div className="section-kicker">OpenAI Usage</div>
-                    <h3 className="section-title">AI calls by portal and function</h3>
-                    <p className="section-intro">Operational AI calls tracked inside the portal, split by portal and function so admin can see where usage is concentrated.</p>
-                    <div className="metrics-grid cost-mini-grid">
-                      <MetricCard label="Tracked AI Calls" value={openaiCosts.call_totals?.total_calls || 0} />
-                      <MetricCard label="OpenAI-Sourced" value={openaiCosts.call_totals?.openai_calls || 0} />
-                      <MetricCard label="Fallback" value={openaiCosts.call_totals?.fallback_calls || 0} />
-                      <MetricCard label="Failed" value={openaiCosts.call_totals?.failed_calls || 0} />
+                  <section className="panel cost-ledger-panel">
+                    <div className="cost-section-head">
+                      <div>
+                        <div className="section-kicker">OpenAI Usage</div>
+                        <h3 className="section-title">AI calls by portal</h3>
+                      </div>
                     </div>
-                    <div className="task-mini-list" style={{ marginTop: "14px" }}>
+                    <div className="cost-usage-strip">
+                      <span><strong>{openaiCosts.call_totals?.total_calls || 0}</strong> Total</span>
+                      <span><strong>{openaiCosts.call_totals?.openai_calls || 0}</strong> OpenAI</span>
+                      <span><strong>{openaiCosts.call_totals?.fallback_calls || 0}</strong> Fallback</span>
+                      <span><strong>{openaiCosts.call_totals?.failed_calls || 0}</strong> Failed</span>
+                    </div>
+                    <div className="cost-usage-table">
+                      <div className="cost-usage-row cost-ledger-head">
+                        <span>Portal</span>
+                        <span>Function</span>
+                        <span>Total</span>
+                        <span>OpenAI</span>
+                        <span>Fallback</span>
+                        <span>Failed</span>
+                      </div>
                       {(openaiCosts.call_breakdown || []).length ? openaiCosts.call_breakdown.map((item) => (
-                        <article key={`${item.portal}_${item.function}`} className="task-mini-item">
-                          <strong>{item.portal} • {item.function}</strong>
-                          <div className="task-mini-meta">
-                            <span>Total {item.total_calls}</span>
-                            <span>OpenAI {item.openai_calls}</span>
-                            <span>Fallback {item.fallback_calls}</span>
-                            <span>Failed {item.failed_calls}</span>
-                          </div>
-                        </article>
-                      )) : <p className="empty-state">No tracked AI calls yet.</p>}
+                        <div key={`${item.portal}_${item.function}`} className="cost-usage-row">
+                          <strong>{item.portal}</strong>
+                          <span>{item.function}</span>
+                          <span>{item.total_calls}</span>
+                          <span>{item.openai_calls}</span>
+                          <span>{item.fallback_calls}</span>
+                          <span>{item.failed_calls}</span>
+                        </div>
+                      )) : (
+                        <div className="cost-usage-row cost-ledger-empty">
+                          <span>No tracked AI calls yet.</span>
+                        </div>
+                      )}
                     </div>
                   </section>
                 </section>
 
-                <section className="builder-layout" style={{ marginTop: "18px" }}>
-                  <section className="panel">
-                    <div className="section-kicker">OpenAI Billing Breakdown</div>
-                    <h3 className="section-title">Line items</h3>
-                    <p className="section-intro">Current month OpenAI charges grouped by line item when the billing API returns them.</p>
-                    <div className="task-mini-list">
+                <section className="cost-explorer-grid">
+                  <section className="panel cost-ledger-panel">
+                    <div className="cost-section-head">
+                      <div>
+                        <div className="section-kicker">OpenAI Billing Breakdown</div>
+                        <h3 className="section-title">Line items</h3>
+                      </div>
+                    </div>
+                    <div className="cost-service-table">
+                      <div className="cost-service-row cost-ledger-head">
+                        <span>Line item</span>
+                        <span>MTD actual</span>
+                      </div>
                       {(openaiCosts.line_items || []).length ? openaiCosts.line_items.map((item) => (
-                        <article key={item.name} className="task-mini-item">
+                        <div key={item.name} className="cost-service-row">
                           <strong>{item.name}</strong>
-                          <div className="task-mini-meta">
-                            <span>{formatMoney(item.amount, openaiCosts.currency)}</span>
-                          </div>
-                        </article>
-                      )) : <p className="empty-state">No OpenAI line-item breakdown available yet.</p>}
+                          <span>{formatCostAmount(item.amount, openaiCosts.currency)}</span>
+                        </div>
+                      )) : (
+                        <div className="cost-service-row cost-ledger-empty">
+                          <span>No OpenAI line-item breakdown available yet.</span>
+                        </div>
+                      )}
                     </div>
                   </section>
 
-                  <section className="panel">
-                    <div className="section-kicker">Recent Trend</div>
-                    <h3 className="section-title">Daily cost trail</h3>
-                    <p className="section-intro">Most recent daily cost points pulled during the latest refresh.</p>
-                    <div className="task-mini-list">
-                      {[...(awsCosts.trend || []).slice(-7).map((item) => ({ ...item, source: "AWS", currency: awsCosts.currency })), ...(openaiCosts.trend || []).slice(-7).map((item) => ({ ...item, source: "OpenAI", currency: openaiCosts.currency }))].length ? (
-                        [...(awsCosts.trend || []).slice(-7).map((item) => ({ ...item, source: "AWS", currency: awsCosts.currency })), ...(openaiCosts.trend || []).slice(-7).map((item) => ({ ...item, source: "OpenAI", currency: openaiCosts.currency }))].map((item) => (
-                          <article key={`${item.source}_${item.date}`} className="task-mini-item">
-                            <strong>{item.source} • {item.date}</strong>
-                            <div className="task-mini-meta">
-                              <span>{formatMoney(item.amount, item.currency)}</span>
-                            </div>
-                          </article>
-                        ))
-                      ) : <p className="empty-state">No daily trend points available yet.</p>}
+                  <section className="panel cost-ledger-panel">
+                    <div className="cost-section-head">
+                      <div>
+                        <div className="section-kicker">Recent Trend</div>
+                        <h3 className="section-title">Daily cost trail</h3>
+                      </div>
+                    </div>
+                    <div className="cost-service-table">
+                      <div className="cost-service-row cost-ledger-head">
+                        <span>Source and date</span>
+                        <span>Amount</span>
+                      </div>
+                      {costTrendRows.length ? costTrendRows.map((item) => (
+                        <div key={`${item.source}_${item.date}`} className="cost-service-row">
+                          <strong>{item.source} • {item.date}</strong>
+                          <span>{formatCostAmount(item.amount, item.currency)}</span>
+                        </div>
+                      )) : (
+                        <div className="cost-service-row cost-ledger-empty">
+                          <span>No daily trend points available yet.</span>
+                        </div>
+                      )}
                     </div>
                   </section>
                 </section>
