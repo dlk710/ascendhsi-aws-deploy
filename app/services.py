@@ -1400,7 +1400,10 @@ class EvidenceService:
             "response_times": self._admin_response_time_series(portal_health),
             "recent_errors": recent_errors,
             "login_audit": login_audit,
+            "audit_log": login_audit,
             "member_debug": debug_member,
+            "user_management": self._admin_user_management_summary(),
+            "product_ops": self._admin_product_ops_controls(portal_health, support_counts, error_count),
             "support_summary": {
                 "total_count": int(support_counts.get("total_count") or 0),
                 "open_count": int(support_counts.get("open_count") or 0),
@@ -1518,6 +1521,69 @@ class EvidenceService:
                 }
             )
         return result
+
+    def _admin_user_management_summary(self) -> dict:
+        member_accounts = one(self.conn, "SELECT COUNT(*) AS count FROM member_accounts") or {"count": 0}
+        builder_accounts = one(self.conn, "SELECT COUNT(*) AS count FROM profile_builder_accounts") or {"count": 0}
+        staff_by_role = rows(
+            self.conn,
+            """
+            SELECT role, COUNT(*) AS count
+            FROM staff_accounts
+            GROUP BY role
+            ORDER BY role
+            """,
+        )
+        roles = {
+            "member": int(member_accounts.get("count") or 0),
+            "profile_builder": int(builder_accounts.get("count") or 0),
+        }
+        for row in staff_by_role:
+            roles[str(row.get("role") or "staff")] = int(row.get("count") or 0)
+        recent_login = rows(
+            self.conn,
+            """
+            SELECT actor_role, actor_key, portal, status, created_at
+            FROM operational_events
+            WHERE event_type IN ('member_auth', 'builder_auth', 'leader_auth', 'attorney_auth', 'admin_auth', 'staff_auth')
+            ORDER BY created_at DESC
+            LIMIT 5
+            """,
+        )
+        return {
+            "total_accounts": sum(roles.values()),
+            "roles": roles,
+            "recent_login": recent_login,
+            "controls": [
+                {"label": "Role inventory", "status": "active", "detail": "Numeric account IDs and role counts are visible for admin review."},
+                {"label": "Login audit", "status": "active", "detail": "Authentication events include portal, actor, status, timestamp, IP, and user-agent metadata."},
+                {"label": "RBAC administration", "status": "planned", "detail": "Full role-permission editing remains a future security workstream."},
+            ],
+        }
+
+    def _admin_product_ops_controls(self, portal_health: list[dict], support_counts: dict, error_count: dict) -> dict:
+        issue_counts = one(
+            self.conn,
+            """
+            SELECT
+              COUNT(*) AS total_count,
+              SUM(CASE WHEN status IN ('open', 'triaged', 'in_progress', 'blocked') THEN 1 ELSE 0 END) AS active_count,
+              SUM(CASE WHEN priority IN ('P0', 'P1') AND status NOT IN ('fixed', 'closed') THEN 1 ELSE 0 END) AS p0_p1_count
+            FROM product_issue_logs
+            """,
+        ) or {"total_count": 0, "active_count": 0, "p0_p1_count": 0}
+        unhealthy = [item for item in portal_health if str(item.get("status", "")).lower() not in {"online", "healthy"}]
+        return {
+            "readiness_rows": [
+                {"area": "Issue Portal", "status": "active", "count": int(issue_counts.get("active_count") or 0), "detail": "Bugs are tracked with priority, owner context, timestamps, and AWS mirror state."},
+                {"area": "Cost Explorer", "status": "active", "count": 1, "detail": "AWS and OpenAI cost summaries are available from Admin Cost Explorer."},
+                {"area": "Platform Health", "status": "active", "count": len(portal_health), "detail": "Portals and AWS stack components are monitored in one compact health table."},
+                {"area": "Audit Log Viewer", "status": "active", "count": int(error_count.get("count") or 0), "detail": "Login and operational events are visible for debugging and journey tracing."},
+                {"area": "Support Queue", "status": "active", "count": int(support_counts.get("open_count") or 0), "detail": "User-reported issues are triaged with priority and reproduction context."},
+            ],
+            "p0_p1_open": int(issue_counts.get("p0_p1_count") or 0),
+            "unhealthy_stack_count": len(unhealthy),
+        }
 
     def admin_cost_dashboard(self) -> dict:
         ai_calls = self._ai_call_summary()
@@ -2055,7 +2121,7 @@ class EvidenceService:
         case = one(self.conn, "SELECT * FROM cases WHERE id = ?", (client["case_id"],))
         if not case:
             raise ValueError("Member case not found")
-        profile = one(self.conn, "SELECT preferred_name, first_name, last_name FROM member_profiles WHERE client_id = ? AND case_id = ?", (client["client_id"], client["case_id"])) or {}
+        profile = one(self.conn, "SELECT * FROM member_profiles WHERE client_id = ? AND case_id = ?", (client["client_id"], client["case_id"])) or {}
         if not client["display_name"]:
             client["display_name"] = (profile.get("preferred_name") or " ".join(filter(None, [profile.get("first_name", ""), profile.get("last_name", "")])) or "Member").strip()
         evidence_count = one(
@@ -2075,6 +2141,7 @@ class EvidenceService:
             """,
             (client["case_id"],),
         )
+        criterion_tracker = self._criterion_tracker(by_criterion)
         return {
             "client": client,
             "case": case,
@@ -2085,6 +2152,7 @@ class EvidenceService:
                 "criteria_started": sum(1 for item in by_criterion if item["evidence_count"]),
             },
             "criteria": by_criterion,
+            "case_command_center": self._case_command_center(client, case, profile, criterion_tracker),
             "storage": {
                 "provider": self.storage_config.get("provider", "s3"),
                 "bucket": self.storage.object_storage.bucket_name() if self.storage.object_storage else "",
@@ -2404,6 +2472,8 @@ class EvidenceService:
         builder_capacity = self._leader_capacity_summary(members, builders, owner_key="builder_name")
         attorney_capacity = self._leader_capacity_summary(members, attorneys, owner_key="attorney_name")
         forecast = self._leader_forecast(members)
+        attorney_performance = self._leader_attorney_performance(members, attorneys)
+        revenue_analytics = self._leader_revenue_analytics(members)
         return {
             "metrics": metrics,
             "members": members,
@@ -2419,6 +2489,8 @@ class EvidenceService:
             "forecast": forecast,
             "builder_capacity": builder_capacity,
             "attorney_capacity": attorney_capacity,
+            "attorney_performance": attorney_performance,
+            "revenue_analytics": revenue_analytics,
         }
 
     def builder_members(self) -> list[dict]:
@@ -2467,7 +2539,7 @@ class EvidenceService:
         criteria = rows(
             self.conn,
             """
-            SELECT c.code, c.name, COUNT(e.id) AS evidence_count
+            SELECT c.code, c.name, COUNT(e.id) AS evidence_count, COALESCE(AVG(e.quality_score), 0) AS average_score
             FROM criteria c
             LEFT JOIN evidence_items e ON e.criterion_code = c.code AND e.client_id = ? AND e.case_id = ? AND e.status != 'archived'
             GROUP BY c.code, c.name, c.display_order
@@ -2487,7 +2559,16 @@ class EvidenceService:
             (member["client_id"], member["case_id"]),
         )
         evidence = self._assistant_evidence(member["client_id"], member["case_id"])
-        return {"member": member, "profile": profile, "criteria": criteria, "tasks": tasks, "evidence": evidence}
+        criterion_tracker = self._criterion_tracker(criteria)
+        return {
+            "member": member,
+            "profile": profile,
+            "criteria": criteria,
+            "tasks": tasks,
+            "evidence": evidence,
+            "builder_workbench": self._builder_workbench(member, profile, criterion_tracker, tasks),
+            "legal_workbench": self._legal_workbench(member, profile, criterion_tracker, tasks, evidence),
+        }
 
     def builder_opportunities(self) -> list[dict]:
         return rows(
@@ -2920,6 +3001,7 @@ class EvidenceService:
                 "open_tasks": sum(1 for item in detail.get("tasks", []) if item.get("status") == "open"),
                 "planner_items": len(planner_rows),
             },
+            "legal_workbench": detail.get("legal_workbench") or self._legal_workbench(member, profile, self._criterion_tracker(detail.get("criteria", [])), detail.get("tasks", []), evidence_items),
             **draft,
         }
 
@@ -5214,6 +5296,357 @@ class EvidenceService:
             "last_login_at": account.get("last_login_at", ""),
         }
 
+    def _criterion_tracker(self, criteria: list[dict]) -> list[dict]:
+        tracker = []
+        for item in criteria:
+            evidence_count = int(item.get("evidence_count") or 0)
+            try:
+                average_score = round(float(item.get("average_score") or 0))
+            except (TypeError, ValueError):
+                average_score = 0
+            tracker.append(
+                {
+                    "code": item.get("code", ""),
+                    "name": item.get("name", ""),
+                    "evidence_count": evidence_count,
+                    "average_score": average_score,
+                    "strength_label": self._criterion_strength_label(evidence_count, average_score),
+                    "next_prompt": self._criterion_next_prompt(item.get("code", ""), item.get("name", ""), evidence_count),
+                }
+            )
+        return tracker
+
+    def _criterion_strength_label(self, evidence_count: int, average_score: int) -> str:
+        if evidence_count <= 0:
+            return "Not started"
+        if evidence_count >= 4 and average_score >= 78:
+            return "Exceptional"
+        if evidence_count >= 2 and average_score >= 60:
+            return "Strong"
+        return "Developing"
+
+    def _criterion_next_prompt(self, code: str, name: str, evidence_count: int) -> str:
+        prompts = {
+            "awards": "Add official award notices, nomination criteria, issuer prestige, rankings, and proof that the recognition is national or international.",
+            "memberships": "Show selective membership criteria, acceptance proof, reviewer or nomination requirements, and why the association admits outstanding achievers.",
+            "published_material": "Upload articles about you or your work, publication reach, author credibility, screenshots, links, and independent context.",
+            "judging": "Group invitations, participation proof, thank-you notes, certificates, score sheets, and organizer letters for each judging activity.",
+            "original_contributions": "Connect each contribution to adoption, measurable industry value, patents, citations, revenue, users, standards, or independent expert support.",
+            "scholarly_articles": "Add publications, venue reputation, citation context, peer-review details, indexing, and downstream usage by others.",
+            "leading_critical_role": "Capture job title, dates, organization distinction, critical project scope, exact responsibilities, and quantified business value.",
+            "high_salary": "Upload compensation proof and credible market comparables for title, field, geography, and seniority.",
+            "comparable_evidence": "Explain why standard criteria do not fit and upload equivalent proof that shows sustained acclaim in the field.",
+            "other": "Review whether this document belongs in a stronger criterion bucket or needs clearer context before attorney review.",
+        }
+        if evidence_count <= 0:
+            return f"Start {name} with one strong primary document and a short note explaining why it matters."
+        return prompts.get(code, f"Add corroboration for {name}: official proof, independent validation, dates, and measurable impact.")
+
+    def _case_command_center(self, client: dict, case: dict, profile: dict, criterion_tracker: list[dict]) -> dict:
+        readiness = int(case.get("readiness_score") or 0)
+        evidence_count = sum(item["evidence_count"] for item in criterion_tracker)
+        started = sum(1 for item in criterion_tracker if item["evidence_count"] > 0)
+        strong = sum(1 for item in criterion_tracker if item["strength_label"] in {"Strong", "Exceptional"})
+        gaps = [item for item in criterion_tracker if item["evidence_count"] == 0]
+        open_tasks = rows(
+            self.conn,
+            """
+            SELECT title, description, criterion_code, due_date, status, created_at
+            FROM tasks
+            WHERE client_id = ? AND case_id = ? AND status = 'open'
+            ORDER BY due_date, created_at DESC
+            LIMIT 6
+            """,
+            (client["client_id"], client["case_id"]),
+        )
+        recent_evidence = rows(
+            self.conn,
+            """
+            SELECT e.id, e.title, e.file_name, e.document_type, e.criterion_code, c.name AS criterion_name, e.created_at, e.status
+            FROM evidence_items e
+            LEFT JOIN criteria c ON c.code = e.criterion_code
+            WHERE e.client_id = ? AND e.case_id = ? AND e.status != 'archived'
+            ORDER BY e.created_at DESC
+            LIMIT 8
+            """,
+            (client["client_id"], client["case_id"]),
+        )
+        notifications = []
+        for task in open_tasks[:3]:
+            notifications.append(
+                {
+                    "title": task.get("title", "Open task"),
+                    "detail": task.get("description") or "Ascend has requested an evidence-building action.",
+                    "due_date": task.get("due_date", ""),
+                    "type": "task",
+                }
+            )
+        if gaps:
+            notifications.append(
+                {
+                    "title": f"{len(gaps)} EB1A criteria still need first evidence",
+                    "detail": f"Start with {gaps[0]['name']} unless Ascend has given you a different priority.",
+                    "due_date": "",
+                    "type": "gap",
+                }
+            )
+        if not bool(profile.get("profile_confirmed")):
+            notifications.append(
+                {
+                    "title": "Confirm your profile facts",
+                    "detail": "Attorney drafting depends on current title, employer, field, biography, and final merits positioning being accurate.",
+                    "due_date": "",
+                    "type": "profile",
+                }
+            )
+        return {
+            "criterion_tracker": criterion_tracker,
+            "timeline": self._filing_timeline(case, criterion_tracker),
+            "onboarding": self._member_onboarding_sections(profile, criterion_tracker, evidence_count),
+            "notifications": notifications[:5],
+            "profile_actions": self._profile_gap_actions(profile, criterion_tracker),
+            "summary": {
+                "readiness_score": readiness,
+                "criteria_started": started,
+                "strong_criteria": strong,
+                "evidence_count": evidence_count,
+                "target_state": "Attorney-ready packet" if readiness >= 80 and strong >= 3 else "Evidence-building in progress",
+            },
+            "version_history": [
+                {
+                    "id": item.get("id", ""),
+                    "title": item.get("title", ""),
+                    "file_name": item.get("file_name", ""),
+                    "document_type": item.get("document_type", "Other"),
+                    "criterion_name": item.get("criterion_name", item.get("criterion_code", "")),
+                    "status": item.get("status", "uploaded"),
+                    "created_at": item.get("created_at", ""),
+                }
+                for item in recent_evidence
+            ],
+            "export_actions": [
+                {
+                    "label": "Petition PDF Package",
+                    "status": "Ready to generate" if readiness >= 80 else "Build more evidence first",
+                    "detail": "Attorney can generate a structured petition packet with exhibit list once the case reaches filing posture.",
+                },
+                {
+                    "label": "Secure Packaged Export",
+                    "status": "Available from organized evidence",
+                    "detail": "Evidence remains grouped by EB1A criterion with archive support for deleted material.",
+                },
+            ],
+            "support_letters": {
+                "status": "Project mapping ready" if started else "Needs project evidence",
+                "detail": "Critical Role and Original Contributions projects can be used by attorneys to request or draft dependent recommendation letters.",
+            },
+            "priority_date": {
+                "status": "Monitor with attorney",
+                "detail": "Keep visa bulletin and filing-window checks in the legal workflow; member view stays focused on evidence collection.",
+            },
+        }
+
+    def _filing_timeline(self, case: dict, criterion_tracker: list[dict]) -> list[dict]:
+        created = self._parse_datetime(case.get("created_at")) or datetime.utcnow()
+        readiness = int(case.get("readiness_score") or 0)
+        started = sum(1 for item in criterion_tracker if item["evidence_count"] > 0)
+        strong = sum(1 for item in criterion_tracker if item["strength_label"] in {"Strong", "Exceptional"})
+        stage_rules = [
+            ("Member Intake", created, started >= 1),
+            ("Evidence Collection", created + timedelta(days=21), started >= 5),
+            ("Profile Builder Review", created + timedelta(days=35), strong >= 2),
+            ("Attorney Drafting", created + timedelta(days=49), readiness >= 70),
+            ("Pre-filing Audit", created + timedelta(days=63), readiness >= 80 and strong >= 3),
+            ("I-140 Filing", created + timedelta(days=77), str(case.get("status", "")).lower() == "completed"),
+            ("RFE Support", created + timedelta(days=120), False),
+        ]
+        timeline = []
+        for label, target, done in stage_rules:
+            optional = label == "RFE Support"
+            status = "optional" if optional else "complete" if done else "in_progress" if not timeline or timeline[-1]["status"] == "complete" else "planned"
+            timeline.append(
+                {
+                    "label": label,
+                    "target_date": target.date().isoformat(),
+                    "status": status,
+                    "optional": optional,
+                    "detail": "Dotted contingency path if USCIS issues an RFE." if optional else "Generated from current readiness, criteria coverage, and case start date.",
+                }
+            )
+        return timeline
+
+    def _member_onboarding_sections(self, profile: dict, criterion_tracker: list[dict], evidence_count: int) -> list[dict]:
+        identity_fields = ["first_name", "last_name", "email", "current_title", "current_employer"]
+        positioning_fields = ["industry_domain", "primary_field", "specialization", "biography", "top_achievements", "proposed_final_merits_summary"]
+        identity_done = sum(1 for field in identity_fields if str(profile.get(field, "")).strip())
+        positioning_done = sum(1 for field in positioning_fields if str(profile.get(field, "")).strip())
+        started = sum(1 for item in criterion_tracker if item["evidence_count"] > 0)
+        return [
+            {
+                "label": "Identity and current role",
+                "progress": round(identity_done / len(identity_fields) * 100),
+                "status": "complete" if identity_done == len(identity_fields) else "needs_input",
+                "next_step": "Confirm legal name, email, job title, and employer.",
+            },
+            {
+                "label": "Field and final merits positioning",
+                "progress": round(positioning_done / len(positioning_fields) * 100),
+                "status": "complete" if positioning_done >= len(positioning_fields) - 1 else "needs_input",
+                "next_step": "Explain field, specialization, top achievements, and why your work matters.",
+            },
+            {
+                "label": "EB1A criterion questionnaire",
+                "progress": min(100, started * 10),
+                "status": "complete" if started >= 7 else "in_progress",
+                "next_step": "Work criterion-by-criterion and keep each company or project separate.",
+            },
+            {
+                "label": "Evidence upload and version history",
+                "progress": min(100, evidence_count * 8),
+                "status": "complete" if evidence_count >= 12 else "in_progress",
+                "next_step": "Upload primary proof first, then add corroborating screenshots, emails, certificates, and letters.",
+            },
+        ]
+
+    def _profile_gap_actions(self, profile: dict, criterion_tracker: list[dict]) -> list[dict]:
+        actions = []
+        if not str(profile.get("current_title", "")).strip():
+            actions.append({"label": "Add current job title", "detail": "This title appears in attorney drafting and support-letter prompts."})
+        if not str(profile.get("proposed_final_merits_summary", "")).strip():
+            actions.append({"label": "Draft final merits positioning", "detail": "Summarize why your work is nationally important and distinguished in the field."})
+        for item in criterion_tracker:
+            if item["evidence_count"] == 0:
+                actions.append({"label": f"Start {item['name']}", "detail": item["next_prompt"]})
+            if len(actions) >= 4:
+                break
+        return actions[:4]
+
+    def _builder_workbench(self, member: dict, profile: dict, criterion_tracker: list[dict], tasks: list[dict]) -> dict:
+        narrative_source = sorted(
+            [item for item in criterion_tracker if item["evidence_count"] > 0],
+            key=lambda item: (-item["evidence_count"], -item["average_score"], item["name"]),
+        )
+        if not narrative_source:
+            narrative_source = criterion_tracker[:4]
+        open_tasks = [item for item in tasks if item.get("status") == "open"]
+        gaps = [item for item in criterion_tracker if item["evidence_count"] == 0]
+        request_queue = [
+            {
+                "title": task.get("title", "Open task"),
+                "criterion_code": task.get("criterion_code", ""),
+                "criterion_name": next((item["name"] for item in criterion_tracker if item["code"] == task.get("criterion_code")), "General profile"),
+                "due_date": task.get("due_date", ""),
+                "priority": "Member request",
+                "detail": task.get("description") or "Follow up with the member to close this request.",
+            }
+            for task in open_tasks[:4]
+        ]
+        for gap in gaps:
+            if len(request_queue) >= 6:
+                break
+            request_queue.append(
+                {
+                    "title": f"Request first evidence for {gap['name']}",
+                    "criterion_code": gap["code"],
+                    "criterion_name": gap["name"],
+                    "due_date": "",
+                    "priority": "Coverage gap",
+                    "detail": gap["next_prompt"],
+                }
+            )
+        return {
+            "narrative_queue": [
+                {
+                    "criterion_code": item["code"],
+                    "criterion_name": item["name"],
+                    "evidence_count": item["evidence_count"],
+                    "strength_label": item["strength_label"],
+                    "draft_focus": f"Turn {item['name']} evidence into a concise EB1A-ready narrative.",
+                    "suggested_prompt": f"Summarize {profile.get('preferred_name') or member.get('display_name', 'the member')}'s {item['name']} evidence with dates, role, independent validation, and measurable impact.",
+                }
+                for item in narrative_source[:5]
+            ],
+            "evidence_request_queue": request_queue,
+            "gap_analysis": [
+                {
+                    "criterion_name": item["name"],
+                    "strength_label": item["strength_label"],
+                    "next_step": item["next_prompt"],
+                }
+                for item in criterion_tracker[:10]
+            ],
+        }
+
+    def _legal_workbench(self, member: dict, profile: dict, criterion_tracker: list[dict], tasks: list[dict], evidence: list[dict]) -> dict:
+        readiness = int(member.get("readiness_score") or 0)
+        evidence_count = sum(item["evidence_count"] for item in criterion_tracker) or len(evidence)
+        started = sum(1 for item in criterion_tracker if item["evidence_count"] > 0)
+        strong = sum(1 for item in criterion_tracker if item["strength_label"] in {"Strong", "Exceptional"})
+        open_tasks = [item for item in tasks if item.get("status") == "open"]
+        project_options = [
+            {
+                "id": item.get("id", item.get("file_name", "")),
+                "title": item.get("title") or item.get("file_name", "Project evidence"),
+                "criterion_code": item.get("criterion_code", ""),
+                "criterion_name": next((criterion["name"] for criterion in criterion_tracker if criterion["code"] == item.get("criterion_code")), item.get("criterion_code", "")),
+            }
+            for item in evidence
+            if item.get("criterion_code") in {"leading_critical_role", "original_contributions"}
+        ][:6]
+        if not project_options:
+            project_options = [
+                {
+                    "id": item["code"],
+                    "title": f"{item['name']} project mapping",
+                    "criterion_code": item["code"],
+                    "criterion_name": item["name"],
+                }
+                for item in criterion_tracker
+                if item["code"] in {"leading_critical_role", "original_contributions"}
+            ]
+        checklist = [
+            ("Profile facts confirmed", bool(profile.get("profile_confirmed")), "Member confirms identity, title, employer, field, and final merits facts."),
+            ("At least 3 strong criteria identified", strong >= 3, f"{strong} criteria are currently strong or exceptional."),
+            ("Evidence exhibit pool available", evidence_count >= 10, f"{evidence_count} active evidence items are available."),
+            ("Member dependencies cleared", not open_tasks, f"{len(open_tasks)} open member-facing tasks remain."),
+            ("Critical/Original project mapped", bool(project_options), "Recommendation letters can be tied to a project or contribution."),
+        ]
+        return {
+            "case_management": {
+                "stage": "Pre-filing audit" if readiness >= 80 else "Attorney review" if readiness >= 60 else "Evidence build",
+                "readiness_score": readiness,
+                "criteria_started": started,
+                "strong_criteria": strong,
+                "next_action": "Run pre-submission audit" if readiness >= 80 else "Close evidence and profile gaps before drafting final petition.",
+            },
+            "pre_filing_checklist": [
+                {
+                    "label": label,
+                    "status": "complete" if complete else "needs_work",
+                    "detail": detail,
+                }
+                for label, complete, detail in checklist
+            ],
+            "rfe_response": {
+                "status": "RFE-ready baseline" if strong >= 3 and evidence_count >= 10 else "Needs packet hardening",
+                "detail": "Dotted timeline keeps RFE support visible without making it part of the normal filing path.",
+                "dotted_timeline": [
+                    {"label": "RFE received", "target_days": 0},
+                    {"label": "Evidence gap triage", "target_days": 7},
+                    {"label": "AI-assisted response draft", "target_days": 21},
+                    {"label": "Attorney final review", "target_days": 45},
+                ],
+            },
+            "recommendation_letters": {
+                "project_options": project_options,
+                "detail": "Dependent recommendation letters should be generated only after selecting a Critical Role or Original Contributions project.",
+            },
+            "time_tracking_summary": {
+                "estimated_review_hours": round(1.5 + evidence_count * 0.18 + len(open_tasks) * 0.2, 1),
+                "billing_note": "Planning estimate for attorney workload; not an invoice.",
+            },
+        }
+
     def _criteria_started(self, case_id: str) -> int:
         result = one(
             self.conn,
@@ -5524,6 +5957,55 @@ class EvidenceService:
                 "detail": "Cases with enough momentum to enter legal review soon.",
             },
         ]
+
+    def _leader_attorney_performance(self, members: list[dict], attorneys: list[dict]) -> list[dict]:
+        performance = []
+        for attorney in attorneys:
+            assigned = [item for item in members if item.get("attorney_name") == attorney.get("display_name")]
+            ready = sum(1 for item in assigned if int(item.get("readiness_score") or 0) >= 80)
+            high_risk = sum(1 for item in assigned if item.get("risk_level") == "High")
+            stale = sum(1 for item in assigned if int(item.get("days_since_activity") or 0) >= 14)
+            avg_readiness = round(sum(int(item.get("readiness_score") or 0) for item in assigned) / len(assigned)) if assigned else 0
+            performance.append(
+                {
+                    "id": attorney.get("id", ""),
+                    "display_name": attorney.get("display_name", ""),
+                    "assigned_cases": len(assigned),
+                    "petition_ready_cases": ready,
+                    "high_risk_cases": high_risk,
+                    "stale_cases": stale,
+                    "avg_readiness": avg_readiness,
+                    "capacity_signal": "Overloaded" if len(assigned) >= 8 or high_risk >= 3 else "Healthy" if assigned else "Available",
+                }
+            )
+        return sorted(performance, key=lambda item: (-item["assigned_cases"], -item["petition_ready_cases"], item["display_name"]))
+
+    def _leader_revenue_analytics(self, members: list[dict]) -> dict:
+        active_cases = [item for item in members if str(item.get("status", "")).strip().lower() != "completed"]
+        petition_ready = [item for item in active_cases if int(item.get("readiness_score") or 0) >= 80]
+        at_risk = [item for item in active_cases if item.get("risk_level") == "High"]
+        planning_value_per_case = 4500
+        return {
+            "currency": "USD",
+            "assumption": f"Planning estimate only at ${planning_value_per_case:,} per active case.",
+            "rows": [
+                {
+                    "label": "Active case pipeline",
+                    "value": len(active_cases) * planning_value_per_case,
+                    "detail": f"{len(active_cases)} cases still in motion.",
+                },
+                {
+                    "label": "Petition-ready opportunity",
+                    "value": len(petition_ready) * planning_value_per_case,
+                    "detail": f"{len(petition_ready)} cases can move toward filing work fastest.",
+                },
+                {
+                    "label": "At-risk revenue exposure",
+                    "value": len(at_risk) * planning_value_per_case,
+                    "detail": f"{len(at_risk)} high-risk cases need intervention to protect delivery velocity.",
+                },
+            ],
+        }
 
     def _member_payload(self, account: dict) -> dict:
         profile = one(

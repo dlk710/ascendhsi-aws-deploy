@@ -515,6 +515,275 @@ function MetricCard({ label, value }) {
   );
 }
 
+function roadmapStatusClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (["complete", "completed", "active", "ready to generate", "available from organized evidence", "rfe-ready baseline", "exceptional", "strong"].includes(normalized)) return "completed";
+  if (["in_progress", "developing", "needs_input", "needs_work", "build more evidence first", "needs packet hardening", "planned", "optional"].includes(normalized)) return "planned";
+  return "blocked";
+}
+
+function RoadmapTimeline({ items = [] }) {
+  if (!items.length) return <p className="empty-state">Timeline will appear once the case record loads.</p>;
+  return (
+    <div className="roadmap-timeline">
+      {items.map((item) => (
+        <article key={item.label} className={`roadmap-timeline-step ${item.optional ? "optional" : ""}`}>
+          <span className={`status-dot ${roadmapStatusClass(item.status)}`} />
+          <strong>{item.label}</strong>
+          <small>{item.target_date}</small>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function MiniChecklist({ rows = [], emptyText = "No checklist rows available yet." }) {
+  if (!rows.length) return <p className="empty-state">{emptyText}</p>;
+  return (
+    <div className="roadmap-row-table">
+      {rows.map((row) => (
+        <article key={row.label || row.area} className="roadmap-row">
+          <div>
+            <strong>{row.label || row.area}</strong>
+            <small>{row.detail || row.next_step}</small>
+          </div>
+          <span className={`status-pill ${roadmapStatusClass(row.status)}`}>{String(row.status || "active").replaceAll("_", " ")}</span>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function CaseCommandCenter({ data, onOpenCriterion }) {
+  if (!data) return null;
+  const summary = data.summary || {};
+  const tracker = data.criterion_tracker || [];
+  return (
+    <section className="panel roadmap-panel">
+      <div className="panel-header">
+        <div>
+          <div className="section-kicker">EB1A Command Center</div>
+          <h3 className="section-title">Criterion readiness, gaps, and next steps</h3>
+          <p className="section-intro">A compact roadmap view that turns member-entered evidence into attorney-ready work queues.</p>
+        </div>
+        <span className="mini-note">{summary.target_state || "Evidence-building in progress"}</span>
+      </div>
+      <div className="roadmap-summary-grid">
+        <MetricCard label="Strong Criteria" value={summary.strong_criteria || 0} />
+        <MetricCard label="Started Criteria" value={summary.criteria_started || 0} />
+        <MetricCard label="Evidence Items" value={summary.evidence_count || 0} />
+        <MetricCard label="Readiness" value={`${summary.readiness_score || 0}%`} />
+      </div>
+      <div className="roadmap-grid">
+        <article className="roadmap-card roadmap-card-wide">
+          <div className="section-kicker">Filing Timeline</div>
+          <RoadmapTimeline items={data.timeline || []} />
+        </article>
+        <article className="roadmap-card">
+          <div className="section-kicker">Onboarding Intake</div>
+          <MiniChecklist rows={data.onboarding || []} />
+        </article>
+        <article className="roadmap-card">
+          <div className="section-kicker">Member Alerts</div>
+          <MiniChecklist rows={(data.notifications || []).map((item) => ({ label: item.title, detail: item.detail, status: item.type === "task" ? "in_progress" : "needs_input" }))} emptyText="No open alerts." />
+        </article>
+      </div>
+      <div className="roadmap-criterion-table">
+        <div className="roadmap-criterion-head"><span>Criterion</span><span>Strength</span><span>Evidence</span><span>Score</span><span>Next action</span></div>
+        {tracker.map((item) => (
+          <button key={item.code} type="button" className="roadmap-criterion-row" onClick={() => onOpenCriterion?.(item.code)}>
+            <strong>{item.name}</strong>
+            <span className={`status-pill ${roadmapStatusClass(item.strength_label)}`}>{item.strength_label}</span>
+            <span>{item.evidence_count}</span>
+            <span>{item.average_score || 0}</span>
+            <small>{item.next_prompt}</small>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function BuilderWorkbenchPanel({ workbench }) {
+  if (!workbench) return null;
+  return (
+    <section className="panel roadmap-panel panel-subsection">
+      <div className="panel-header">
+        <div>
+          <div className="section-kicker">Builder EB1A Workbench</div>
+          <h3 className="section-title">Narratives and evidence requests</h3>
+          <p className="section-intro">Roadmap-aligned queues for AI narrative drafting, member requests, and criterion gap closure.</p>
+        </div>
+      </div>
+      <div className="roadmap-grid">
+        <article className="roadmap-card">
+          <div className="section-kicker">AI Narrative Queue</div>
+          <div className="task-mini-list">
+            {(workbench.narrative_queue || []).map((item) => (
+              <article key={`${item.criterion_code}_${item.criterion_name}`} className="task-mini-item">
+                <strong>{item.criterion_name}</strong>
+                <p>{item.draft_focus}</p>
+                <div className="task-mini-meta"><span>{item.evidence_count} evidence</span><span>{item.strength_label}</span></div>
+              </article>
+            ))}
+          </div>
+        </article>
+        <article className="roadmap-card">
+          <div className="section-kicker">Evidence Request Queue</div>
+          <div className="task-mini-list">
+            {(workbench.evidence_request_queue || []).map((item) => (
+              <article key={`${item.title}_${item.criterion_code}`} className="task-mini-item">
+                <strong>{item.title}</strong>
+                <p>{item.detail}</p>
+                <div className="task-mini-meta"><span>{item.criterion_name}</span><span>{item.priority}</span><span>{item.due_date || "No due date"}</span></div>
+              </article>
+            ))}
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function LegalWorkbenchPanel({ workbench, onGeneratePetition }) {
+  if (!workbench) return null;
+  const caseManagement = workbench.case_management || {};
+  return (
+    <section className="panel roadmap-panel panel-subsection">
+      <div className="panel-header">
+        <div>
+          <div className="section-kicker">Attorney Legal Workbench</div>
+          <h3 className="section-title">Filing audit, RFE readiness, and letters</h3>
+          <p className="section-intro">Keeps P1 legal workflow signals visible before the attorney commits to final petition drafting.</p>
+        </div>
+        {onGeneratePetition ? <button className="ghost compact-btn" type="button" onClick={onGeneratePetition}>Open petition draft</button> : null}
+      </div>
+      <div className="roadmap-summary-grid">
+        <MetricCard label="Legal Stage" value={caseManagement.stage || "Evidence build"} />
+        <MetricCard label="Strong Criteria" value={caseManagement.strong_criteria || 0} />
+        <MetricCard label="Criteria Started" value={caseManagement.criteria_started || 0} />
+        <MetricCard label="Est. Hours" value={workbench.time_tracking_summary?.estimated_review_hours || 0} />
+      </div>
+      <div className="roadmap-grid">
+        <article className="roadmap-card">
+          <div className="section-kicker">Pre-filing Checklist</div>
+          <MiniChecklist rows={workbench.pre_filing_checklist || []} />
+        </article>
+        <article className="roadmap-card">
+          <div className="section-kicker">RFE Contingency</div>
+          <p className="section-intro">{workbench.rfe_response?.detail}</p>
+          <RoadmapTimeline items={(workbench.rfe_response?.dotted_timeline || []).map((item) => ({ label: item.label, target_date: `${item.target_days} days`, status: "optional", optional: true }))} />
+        </article>
+        <article className="roadmap-card roadmap-card-wide">
+          <div className="section-kicker">Dependent Recommendation Letters</div>
+          <div className="roadmap-row-table">
+            {(workbench.recommendation_letters?.project_options || []).map((item) => (
+              <article key={`${item.id}_${item.criterion_code}`} className="roadmap-row">
+                <div>
+                  <strong>{item.title}</strong>
+                  <small>{item.criterion_name}</small>
+                </div>
+                <span className="status-pill planned">project mapped</span>
+              </article>
+            ))}
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function LeaderBusinessPanel({ insights }) {
+  const performance = insights?.attorney_performance || [];
+  const revenueRows = insights?.revenue_analytics?.rows || [];
+  if (!performance.length && !revenueRows.length) return null;
+  return (
+    <section className="panel roadmap-panel" style={{ marginTop: "18px" }}>
+      <div className="panel-header">
+        <div>
+          <div className="section-kicker">Leader Product Intelligence</div>
+          <h3 className="section-title">Attorney capacity and revenue planning</h3>
+          <p className="section-intro">Portfolio-level signals for delivery speed, petition readiness, and operational exposure.</p>
+        </div>
+        <span className="mini-note">{insights?.revenue_analytics?.assumption || "Planning estimates only"}</span>
+      </div>
+      <div className="leader-business-grid">
+        <div className="roadmap-criterion-table">
+          <div className="leader-performance-head"><span>Attorney</span><span>Cases</span><span>Ready</span><span>Risk</span><span>Avg</span><span>Signal</span></div>
+          {performance.map((item) => (
+            <article key={item.id || item.display_name} className="leader-performance-row">
+              <strong>{item.display_name}</strong>
+              <span>{item.assigned_cases}</span>
+              <span>{item.petition_ready_cases}</span>
+              <span>{item.high_risk_cases}</span>
+              <span>{item.avg_readiness}%</span>
+              <span className={`status-pill ${item.capacity_signal === "Healthy" ? "completed" : item.capacity_signal === "Available" ? "planned" : "blocked"}`}>{item.capacity_signal}</span>
+            </article>
+          ))}
+        </div>
+        <div className="roadmap-row-table">
+          {revenueRows.map((row) => (
+            <article key={row.label} className="roadmap-row">
+              <div>
+                <strong>{row.label}</strong>
+                <small>{row.detail}</small>
+              </div>
+              <span>{formatMoney(row.value, insights?.revenue_analytics?.currency || "USD")}</span>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AdminProductOpsPanel({ dashboard }) {
+  const productOps = dashboard?.product_ops;
+  const userManagement = dashboard?.user_management;
+  if (!productOps && !userManagement) return null;
+  const roleRows = Object.entries(userManagement?.roles || {}).map(([role, count]) => ({
+    label: role.replaceAll("_", " "),
+    detail: `${count} account(s)`,
+    status: count ? "active" : "planned",
+  }));
+  return (
+    <section className="panel roadmap-panel" style={{ marginTop: "18px" }}>
+      <div className="panel-header">
+        <div>
+          <div className="section-kicker">Product Ops Controls</div>
+          <h3 className="section-title">Roadmap P0/P1 admin coverage</h3>
+          <p className="section-intro">Issue Portal, Cost Explorer, System Health, user inventory, and audit logs in one admin control surface.</p>
+        </div>
+        <span className="mini-note">{userManagement?.total_accounts || 0} accounts tracked</span>
+      </div>
+      <div className="roadmap-grid">
+        <article className="roadmap-card">
+          <div className="section-kicker">Admin Readiness Rows</div>
+          <MiniChecklist rows={productOps?.readiness_rows || []} />
+        </article>
+        <article className="roadmap-card">
+          <div className="section-kicker">User Management Inventory</div>
+          <MiniChecklist rows={roleRows} />
+        </article>
+        <article className="roadmap-card roadmap-card-wide">
+          <div className="section-kicker">Recent Login Audit</div>
+          <div className="roadmap-row-table">
+            {(dashboard?.audit_log || []).slice(0, 5).map((item) => (
+              <article key={item.id || `${item.actor_key}_${item.created_at}`} className="roadmap-row">
+                <div>
+                  <strong>{item.actor_key || item.actor_role}</strong>
+                  <small>{item.portal || "system"} • {item.message || item.event_type}</small>
+                </div>
+                <span>{formatDateTime(item.created_at)}</span>
+              </article>
+            ))}
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
 function ResponseSparkline({ points = [] }) {
   const values = points.map((point) => Number(point.ms) || 0);
   const maxValue = Math.max(...values, 1);
@@ -4082,6 +4351,7 @@ function App() {
                           <span>{builderMemberDetail.tasks.filter((item) => item.status === "open").length} open</span>
                         </article>
                       </div>
+                      <BuilderWorkbenchPanel workbench={builderMemberDetail.builder_workbench} />
                       <div className="task-mini-list">
                         <div className="section-kicker">Tasks In Flight</div>
                         {builderMemberDetail.tasks.length ? (
@@ -4242,6 +4512,8 @@ function App() {
                 </section>
               </section>
 
+              <LeaderBusinessPanel insights={leaderInsights} />
+
               <section className="panel" style={{ marginTop: "18px" }}>
                 <div className="section-kicker">Intervention Watchlist</div>
                 <h3 className="section-title">Cases most likely to need leadership action</h3>
@@ -4330,6 +4602,7 @@ function App() {
                           <span>{builderMemberDetail.tasks.length ? (builderMemberDetail.tasks[0].due_date ? `Due ${builderMemberDetail.tasks[0].due_date}` : "No due date") : "Use Opportunities to issue the next step."}</span>
                         </article>
                       </div>
+                      <BuilderWorkbenchPanel workbench={builderMemberDetail.builder_workbench} />
                     </React.Fragment>
                   ) : <p className="empty-state">Choose a member to review their current builder view.</p>}
                 </section>
@@ -4541,6 +4814,12 @@ function App() {
                   </div>
                 </section>
               </section>
+              {builderMemberDetail ? (
+                <LegalWorkbenchPanel
+                  workbench={builderMemberDetail.legal_workbench}
+                  onGeneratePetition={() => setPortalSection("petition")}
+                />
+              ) : null}
             </React.Fragment>
           ) : selectedMemberRequired ? (
             <React.Fragment>
@@ -4651,6 +4930,8 @@ function App() {
                       <MetricCard label="Criteria Started" value={petitionDraft.snapshot?.criteria_started || 0} />
                       <MetricCard label="Open Tasks" value={petitionDraft.snapshot?.open_tasks || 0} />
                     </div>
+
+                    <LegalWorkbenchPanel workbench={petitionDraft.legal_workbench} />
 
                     <section className="petition-grid">
                       <article className="panel petition-panel">
@@ -5242,6 +5523,8 @@ function App() {
                   <MetricCard label="Open Support" value={ops.open_support_tickets || 0} />
                 </section>
 
+                <AdminProductOpsPanel dashboard={adminDashboard} />
+
                 <section className="builder-layout" style={{ marginTop: "18px" }}>
                   <section className="panel">
                     <div className="section-kicker">Recent Tickets</div>
@@ -5396,6 +5679,11 @@ function App() {
               <MetricCard label="Open tasks" value={memberDashboard.metrics.open_tasks} />
               <MetricCard label="Criteria started" value={memberDashboard.metrics.criteria_started} />
             </section>
+
+            <CaseCommandCenter
+              data={memberDashboard.case_command_center}
+              onOpenCriterion={(code) => setView({ type: "workspace", criterionCode: code })}
+            />
           </React.Fragment>
         ) : null}
 
