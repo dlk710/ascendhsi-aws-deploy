@@ -48,6 +48,21 @@ class PortalAssistantServiceTests(unittest.TestCase):
         self.assertEqual(result["response_mode"], "summary")
         self.assertTrue(result["detail_prompt"])
 
+    def test_assistant_blocks_out_of_scope_general_questions_before_model_call(self):
+        self.service.openai.answer_portal_question = Mock(return_value={"summary": "Should not be called"})
+
+        result = self.service.portal_assistant_reply(
+            "builder",
+            "What is the weather in Paris today?",
+            client_id="client_1",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["source"], "guardrail")
+        self.assertIn("Ascend Product Suite", result["summary"])
+        self.service.openai.answer_portal_question.assert_not_called()
+
     def test_attorney_assistant_reply_returns_storage_references(self):
         result = self.service.portal_assistant_reply(
             "attorney",

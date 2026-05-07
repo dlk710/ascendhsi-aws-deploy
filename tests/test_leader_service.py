@@ -49,6 +49,10 @@ class LeaderPortalServiceTests(unittest.TestCase):
         self.assertTrue(dashboard["watchlist"])
         self.assertIn("stage_label", dashboard["members"][0])
         self.assertIn("risk_level", dashboard["members"][0])
+        self.assertIn("first_name", dashboard["members"][0])
+        self.assertIn("last_name", dashboard["members"][0])
+        self.assertIn("email", dashboard["members"][0])
+        self.assertIn("phone", dashboard["members"][0])
 
     def test_leader_dashboard_flags_unassigned_members_for_attention(self):
         self.service.leader_invite_member(
@@ -65,6 +69,26 @@ class LeaderPortalServiceTests(unittest.TestCase):
         self.assertEqual(invited_member["stage_label"], "Invited")
         self.assertIn(invited_member["risk_level"], {"Moderate", "High"})
         self.assertTrue(any(flag in invited_member["risk_flags"] for flag in {"Registration pending", "Builder unassigned"}))
+
+    def test_leader_invite_can_optionally_assign_builder_and_attorney(self):
+        dashboard = self.service.leader_dashboard()
+        builder_id = dashboard["builders"][0]["id"]
+        attorney_id = dashboard["attorneys"][0]["id"]
+
+        result = self.service.leader_invite_member(
+            "Mina",
+            "Route",
+            "mina.route@example.com",
+            industry_domain="Technology",
+            builder_id=builder_id,
+            attorney_id=attorney_id,
+        )
+
+        self.assertEqual(result["builder_id"], builder_id)
+        self.assertEqual(result["attorney_id"], attorney_id)
+        member = next(item for item in self.service.leader_dashboard()["members"] if item["client_id"] == result["client_id"])
+        self.assertEqual(member["builder_id"], builder_id)
+        self.assertEqual(member["attorney_id"], attorney_id)
 
     def test_leader_can_access_attorney_evidence_view(self):
         sample = self.config.upload_root / "sample.txt"

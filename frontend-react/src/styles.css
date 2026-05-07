@@ -282,6 +282,108 @@ input::placeholder, textarea::placeholder {
 }
 .member-menu button:hover { background: #f8f2e7; }
 
+.help-manual-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 25, 20, 0.42);
+}
+.help-manual-panel {
+  width: min(960px, calc(100vw - 40px));
+  max-height: min(860px, calc(100vh - 48px));
+  overflow-y: auto;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fffdfa 0%, #f8f2e7 100%);
+  box-shadow: 0 28px 80px rgba(12, 44, 35, 0.28);
+}
+.help-manual-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+.help-manual-search {
+  display: grid;
+  gap: 7px;
+  color: var(--green-dark);
+  font-weight: 900;
+}
+.help-manual-search input {
+  min-height: 42px;
+  padding: 10px 12px;
+  font-size: 0.86rem;
+}
+.help-answer-card,
+.help-manual-section {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fffdfa;
+}
+.help-answer-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+.help-answer-card h4,
+.help-answer-card p {
+  margin: 0;
+}
+.help-answer-card h4 {
+  color: var(--green-dark);
+  font-size: 1.02rem;
+}
+.help-answer-card p,
+.help-answer-card li,
+.help-manual-section p,
+.help-manual-section li {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.help-answer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.help-answer-grid > div,
+.help-steps {
+  padding: 12px;
+  border-radius: 12px;
+  background: #f8f2e7;
+}
+.help-answer-card strong,
+.help-manual-section summary {
+  color: var(--green-dark);
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+.help-answer-card ul,
+.help-answer-card ol,
+.help-manual-section ol {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+.help-manual-library {
+  display: grid;
+  gap: 8px;
+}
+.help-manual-section {
+  padding: 10px 12px;
+}
+.help-manual-section summary {
+  cursor: pointer;
+}
+.help-manual-section p {
+  margin: 8px 0 0;
+}
+
 .hero, .intake-card, .panel, .workspace-page, .metric-card, .criteria-panel, .profile-panel, .planner-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1146,6 +1248,65 @@ textarea { min-height: 150px; resize: vertical; }
   display: grid;
   gap: 10px;
 }
+.member-search-box {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbf7ee;
+}
+.member-search-box label {
+  display: grid;
+  gap: 6px;
+  color: var(--green-dark);
+  font-weight: 800;
+}
+.member-search-box input {
+  min-height: 34px;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+}
+.member-search-box small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+.assignment-flow-guide {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 12px 0 14px;
+}
+.assignment-flow-guide article {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbf7ee;
+}
+.assignment-flow-guide span {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--green-dark);
+  color: #fffdfa;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+.assignment-flow-guide strong {
+  color: var(--green-dark);
+  font-size: 0.78rem;
+}
+.assignment-flow-guide small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
 .task-mini-list {
   margin-top: 18px;
   display: grid;
@@ -1763,9 +1924,14 @@ textarea { min-height: 150px; resize: vertical; }
     height: auto;
     overflow: visible;
   }
-  .metrics-grid, .landing-grid, .criteria-grid, .workspace-layout, .profile-grid, .planner-layout, .planner-form, .builder-layout, .message-layout, .petition-grid, .executive-grid, .roadmap-summary-grid, .roadmap-grid, .leader-business-grid { grid-template-columns: 1fr; }
+  .metrics-grid, .landing-grid, .criteria-grid, .workspace-layout, .profile-grid, .planner-layout, .planner-form, .builder-layout, .message-layout, .petition-grid, .executive-grid, .roadmap-summary-grid, .roadmap-grid, .leader-business-grid, .assignment-flow-guide { grid-template-columns: 1fr; }
   .portal-hydration-panel { grid-template-columns: 1fr; }
   .profile-span-2, .planner-span-2 { grid-column: span 1; }
+  .help-manual-header,
+  .help-answer-grid {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
   .planner-row { grid-template-columns: 1fr; }
   .event-planner-head { display: none; }
   .event-row { grid-template-columns: 1fr; }

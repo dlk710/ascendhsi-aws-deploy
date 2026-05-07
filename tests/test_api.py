@@ -124,10 +124,18 @@ class ApiTests(unittest.TestCase):
         with patch("app.api.service", return_value=service):
             response = self.client.post(
                 "/api/leader/invites",
-                data={"first_name": "Sam", "last_name": "Lee", "email": "sam@example.com", "industry_domain": "Technology"},
+                data={
+                    "first_name": "Sam",
+                    "last_name": "Lee",
+                    "email": "sam@example.com",
+                    "industry_domain": "Technology",
+                    "builder_id": "bld_1",
+                    "attorney_id": "att_1",
+                },
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["display_name"], "Sam Lee")
+        service.leader_invite_member.assert_called_once_with("Sam", "Lee", "sam@example.com", "Technology", "", "", "", "bld_1", "att_1")
 
     def test_leader_builder_assignment_uses_service(self):
         service = Mock()

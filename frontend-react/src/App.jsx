@@ -210,6 +210,345 @@ function LastLoginStamp({ user }) {
   return <span className="last-login-stamp">Last login: {formatLastLogin(user?.last_login_at)}</span>;
 }
 
+const HELP_MANUAL_SECTIONS = {
+  common: [
+    {
+      title: "Navigate The Product Suite",
+      summary: "Use the left navigation for portal sections, the Ascend logo to return home, and browser back/forward for page-specific navigation.",
+      can: ["Open portal sections from the left menu.", "Return to the portal home page from the Ascend logo.", "Use page URLs to revisit a specific workflow."],
+      cannot: ["Access another portal unless your login role allows it.", "Use Help Manual as a replacement for support when the system is broken."],
+      steps: ["Click the Ascend logo for home.", "Use the left menu to open a section.", "Use browser back/forward to move through your recent portal journey."],
+      keywords: ["navigation", "home", "back", "forward", "logo", "left menu", "page", "url"],
+    },
+    {
+      title: "Account, Password, And Logout",
+      summary: "The account menu in the top-right contains password actions, this Help Manual, and Logout.",
+      can: ["Review last login time.", "Change your password.", "Log out when your work is complete."],
+      cannot: ["See another user's password.", "Recover a forgotten password without the supported reset/admin process."],
+      steps: ["Open the top-right account pill.", "Choose Change Password if needed.", "Use Help Manual for workflow questions.", "Click Logout only when finished."],
+      keywords: ["account", "password", "logout", "last login", "menu", "security"],
+    },
+    {
+      title: "Messages And Collaboration",
+      summary: "Messages keep member, builder, attorney, leader, and admin communication tied to the product workflow.",
+      can: ["Send portal-specific messages.", "Review conversation threads.", "Keep case communication separate from evidence and profile sections."],
+      cannot: ["Use Messages as legal filing proof unless the attorney confirms it should be saved as evidence.", "Message users outside configured recipient options."],
+      steps: ["Open Messages from the portal menu.", "Select or create a thread.", "Write a clear subject and action-oriented message.", "Mark urgent only when timing truly matters."],
+      keywords: ["message", "messages", "thread", "communication", "urgent", "collaboration"],
+    },
+    {
+      title: "Ascend Navigator And Help Manual",
+      summary: "Help Manual explains how to use the product. Ascend Navigator answers Ascend case/workflow questions within strict guardrails.",
+      can: ["Ask Help Manual how to use a portal feature.", "Ask Navigator about Ascend case context, evidence, assignments, and portal workflow.", "Use support when something appears broken."],
+      cannot: ["Ask Navigator generic world questions.", "Treat Help Manual as legal advice.", "Assume AI answers replace attorney review."],
+      steps: ["Use Help Manual for product instructions.", "Use Navigator for selected member/case workflow questions.", "Use Support or Issue Portal for bugs."],
+      keywords: ["help", "manual", "navigator", "assistant", "ai", "guardrail", "support"],
+    },
+  ],
+  member: [
+    {
+      title: "Complete Member Profile",
+      summary: "The Profile section collects attorney-ready facts about identity, education, career, field, achievements, and final merits positioning.",
+      can: ["Save profile updates.", "Fill identity, contact, professional background, and EB1A narrative fields.", "Return later to complete missing details."],
+      cannot: ["Submit vague claims without evidence support.", "Edit staff-only assignments or legal review decisions."],
+      steps: ["Open Profile.", "Complete identity and contact fields.", "Add current title, employer, field, specialization, education, biography, and achievement summaries.", "Save changes before leaving."],
+      keywords: ["profile", "identity", "phone", "email", "title", "employer", "biography", "achievements", "save"],
+    },
+    {
+      title: "Upload Evidence Intake",
+      summary: "Evidence Intake is where members upload files, add a note, select or confirm category, and submit evidence into the organized storage path.",
+      can: ["Upload evidence files.", "Use AI suggestion or choose a category manually.", "Review upload history with category, date, type, and links."],
+      cannot: ["Upload unrelated files as EB1A evidence.", "Permanently delete submitted evidence without archive handling.", "Skip review before submitting important files."],
+      steps: ["Open Evidence Intake.", "Write a short evidence note.", "Attach the file.", "Use AI suggestion or choose category manually.", "Review and submit.", "Check upload history."],
+      keywords: ["upload", "evidence", "intake", "file", "category", "history", "submit", "ai suggestion"],
+    },
+    {
+      title: "Evidence By Criterion",
+      summary: "Evidence By Criterion shows EB1A categories and lets members drill into each category's uploaded items and guidance.",
+      can: ["Review uploaded items by EB1A criterion.", "See where evidence is thin.", "Open category-specific workspaces."],
+      cannot: ["Assume a category is satisfied only because a file exists.", "Change attorney legal conclusions from this page."],
+      steps: ["Open Member Home.", "Review the evidence summary.", "Click a criterion.", "Review uploaded items and guidance.", "Upload missing support through Intake if needed."],
+      keywords: ["criterion", "criteria", "evidence map", "category", "judging", "awards", "published material"],
+    },
+    {
+      title: "Critical Role Projects",
+      summary: "Critical Role Projects collect detailed project narratives showing role, organization distinction, business value, dates, and measurable impact.",
+      can: ["Create multiple projects.", "Save drafts.", "Edit or delete entries with confirmation.", "Submit projects for export to evidence storage."],
+      cannot: ["Use placeholder suggestions as real facts.", "Mix multiple companies into one unclear project when separation matters."],
+      steps: ["Open the Critical Role criterion from Evidence By Criterion.", "Create or open a project.", "Add job title, company, dates, role, contributions, impact, and evidence notes.", "Save draft frequently.", "Submit when ready."],
+      keywords: ["critical role", "leading role", "project", "job title", "company", "business value", "impact", "draft"],
+    },
+    {
+      title: "Original Contributions",
+      summary: "Original Contributions capture what you created, why it was original, who adopted it, and how it impacted the field or business.",
+      can: ["Create multiple contribution entries.", "Save drafts.", "Edit entries before submission.", "Submit structured content into evidence storage."],
+      cannot: ["Rely on general job duties alone.", "Claim originality without adoption, impact, references, or corroborating evidence."],
+      steps: ["Open the Original Contributions criterion.", "Create a contribution.", "Explain the problem, your original solution, adoption, impact, metrics, and supporting documents.", "Save draft.", "Submit when attorney-ready."],
+      keywords: ["original contribution", "innovation", "adoption", "impact", "field", "metrics", "draft"],
+    },
+    {
+      title: "Event Planner",
+      summary: "Event Planner helps members track future opportunities, target dates, evidence goals, and completion notes.",
+      can: ["Plan upcoming opportunities.", "Link plans to criteria.", "Track planned and actual completion dates."],
+      cannot: ["Guarantee that an opportunity will count for EB1A without review.", "Replace evidence uploads with planner notes."],
+      steps: ["Open Event Planner.", "Add an event or opportunity.", "Choose the related criterion.", "Set target dates and notes.", "Update completion details after the event."],
+      keywords: ["event planner", "event", "deadline", "opportunity", "planned", "completion"],
+    },
+  ],
+  builder: [
+    {
+      title: "Review Assigned Members",
+      summary: "Profile Builders use the member roster to search, triage readiness, review tasks, and identify the next best profile-building action.",
+      can: ["Search by member name, phone, or email.", "Open member detail.", "Review readiness, evidence counts, gaps, and tasks."],
+      cannot: ["Access members not assigned to your workspace unless leadership grants visibility.", "Override attorney legal strategy."],
+      steps: ["Open Assigned Members.", "Search or select a member.", "Review readiness, criterion coverage, and tasks.", "Move to Opportunities or Messages for follow-up."],
+      keywords: ["builder", "assigned members", "roster", "search", "readiness", "tasks"],
+    },
+    {
+      title: "Assign Tasks And Opportunities",
+      summary: "Builders can turn reusable opportunities or custom guidance into clear member tasks tied to EB1A criteria.",
+      can: ["Create tasks for selected members.", "Use opportunity templates.", "Set evidence category and due date."],
+      cannot: ["Submit evidence on behalf of a member without proper source/document handling.", "Assign legal conclusions as facts."],
+      steps: ["Select a member.", "Open Opportunities.", "Choose a template or custom task.", "Add guidance, criterion, and due date.", "Assign the task."],
+      keywords: ["opportunity", "task", "assign task", "due date", "guidance", "template"],
+    },
+    {
+      title: "Review Evidence And Narrative Exports",
+      summary: "Builders can review uploaded evidence, Critical Role exports, Original Contribution exports, and profile completeness before attorney review.",
+      can: ["Open evidence groups.", "Review exported narrative submissions.", "Identify missing corroboration."],
+      cannot: ["Edit submitted member facts without member confirmation.", "Treat unverified claims as final petition language."],
+      steps: ["Open a member.", "Review Evidence Library.", "Check narrative exports.", "Message the member for missing details.", "Create tasks for gaps."],
+      keywords: ["evidence review", "exports", "critical role export", "original contribution export", "library"],
+    },
+  ],
+  attorney: [
+    {
+      title: "Select A Member For Legal Work",
+      summary: "Attorney sections are member-specific, so select the member first before dossier, petition, letters, evidence, or batch work.",
+      can: ["Search assigned cases.", "Select a member from the caseboard.", "Keep the selected member active across attorney sections."],
+      cannot: ["Generate member-specific work without selecting a member.", "Access unassigned members unless leader/admin visibility allows it."],
+      steps: ["Open Attorney Home.", "Search by name, phone, or email.", "Select the member.", "Move to Dossier, Petition, Recommendations, Batch Intake, or Evidence Review."],
+      keywords: ["attorney", "select member", "caseboard", "search", "dossier", "petition"],
+    },
+    {
+      title: "Member Dossier",
+      summary: "The dossier summarizes profile facts, strengths, gaps, tasks, evidence, and narrative exports for attorney review.",
+      can: ["Review identity and positioning.", "Inspect strengths and gaps.", "Review member-submitted narrative exports."],
+      cannot: ["Assume every uploaded item is legally sufficient.", "Skip attorney judgment on final merits."],
+      steps: ["Select a member.", "Open Member Dossier.", "Review profile summary.", "Check strengths, gaps, evidence, and exported narratives.", "Decide next legal follow-up."],
+      keywords: ["dossier", "profile summary", "strengths", "gaps", "legal review"],
+    },
+    {
+      title: "Petition And Endeavor Drafting",
+      summary: "Attorney drafting tools generate working drafts from selected member context, evidence, tasks, and profile data.",
+      can: ["Generate draft work product.", "Refresh drafts after new evidence.", "Use draft output for attorney review and editing."],
+      cannot: ["File AI-generated content without attorney review.", "Invent facts not present in evidence or profile data."],
+      steps: ["Select a member.", "Open Petition Generator or Endeavor Letter Generator.", "Review available context.", "Generate or refresh draft.", "Edit and validate before use."],
+      keywords: ["petition", "endeavor", "draft", "generator", "legal work product"],
+    },
+    {
+      title: "Recommendation Letters",
+      summary: "Recommendation Letters help attorneys generate dependent or independent letters tied to member projects and evidence context.",
+      can: ["Select project context.", "Generate draft letters.", "Review and approve before pushing to member."],
+      cannot: ["Send unreviewed letters as final.", "Create letters for unsupported projects without enough facts."],
+      steps: ["Select a member.", "Open Recommendation Letters.", "Choose project and letter type.", "Generate draft.", "Review, approve, and send to member for signature when ready."],
+      keywords: ["recommendation", "letter", "dependent", "independent", "project", "signature"],
+    },
+    {
+      title: "Batch Intake",
+      summary: "Batch Intake stages ZIP uploads for human review before files are committed to organized evidence storage.",
+      can: ["Upload ZIP files.", "Review AI-suggested categories.", "Approve files one by one or in bulk before commit."],
+      cannot: ["Commit a batch without selecting the member.", "Treat AI routing as final without human review."],
+      steps: ["Select a member.", "Open Batch Intake.", "Upload ZIP.", "Review suggested categories and folders.", "Approve or adjust.", "Commit reviewed files."],
+      keywords: ["batch", "zip", "bulk upload", "queue", "commit", "folder"],
+    },
+  ],
+  leader: [
+    {
+      title: "Invite Members And Route Assignments",
+      summary: "Leaders invite members by email and can optionally assign a Profile Builder and Attorney at invite time or later.",
+      can: ["Create member invites.", "Assign builder and attorney now or later.", "Track registration status."],
+      cannot: ["Require assignments before invitation.", "Assume invitation email delivery is complete unless email integration is configured."],
+      steps: ["Open Leader Home or Assignment Oversight.", "Enter member name, email, domain, title, and employer.", "Optionally choose builder and attorney.", "Create invite.", "Track registration and rebalance later."],
+      keywords: ["leader", "invite", "registration", "assign builder", "assign attorney", "routing"],
+    },
+    {
+      title: "Assignment Oversight",
+      summary: "Assignment Oversight shows registration, builder assignment, attorney assignment, current stage, and quick actions.",
+      can: ["Search member roster.", "Reassign builders and attorneys.", "Review unassigned or delayed cases."],
+      cannot: ["Delete member work from this routing view.", "Replace attorney review with assignment status alone."],
+      steps: ["Open Assignment Oversight.", "Search for a member.", "Review registration and stage.", "Select builder or attorney from dropdown.", "Open member review when needed."],
+      keywords: ["assignment oversight", "routing", "builder assignment", "attorney assignment", "search roster"],
+    },
+    {
+      title: "Timelines, Capacity, And Alerts",
+      summary: "Leader dashboards show filing timelines, late cases, capacity pressure, risk, and portfolio movement.",
+      can: ["Review who is running late.", "Inspect team capacity.", "Use watchlists to prioritize intervention."],
+      cannot: ["Guarantee filing date without member readiness and attorney confirmation.", "Ignore RFE dotted-line planning when risk exists."],
+      steps: ["Open Leader Home, Timelines, Risks, or Capacity.", "Review late/at-risk cases.", "Open the member.", "Reassign or message the responsible team as needed."],
+      keywords: ["timeline", "gantt", "capacity", "late", "risk", "alert", "watchlist"],
+    },
+    {
+      title: "Product Backlog",
+      summary: "Leaders can capture enhancement requests, priorities, screenshots, and acceptance criteria as development backlog items.",
+      can: ["Log feature requests.", "Set priority and portal impact.", "Add screenshots and acceptance criteria."],
+      cannot: ["Deploy features directly from backlog.", "Skip testing/deployment workflow."],
+      steps: ["Open Product Backlog.", "Enter title, request type, portals, priority, value, description, and acceptance criteria.", "Attach screenshots.", "Submit for review."],
+      keywords: ["backlog", "feature request", "roadmap", "priority", "screenshot", "acceptance criteria"],
+    },
+  ],
+  admin: [
+    {
+      title: "System Health",
+      summary: "System Health shows portal status, tech stack health, response times, and operational signals.",
+      can: ["Review portal and integration health.", "Check response times by stack layer.", "Monitor degraded services."],
+      cannot: ["Fix infrastructure only from the UI.", "Ignore repeated degraded states without technical follow-up."],
+      steps: ["Open Admin Portal.", "Go to Platform Health or System Health.", "Review status cards, response times, and degraded rows.", "Log or route issues when needed."],
+      keywords: ["admin", "system health", "platform health", "response times", "tech stack", "degraded"],
+    },
+    {
+      title: "Issue Portal And Debug Console",
+      summary: "Issue Portal and Debug Console help admins log, track, prioritize, and investigate bugs in an excel-like table format.",
+      can: ["Add issue rows.", "Update priority and status.", "Review debug context and affected members."],
+      cannot: ["Use issue rows as a substitute for code fixes.", "Delete audit history without archive controls."],
+      steps: ["Open Issue Portal or Debug Console.", "Review existing rows.", "Add or update issue details.", "Set status and priority.", "Use reproduction notes for fixes."],
+      keywords: ["issue portal", "bug", "debug console", "status", "priority", "reproduce"],
+    },
+    {
+      title: "Cost Explorer",
+      summary: "Cost Explorer summarizes AWS and platform operating cost signals for review and planning.",
+      can: ["Review current cost categories.", "Refresh cost data.", "Compare cost trends."],
+      cannot: ["Guarantee final AWS invoice totals from estimates.", "Change AWS billing settings directly from the portal."],
+      steps: ["Open Cost Explorer.", "Review service rows and trends.", "Refresh if needed.", "Investigate unusual increases with the deployment team."],
+      keywords: ["cost explorer", "aws cost", "billing", "refresh", "cloud cost"],
+    },
+    {
+      title: "Support Tickets And Activity Logs",
+      summary: "Admins can review support tickets and product activity logs to understand user journeys and operational issues.",
+      can: ["Review support ticket details.", "Inspect user activity signals.", "Use logs for debugging and audit support."],
+      cannot: ["Expose sensitive data unnecessarily.", "Treat logs as user-facing legal evidence."],
+      steps: ["Open Admin support or logs section.", "Filter by portal, member, issue, or timeframe.", "Review activity details.", "Escalate or close when resolved."],
+      keywords: ["support", "ticket", "activity log", "audit", "journey", "operations"],
+    },
+  ],
+};
+
+function roleLabel(role) {
+  return portalMeta(role || "member").label || "Ascend Portal";
+}
+
+function helpArticlesForRole(role) {
+  const normalized = String(role || "member").toLowerCase();
+  return [...HELP_MANUAL_SECTIONS.common, ...(HELP_MANUAL_SECTIONS[normalized] || [])];
+}
+
+function helpArticleScore(article, query) {
+  const tokens = String(query || "").toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 1);
+  if (!tokens.length) return 0;
+  const haystack = [
+    article.title,
+    article.summary,
+    ...(article.keywords || []),
+    ...(article.can || []),
+    ...(article.cannot || []),
+    ...(article.steps || []),
+  ].join(" ").toLowerCase();
+  return tokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
+}
+
+function manualAnswerForQuery(role, query) {
+  const articles = helpArticlesForRole(role);
+  const trimmed = String(query || "").trim();
+  if (!trimmed) {
+    return {
+      top: {
+        title: `${roleLabel(role)} Help Manual`,
+        summary: "Ask a usage question above, or review the manual sections below for step-by-step guidance.",
+        can: ["Search product usage questions.", "Review what each portal can and cannot do.", "Follow clean workflow steps."],
+        cannot: ["Provide legal advice.", "Fix bugs automatically.", "Answer non-Ascend general questions."],
+        steps: ["Type a question such as 'How do I upload evidence?'", "Review the summarized answer.", "Open related manual sections for more detail."],
+      },
+      related: articles,
+    };
+  }
+  const ranked = articles
+    .map((article) => ({ article, score: helpArticleScore(article, trimmed) }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .map((item) => item.article);
+  if (!ranked.length) {
+    return {
+      top: {
+        title: "No exact manual match",
+        summary: "I could not find an exact help article for that question, but I can still guide you within Ascend Product Suite usage.",
+        can: ["Ask about portal navigation, evidence, profile, assignments, messages, timelines, issue logging, or admin operations."],
+        cannot: ["Answer general world knowledge questions.", "Provide immigration legal advice.", "Create or deploy code from this manual."],
+        steps: ["Rephrase using the portal or feature name.", "Try words like evidence, profile, assignment, petition, messages, issue portal, or cost explorer.", "Use Support if the feature appears broken."],
+      },
+      related: articles.slice(0, 5),
+    };
+  }
+  return { top: ranked[0], related: ranked.slice(1, 6) };
+}
+
+function HelpManualDialog({ open, role, portalTitle, query, onQueryChange, onClose }) {
+  if (!open) return null;
+  const answer = manualAnswerForQuery(role, query);
+  const related = answer.related || [];
+  return (
+    <div className="help-manual-backdrop" onClick={onClose}>
+      <section className="help-manual-panel" onClick={(event) => event.stopPropagation()}>
+        <header className="help-manual-header">
+          <div>
+            <div className="section-kicker">Product Suite Help</div>
+            <h3 className="section-title">{portalTitle || roleLabel(role)} Manual</h3>
+            <p className="section-intro">Ask how to use Ascend. The manual returns a summarized answer, what users can do, what they cannot do, and clean steps.</p>
+          </div>
+          <button className="ghost compact-btn" type="button" onClick={onClose}>Close</button>
+        </header>
+        <label className="help-manual-search">
+          Ask a product usage question
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="Example: How do I upload evidence or assign an attorney?"
+            autoFocus
+          />
+        </label>
+        <article className="help-answer-card">
+          <div className="section-kicker">Summarized Answer</div>
+          <h4>{answer.top.title}</h4>
+          <p>{answer.top.summary}</p>
+          <div className="help-answer-grid">
+            <div>
+              <strong>Users can</strong>
+              <ul>{(answer.top.can || []).map((item) => <li key={item}>{item}</li>)}</ul>
+            </div>
+            <div>
+              <strong>Users cannot</strong>
+              <ul>{(answer.top.cannot || []).map((item) => <li key={item}>{item}</li>)}</ul>
+            </div>
+          </div>
+          <div className="help-steps">
+            <strong>How to do it</strong>
+            <ol>{(answer.top.steps || []).map((item) => <li key={item}>{item}</li>)}</ol>
+          </div>
+        </article>
+        <div className="help-manual-library">
+          <div className="section-kicker">Related Manual Sections</div>
+          {related.map((article) => (
+            <details key={article.title} className="help-manual-section">
+              <summary>{article.title}</summary>
+              <p>{article.summary}</p>
+              <ol>{(article.steps || []).map((item) => <li key={item}>{item}</li>)}</ol>
+            </details>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function devLoginOptions(role) {
   if (!LOGIN_HELPERS_ENABLED) return [];
   const previewAccounts = isPreviewRole(role) ? PREVIEW_ACCOUNTS[role] || [] : [];
@@ -457,6 +796,67 @@ function supportPriorityLabel(value) {
   return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : "Normal";
 }
 
+function memberSearchText(member) {
+  return [
+    member?.first_name,
+    member?.last_name,
+    member?.display_name,
+    member?.email,
+    member?.phone,
+  ].map((value) => String(value || "").toLowerCase()).join(" ");
+}
+
+function memberPhoneDigits(member) {
+  return String(member?.phone || "").replace(/\D/g, "");
+}
+
+function filterMembersBySearch(members, query) {
+  const normalized = String(query || "").trim().toLowerCase();
+  if (!normalized) return members;
+  const queryDigits = normalized.replace(/\D/g, "");
+  return members.filter((member) => {
+    const textMatch = memberSearchText(member).includes(normalized);
+    const phoneMatch = queryDigits ? memberPhoneDigits(member).includes(queryDigits) : false;
+    return textMatch || phoneMatch;
+  });
+}
+
+function MemberSearchBox({ value, onChange, total, visible, label = "Search members" }) {
+  return (
+    <div className="member-search-box">
+      <label>
+        <span>{label}</span>
+        <input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Search first name, last name, phone, or email"
+        />
+      </label>
+      <small>Showing {visible} of {total} member(s)</small>
+    </div>
+  );
+}
+
+function AssignmentFlowGuide() {
+  const steps = [
+    ["Invite", "Leader sends the member registration link to the member email address."],
+    ["Register", "Member opens the link, sets a password, and starts their profile."],
+    ["Assign", "Profile Builder and Attorney are optional now and can be assigned later."],
+    ["Build", "Member completes profile and evidence intake for team review."],
+  ];
+  return (
+    <div className="assignment-flow-guide">
+      {steps.map(([title, detail], index) => (
+        <article key={title}>
+          <span>{index + 1}</span>
+          <strong>{title}</strong>
+          <small>{detail}</small>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function emptyLeaderInviteForm() {
   return {
     first_name: "",
@@ -466,6 +866,8 @@ function emptyLeaderInviteForm() {
     primary_field: "",
     current_title: "",
     current_employer: "",
+    builder_id: "",
+    attorney_id: "",
   };
 }
 
@@ -1662,8 +2064,8 @@ function AssistantPanel({
               </article>
             )) : (
               <article className="assistant-empty">
-                <strong>Ask anything about the current portal context.</strong>
-                <p>Try member gaps, next actions, storage-backed evidence trails, assignment questions, or dossier summaries.</p>
+                <strong>Ask about Ascend portal work only.</strong>
+                <p>Try member gaps, next actions, storage-backed evidence trails, assignment questions, dossier summaries, or portal workflow.</p>
               </article>
             )}
           </div>
@@ -1672,7 +2074,7 @@ function AssistantPanel({
               value={input}
               onChange={(event) => onInputChange(event.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask a free-form question about the current case, queue, evidence, or next move."
+              placeholder="Ask about the current Ascend case, portal workflow, evidence, queue, or next move."
               rows={3}
             />
             <div className="assistant-actions">
@@ -1892,6 +2294,7 @@ function App() {
   const [authMember, setAuthMember] = useState(readStoredMember());
   const [builderDashboard, setBuilderDashboard] = useState(null);
   const [builderMembers, setBuilderMembers] = useState([]);
+  const [memberSearchQuery, setMemberSearchQuery] = useState("");
   const [builderMemberDetail, setBuilderMemberDetail] = useState(null);
   const [memberDetailLoading, setMemberDetailLoading] = useState(false);
   const [builderOpportunities, setBuilderOpportunities] = useState([]);
@@ -1902,6 +2305,8 @@ function App() {
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [loginBusy, setLoginBusy] = useState(false);
   const [memberMenuOpen, setMemberMenuOpen] = useState(false);
+  const [helpManualOpen, setHelpManualOpen] = useState(false);
+  const [helpManualQuery, setHelpManualQuery] = useState("");
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current_password: "", new_password: "", confirm_password: "" });
   const [passwordBusy, setPasswordBusy] = useState(false);
@@ -2001,6 +2406,16 @@ function App() {
     () => builderMembers.find((item) => item.client_id === selectedBuilderMemberId) || null,
     [builderMembers, selectedBuilderMemberId],
   );
+  const filteredBuilderMembers = useMemo(
+    () => filterMembersBySearch(builderMembers, memberSearchQuery),
+    [builderMembers, memberSearchQuery],
+  );
+  const memberSelectorOptions = useMemo(() => {
+    if (!selectedAttorneyMember || filteredBuilderMembers.some((item) => item.client_id === selectedAttorneyMember.client_id)) {
+      return filteredBuilderMembers;
+    }
+    return [selectedAttorneyMember, ...filteredBuilderMembers];
+  }, [filteredBuilderMembers, selectedAttorneyMember]);
   const assistantMemberId = useMemo(() => (
     ["builder", "leader", "attorney"].includes(authMember?.role) ? (selectedBuilderMemberId || builderMemberDetail?.member?.client_id || "") : ""
   ), [authMember?.role, selectedBuilderMemberId, builderMemberDetail]);
@@ -2408,10 +2823,10 @@ function App() {
       setLeaderAssignments(
         (leaderData.members || []).map((item) => ({
           client_id: item.client_id,
-          builder_id: leaderData.builders?.find((builder) => builder.display_name === item.builder_name)?.id || "",
+          builder_id: item.builder_id || leaderData.builders?.find((builder) => builder.display_name === item.builder_name)?.id || "",
           builder_name: item.builder_name || "",
           builder_email: item.builder_email || "",
-          attorney_id: leaderData.attorneys?.find((attorney) => attorney.display_name === item.attorney_name)?.id || "",
+          attorney_id: item.attorney_id || leaderData.attorneys?.find((attorney) => attorney.display_name === item.attorney_name)?.id || "",
           attorney_name: item.attorney_name || "",
           attorney_email: item.attorney_email || "",
         })),
@@ -3085,6 +3500,11 @@ function App() {
     setSupportSubmission(null);
   }
 
+  function openHelpManual() {
+    setHelpManualOpen(true);
+    setMemberMenuOpen(false);
+  }
+
   async function handlePasswordChange(event) {
     event.preventDefault();
     if (passwordForm.new_password !== passwordForm.confirm_password) {
@@ -3240,7 +3660,14 @@ function App() {
       Object.entries(leaderInviteForm).forEach(([key, value]) => formData.set(key, value));
       const result = await sendForm("/api/leader/invites", formData);
       if (result.ok) {
-        setMessage({ type: "success", text: `Invitation prepared for ${result.payload.display_name}.` });
+        const routed = [
+          result.payload.builder_name ? `Builder: ${result.payload.builder_name}` : "",
+          result.payload.attorney_name ? `Attorney: ${result.payload.attorney_name}` : "",
+        ].filter(Boolean).join(" • ");
+        setMessage({
+          type: "success",
+          text: `Invitation prepared for ${result.payload.display_name}. Registration link is ready for email delivery${routed ? `; ${routed}` : "; assignments can be completed later"}.`,
+        });
         setLeaderInviteForm(emptyLeaderInviteForm());
         await loadLeaderPortal(result.payload.client_id);
       } else {
@@ -4070,6 +4497,16 @@ function App() {
       onRemoveAttachment={removeSupportAttachment}
     />
   ) : null;
+  const helpManualDialog = authMember ? (
+    <HelpManualDialog
+      open={helpManualOpen}
+      role={authMember.role}
+      portalTitle={portalTitle}
+      query={helpManualQuery}
+      onQueryChange={setHelpManualQuery}
+      onClose={() => setHelpManualOpen(false)}
+    />
+  ) : null;
 
   if (authMember.role === "builder" || (authMember.role === "leader" && !isLeaderAttorneyView)) {
     const builderInitials = (authMember.display_name || "B").split(" ").map((part) => part.slice(0, 1)).join("").slice(0, 2).toUpperCase();
@@ -4139,6 +4576,7 @@ function App() {
               {memberMenuOpen ? (
                 <div className="member-menu">
                   <button type="button" onClick={() => { setPasswordDialogOpen(true); setMemberMenuOpen(false); }}>Change Password</button>
+                  <button type="button" onClick={openHelpManual}>Help Manual</button>
                   <button type="button" onClick={handleLogout}>Logout</button>
                 </div>
               ) : null}
@@ -4280,8 +4718,9 @@ function App() {
               <header className="hero">
                 <p className="eyebrow">Assignment Oversight</p>
                 <h1>Routing and workload, one view.</h1>
-                <p>Review invitation status, assign the right Profile Builder, and route members to the right Attorney without crowding the Leader home page.</p>
+                <p>Invite members, optionally route them to a Profile Builder or Attorney immediately, and rebalance assignments later without crowding the Leader home page.</p>
               </header>
+              <AssignmentFlowGuide />
 
               <section className="metrics-grid">
                 <MetricCard label="Invited Members" value={leaderInvites.filter((item) => item.status !== "registered").length} />
@@ -4293,7 +4732,14 @@ function App() {
               <section className="panel" style={{ marginTop: "18px" }}>
                 <div className="section-kicker">Assignment Oversight</div>
                 <h3 className="section-title">Intake, Builder, And Attorney Routing</h3>
-                <p className="section-intro">Track invitation status, assign the right profile builder once a member registers, and route the case to the right attorney as the profile build matures.</p>
+                <p className="section-intro">Track invitation status, assign the right profile builder or attorney during invite creation, or leave either assignment open until the case is ready.</p>
+                <MemberSearchBox
+                  value={memberSearchQuery}
+                  onChange={setMemberSearchQuery}
+                  total={builderMembers.length}
+                  visible={filteredBuilderMembers.length}
+                  label="Search roster"
+                />
                 <div className="event-planner-list">
                   <div className="event-planner-head" style={{ gridTemplateColumns: "1.2fr 0.8fr 0.8fr 1fr 1fr 0.9fr 0.8fr" }}>
                     <span>Member</span>
@@ -4304,7 +4750,7 @@ function App() {
                     <span>Current stage</span>
                     <span>Action</span>
                   </div>
-                  {builderMembers.map((item) => {
+                  {filteredBuilderMembers.map((item) => {
                     const assignment = leaderAssignments.find((entry) => entry.client_id === item.client_id) || {};
                     return (
                       <div key={`asg_${item.client_id}`} className="event-row" style={{ gridTemplateColumns: "1.2fr 0.8fr 0.8fr 1fr 1fr 0.9fr 0.8fr" }}>
@@ -4324,6 +4770,7 @@ function App() {
                       </div>
                     );
                   })}
+                  {filteredBuilderMembers.length ? null : <p className="empty-state">No members match that search.</p>}
                 </div>
               </section>
 
@@ -4359,8 +4806,14 @@ function App() {
                   <div className="section-kicker">Assigned Members</div>
                   <h3 className="section-title">Member Roster</h3>
                   <p className="section-intro">See which members are trending well and where to focus next.</p>
+                  <MemberSearchBox
+                    value={memberSearchQuery}
+                    onChange={setMemberSearchQuery}
+                    total={builderMembers.length}
+                    visible={filteredBuilderMembers.length}
+                  />
                   <div className="builder-member-list attorney-member-list">
-                    {builderMembers.map((item) => (
+                    {filteredBuilderMembers.map((item) => (
                       <button key={item.client_id} type="button" className={`builder-member-card attorney-member-card ${selectedBuilderMemberId === item.client_id ? "active" : ""}`} onClick={() => setSelectedBuilderMemberId(item.client_id)}>
                         <strong>{item.display_name}</strong>
                         <span>{item.current_title || "Profile in progress"}{item.current_employer ? ` • ${item.current_employer}` : ""}</span>
@@ -4368,6 +4821,7 @@ function App() {
                         <span className={`status-pill ${item.momentum === "Strong" ? "completed" : item.momentum === "Needs focus" ? "blocked" : "in_progress"}`}>{item.momentum}</span>
                       </button>
                     ))}
+                    {filteredBuilderMembers.length ? null : <p className="empty-state">No members match that search.</p>}
                   </div>
                 </section>
 
@@ -4574,7 +5028,8 @@ function App() {
                 <section className="panel">
                   <div className="section-kicker">Member Intake</div>
                   <h3 className="section-title">Invite A New Member</h3>
-                  <p className="section-intro">Create intake records without leaving the executive dashboard.</p>
+                  <p className="section-intro">Send the member registration path by email, then optionally route the case to a Profile Builder and Attorney now or leave assignment open for later.</p>
+                  <AssignmentFlowGuide />
                   <form className="stacked-form" onSubmit={submitLeaderInvite}>
                     <label>First name<input value={leaderInviteForm.first_name} onChange={(event) => setLeaderInviteField("first_name", event.target.value)} /></label>
                     <label>Last name<input value={leaderInviteForm.last_name} onChange={(event) => setLeaderInviteField("last_name", event.target.value)} /></label>
@@ -4583,7 +5038,9 @@ function App() {
                     <label>Primary field<input value={leaderInviteForm.primary_field} onChange={(event) => setLeaderInviteField("primary_field", event.target.value)} placeholder="For example: Clinical AI, Claims Analytics, Biotechnology" /></label>
                     <label>Current title<input value={leaderInviteForm.current_title} onChange={(event) => setLeaderInviteField("current_title", event.target.value)} /></label>
                     <label>Current employer<input value={leaderInviteForm.current_employer} onChange={(event) => setLeaderInviteField("current_employer", event.target.value)} /></label>
-                    <div className="form-actions"><button className="primary compact-btn" type="submit" disabled={builderBusy}>{builderBusy ? "Preparing..." : "Create Invite"}</button></div>
+                    <label>Profile builder (optional)<select value={leaderInviteForm.builder_id} onChange={(event) => setLeaderInviteField("builder_id", event.target.value)}><option value="">Assign later</option>{leaderBuilders.map((builder) => <option key={builder.id} value={builder.id}>{builder.display_name}</option>)}</select></label>
+                    <label>Attorney (optional)<select value={leaderInviteForm.attorney_id} onChange={(event) => setLeaderInviteField("attorney_id", event.target.value)}><option value="">Assign later</option>{leaderAttorneys.map((attorney) => <option key={attorney.id} value={attorney.id}>{attorney.display_name}</option>)}</select></label>
+                    <div className="form-actions"><button className="primary compact-btn" type="submit" disabled={builderBusy}>{builderBusy ? "Preparing..." : "Create Invite And Route"}</button></div>
                   </form>
                 </section>
 
@@ -4610,8 +5067,14 @@ function App() {
                   <div className="section-kicker">Member Focus</div>
                   <h3 className="section-title">Who needs the next push</h3>
                   <p className="section-intro">Choose a member, review momentum quickly, then move into opportunities or assigned member review.</p>
+                  <MemberSearchBox
+                    value={memberSearchQuery}
+                    onChange={setMemberSearchQuery}
+                    total={builderMembers.length}
+                    visible={filteredBuilderMembers.length}
+                  />
                   <div className="builder-member-list attorney-member-list">
-                    {builderMembers.map((item) => (
+                    {filteredBuilderMembers.map((item) => (
                       <button key={item.client_id} type="button" className={`builder-member-card attorney-member-card ${selectedBuilderMemberId === item.client_id ? "active" : ""}`} onClick={() => setSelectedBuilderMemberId(item.client_id)}>
                         <strong>{item.display_name}</strong>
                         <span>{item.current_title || "Profile in progress"}{item.current_employer ? ` • ${item.current_employer}` : ""}</span>
@@ -4619,6 +5082,7 @@ function App() {
                         <span className={`status-pill ${item.momentum === "Strong" ? "completed" : item.momentum === "Needs focus" ? "blocked" : "in_progress"}`}>{item.momentum}</span>
                       </button>
                     ))}
+                    {filteredBuilderMembers.length ? null : <p className="empty-state">No members match that search.</p>}
                   </div>
                 </section>
 
@@ -4659,6 +5123,7 @@ function App() {
         </main>
         {assistantPanel}
         {supportPanel}
+        {helpManualDialog}
       </React.Fragment>
     );
   }
@@ -4724,6 +5189,7 @@ function App() {
               {memberMenuOpen ? (
                 <div className="member-menu">
                   <button type="button" onClick={() => { setPasswordDialogOpen(true); setMemberMenuOpen(false); }}>Change Password</button>
+                  <button type="button" onClick={openHelpManual}>Help Manual</button>
                   <button type="button" onClick={handleLogout}>Logout</button>
                 </div>
               ) : null}
@@ -4797,8 +5263,15 @@ function App() {
                     <p className="section-intro">Pick the member first, then move into dossier review, petition drafting, evidence review, or batch intake with the right case in focus.</p>
                   </div>
                 </div>
+                <MemberSearchBox
+                  value={memberSearchQuery}
+                  onChange={setMemberSearchQuery}
+                  total={builderMembers.length}
+                  visible={filteredBuilderMembers.length}
+                  label="Search cases"
+                />
                 <div className="builder-member-list attorney-member-list">
-                  {builderMembers.map((item) => (
+                  {filteredBuilderMembers.map((item) => (
                     <button
                       key={item.client_id}
                       type="button"
@@ -4812,6 +5285,7 @@ function App() {
                       <span className={`status-pill ${item.momentum === "Strong" ? "completed" : item.momentum === "Needs focus" ? "blocked" : "in_progress"}`}>{item.momentum}</span>
                     </button>
                   ))}
+                  {filteredBuilderMembers.length ? null : <p className="empty-state">No members match that search.</p>}
                 </div>
               </section>
 
@@ -4872,8 +5346,15 @@ function App() {
                 <p>Petition drafting, evidence review, dossier analysis, and batch intake are all member-specific. Pick a member from Attorney Home to continue.</p>
               </header>
               <section className="panel" style={{ marginTop: "18px" }}>
+                <MemberSearchBox
+                  value={memberSearchQuery}
+                  onChange={setMemberSearchQuery}
+                  total={builderMembers.length}
+                  visible={filteredBuilderMembers.length}
+                  label="Search cases"
+                />
                 <div className="builder-member-list attorney-member-list">
-                  {builderMembers.map((item) => (
+                  {filteredBuilderMembers.map((item) => (
                     <button
                       key={item.client_id}
                       type="button"
@@ -4885,6 +5366,7 @@ function App() {
                       <span>Readiness {item.readiness_score}% • {item.evidence_count} evidence • {item.open_task_count} open tasks</span>
                     </button>
                   ))}
+                  {filteredBuilderMembers.length ? null : <p className="empty-state">No members match that search.</p>}
                 </div>
               </section>
             </React.Fragment>
@@ -5117,6 +5599,7 @@ function App() {
         </main>
         {assistantPanel}
         {supportPanel}
+        {helpManualDialog}
       </React.Fragment>
     );
   }
@@ -5187,6 +5670,7 @@ function App() {
                 {memberMenuOpen ? (
                   <div className="member-menu">
                     <button type="button" onClick={() => { setPasswordDialogOpen(true); setMemberMenuOpen(false); }}>Change Password</button>
+                    <button type="button" onClick={openHelpManual}>Help Manual</button>
                     <button type="button" onClick={handleLogout}>Logout</button>
                   </div>
                 ) : null}
@@ -5613,6 +6097,7 @@ function App() {
           </section>
         </main>
         {supportPanel}
+        {helpManualDialog}
       </React.Fragment>
     );
   }
@@ -5690,6 +6175,7 @@ function App() {
                 <button type="button" onClick={() => { setView({ type: "intake", criterionCode: "" }); setMemberMenuOpen(false); }}>Evidence Intake</button>
                 <button type="button" onClick={() => { setView({ type: "messages", criterionCode: "" }); setMemberMenuOpen(false); }}>Messages</button>
                 <button type="button" onClick={() => { setPasswordDialogOpen(true); setMemberMenuOpen(false); }}>Change Password</button>
+                <button type="button" onClick={openHelpManual}>Help Manual</button>
                 <button type="button" onClick={handleLogout}>Logout</button>
               </div>
             ) : null}
@@ -6213,6 +6699,7 @@ function App() {
         </section>
       </main>
       {supportPanel}
+      {helpManualDialog}
     </React.Fragment>
   );
 }

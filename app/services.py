@@ -2368,12 +2368,18 @@ class EvidenceService:
                    mp.primary_field,
                    mp.current_title,
                    mp.current_employer,
+                   mp.first_name,
+                   mp.last_name,
+                   mp.email,
+                   mp.phone,
                    invite.status AS registration_status,
                    invite.invite_sent_at,
                    invite.registered_at,
+                   bma.builder_id,
                    pb.display_name AS builder_name,
                    pb.email AS builder_email,
                    bma.created_at AS builder_assigned_at,
+                   ama.attorney_id,
                    att.display_name AS attorney_name,
                    att.email AS attorney_email,
                    ama.created_at AS attorney_assigned_at,
@@ -2507,7 +2513,11 @@ class EvidenceService:
                    (SELECT COUNT(*) FROM tasks t WHERE t.client_id = c.id AND t.case_id = cs.id AND t.status = 'open') AS open_task_count,
                    mp.primary_field,
                    mp.current_title,
-                   mp.current_employer
+                   mp.current_employer,
+                   mp.first_name,
+                   mp.last_name,
+                   mp.email,
+                   mp.phone
             FROM builder_member_assignments a
             JOIN clients c ON c.id = a.client_id
             JOIN cases cs ON cs.id = a.case_id
@@ -2591,6 +2601,8 @@ class EvidenceService:
         primary_field: str = "",
         current_title: str = "",
         current_employer: str = "",
+        builder_id: str = "",
+        attorney_id: str = "",
     ) -> dict:
         first_name = first_name.strip()
         last_name = last_name.strip()
@@ -2607,6 +2619,16 @@ class EvidenceService:
         invite_id = f"inv_{uuid.uuid4().hex[:12]}"
         display_name = f"{first_name} {last_name}".strip()
         domain = industry_domain.strip() or self._infer_domain({"industry_domain": "", "primary_field": primary_field, "current_employer": current_employer})
+        selected_builder = None
+        selected_attorney = None
+        if builder_id.strip():
+            selected_builder = one(self.conn, "SELECT * FROM profile_builders WHERE id = ?", (builder_id.strip(),))
+            if not selected_builder:
+                raise ValueError("Profile builder not found")
+        if attorney_id.strip():
+            selected_attorney = one(self.conn, "SELECT * FROM attorneys WHERE id = ?", (attorney_id.strip(),))
+            if not selected_attorney:
+                raise ValueError("Attorney not found")
         self.conn.execute("INSERT INTO clients(id, display_name) VALUES (?, ?)", (client_id, display_name))
         self.conn.execute("INSERT INTO cases(id, client_id, readiness_score, status) VALUES (?, ?, ?, ?)", (case_id, client_id, 5, "intake"))
         self.conn.execute(
@@ -2637,8 +2659,24 @@ class EvidenceService:
             INSERT INTO member_registration_invites(id, client_id, case_id, email, invited_by, status, notes)
             VALUES (?, ?, ?, ?, 'leader', 'invited', ?)
             """,
-            (invite_id, client_id, case_id, email, "Invite created in local seed data. Email delivery can be connected later."),
+            (invite_id, client_id, case_id, email, "Registration link prepared for email delivery. Member should register, set a password, and complete profile intake."),
         )
+        if selected_builder:
+            self.conn.execute(
+                """
+                INSERT INTO builder_member_assignments(id, builder_id, client_id, case_id, status)
+                VALUES (?, ?, ?, ?, 'active')
+                """,
+                (f"asg_{uuid.uuid4().hex[:12]}", selected_builder["id"], client_id, case_id),
+            )
+        if selected_attorney:
+            self.conn.execute(
+                """
+                INSERT INTO attorney_member_assignments(id, attorney_id, client_id, case_id, status)
+                VALUES (?, ?, ?, ?, 'active')
+                """,
+                (f"aat_{uuid.uuid4().hex[:12]}", selected_attorney["id"], client_id, case_id),
+            )
         self.conn.commit()
         self.record_operational_event(
             "member_invite",
@@ -2648,7 +2686,12 @@ class EvidenceService:
             case_id=case_id,
             endpoint="/api/leader/invites",
             message=f"Leader invited {display_name}.",
-            metadata={"email": email, "industry_domain": domain},
+            metadata={
+                "email": email,
+                "industry_domain": domain,
+                "builder_id": selected_builder["id"] if selected_builder else "",
+                "attorney_id": selected_attorney["id"] if selected_attorney else "",
+            },
         )
         return {
             "ok": True,
@@ -2659,6 +2702,12 @@ class EvidenceService:
             "email": email,
             "industry_domain": domain,
             "registration_status": "invited",
+            "builder_id": selected_builder["id"] if selected_builder else "",
+            "builder_name": selected_builder["display_name"] if selected_builder else "",
+            "builder_email": selected_builder["email"] if selected_builder else "",
+            "attorney_id": selected_attorney["id"] if selected_attorney else "",
+            "attorney_name": selected_attorney["display_name"] if selected_attorney else "",
+            "attorney_email": selected_attorney["email"] if selected_attorney else "",
         }
 
     def leader_assign_builder(self, client_id: str, builder_id: str) -> dict:
@@ -2743,7 +2792,11 @@ class EvidenceService:
                    (SELECT COUNT(*) FROM tasks t WHERE t.client_id = c.id AND t.case_id = cs.id AND t.status = 'open') AS open_task_count,
                    mp.primary_field,
                    mp.current_title,
-                   mp.current_employer
+                   mp.current_employer,
+                   mp.first_name,
+                   mp.last_name,
+                   mp.email,
+                   mp.phone
             FROM attorney_member_assignments a
             JOIN clients c ON c.id = a.client_id
             JOIN cases cs ON cs.id = a.case_id
@@ -3021,6 +3074,38 @@ class EvidenceService:
             raise ValueError("question is required")
         normalized_thread = self._normalize_assistant_thread(thread or [])
         context = self._assistant_context(role, cleaned_question, client_id.strip(), actor_email.strip().lower(), normalized_thread)
+        scope_check = self._assistant_scope_check(cleaned_question, normalized_thread, context)
+        if not scope_check["allowed"]:
+            answer = self._assistant_scope_guardrail_answer(role, context)
+            member = context.get("member") or {}
+            self.record_operational_event(
+                "portal_assistant",
+                status="blocked",
+                portal=role,
+                client_id=member.get("client_id", ""),
+                case_id=member.get("case_id", ""),
+                endpoint="/api/assistant/reply",
+                message=f"{self._assistant_name(role)} blocked an out-of-scope question.",
+                metadata={
+                    "source": "guardrail",
+                    "scope_reason": scope_check["reason"],
+                    "question_length": len(cleaned_question),
+                    "thread_turns": len(normalized_thread),
+                    "reference_count": 0,
+                },
+            )
+            return {
+                "ok": True,
+                "status": "blocked",
+                "source": "guardrail",
+                "assistant_name": self._assistant_name(role),
+                "member": {
+                    "client_id": member.get("client_id", ""),
+                    "case_id": member.get("case_id", ""),
+                    "display_name": member.get("display_name", ""),
+                },
+                **answer,
+            }
         assistant_payload = {
             "actor_role": role,
             "question": cleaned_question,
@@ -4392,6 +4477,142 @@ class EvidenceService:
 
     def _assistant_name(self, role: str) -> str:
         return "Ascend Navigator"
+
+    def _assistant_scope_check(self, question: str, thread: list[dict], context: dict) -> dict:
+        thread_text = " ".join(str(item.get("content", "")) for item in (thread or [])[-4:])
+        text = f"{question} {thread_text}".strip().lower()
+        allowed_terms = (
+            "ascend",
+            "portal",
+            "product suite",
+            "member",
+            "client",
+            "profile",
+            "profile builder",
+            "builder",
+            "attorney",
+            "leader",
+            "admin",
+            "case",
+            "dossier",
+            "petition",
+            "eb1",
+            "eb-1",
+            "eb1a",
+            "immigration",
+            "visa",
+            "filing",
+            "rfe",
+            "evidence",
+            "criterion",
+            "criteria",
+            "critical role",
+            "original contribution",
+            "recommendation",
+            "endeavor",
+            "document",
+            "folder",
+            "s3",
+            "bucket",
+            "intake",
+            "review",
+            "readiness",
+            "assignment",
+            "assign",
+            "invite",
+            "registration",
+            "register",
+            "password",
+            "login",
+            "message",
+            "support",
+            "issue portal",
+            "system health",
+            "cost explorer",
+            "dashboard",
+            "timeline",
+            "task",
+            "workflow",
+            "backlog",
+            "roadmap",
+        )
+        contextual_terms = (
+            "next",
+            "focus",
+            "review",
+            "first",
+            "best",
+            "strongest",
+            "weakest",
+            "gap",
+            "risk",
+            "ready",
+            "improve",
+            "summarize",
+            "summary",
+            "status",
+            "progress",
+            "priority",
+            "action",
+            "follow up",
+            "queue",
+            "work on",
+            "what should",
+            "which",
+            "where",
+            "why",
+        )
+        out_of_scope_terms = (
+            "weather",
+            "sports",
+            "stock price",
+            "crypto",
+            "bitcoin",
+            "recipe",
+            "restaurant",
+            "movie",
+            "celebrity",
+            "capital of",
+            "president of",
+            "translate",
+            "write code",
+            "debug code",
+            "homework",
+            "math problem",
+            "tell me a joke",
+            "poem",
+            "song",
+            "travel itinerary",
+        )
+        if any(term in text for term in allowed_terms):
+            return {"allowed": True, "reason": "ascend_scope_term"}
+        if any(term in text for term in out_of_scope_terms):
+            return {"allowed": False, "reason": "generic_world_knowledge"}
+        if context.get("member") and any(term in text for term in contextual_terms):
+            return {"allowed": True, "reason": "selected_member_context"}
+        return {"allowed": False, "reason": "missing_ascend_scope"}
+
+    def _assistant_scope_guardrail_answer(self, role: str, context: dict) -> dict:
+        member = context.get("member") or {}
+        member_label = member.get("display_name") or "the selected member"
+        role_label = role.replace("_", " ").title()
+        summary = (
+            "Ascend Navigator can help only with Ascend Product Suite work, EB1A case workflows, portal users, "
+            "member profiles, evidence, assignments, petition preparation, messages, and support/navigation tasks."
+        )
+        return {
+            "summary": f"{summary} Please ask an Ascend-related question.",
+            "detailed_answer": (
+                f"I cannot answer general-purpose questions outside Ascend. In the {role_label} portal, I can help with "
+                f"{member_label}'s profile, evidence, criteria coverage, tasks, assignments, document storage, petition workflow, "
+                "or product-suite navigation."
+            ),
+            "detail_prompt": "Ask about this Ascend case, evidence, assignment, petition workflow, or portal navigation.",
+            "suggested_follow_up": "Ask which evidence item, profile gap, assignment, or EB1A criterion needs attention next.",
+            "needs_more_detail": False,
+            "response_mode": "summary",
+            "references": [],
+        }
 
     def _assistant_detail_requested(self, question: str, thread: list[dict] | None = None) -> bool:
         haystack = " ".join(

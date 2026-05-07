@@ -245,9 +245,11 @@ def leader_invite_member(
     primary_field: str = Form(""),
     current_title: str = Form(""),
     current_employer: str = Form(""),
+    builder_id: str = Form(""),
+    attorney_id: str = Form(""),
 ) -> dict:
     try:
-        return service().leader_invite_member(first_name, last_name, email, industry_domain, primary_field, current_title, current_employer)
+        return service().leader_invite_member(first_name, last_name, email, industry_domain, primary_field, current_title, current_employer, builder_id, attorney_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
