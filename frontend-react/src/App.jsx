@@ -142,6 +142,25 @@ function previewLoginNote(role) {
   return `${portalMeta(role).label}: use your Ascend-issued credentials to continue.`;
 }
 
+function formatLastLogin(value) {
+  if (!value) return "Not recorded yet";
+  const normalized = String(value).includes("T") ? String(value) : String(value).replace(" ", "T");
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(normalized);
+  const parsed = new Date(hasTimezone ? normalized : `${normalized}Z`);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString([], {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function LastLoginStamp({ user }) {
+  return <span className="last-login-stamp">Last login: {formatLastLogin(user?.last_login_at)}</span>;
+}
+
 async function getJson(path, params) {
   const url = new URL(`${API_URL}${path}`);
   if (params) {
@@ -3432,6 +3451,7 @@ function App() {
                 <span className="member-trigger-copy">
                   <strong>{authMember.display_name}</strong>
                   <span>{authMember.email}</span>
+                  <LastLoginStamp user={authMember} />
                 </span>
               </button>
               {memberMenuOpen ? (
@@ -4013,6 +4033,7 @@ function App() {
                 <span className="member-trigger-copy">
                   <strong>{authMember.display_name}</strong>
                   <span>{authMember.email}</span>
+                  <LastLoginStamp user={authMember} />
                 </span>
               </button>
               {memberMenuOpen ? (
@@ -4460,6 +4481,7 @@ function App() {
                   <span className="member-trigger-copy">
                     <strong>{authMember.display_name}</strong>
                     <span>{authMember.email}</span>
+                    <LastLoginStamp user={authMember} />
                   </span>
                 </button>
                 {memberMenuOpen ? (
@@ -4787,6 +4809,7 @@ function App() {
               <span className="member-trigger-copy">
                 <strong>{authMember.display_name}</strong>
                 <span>{authMember.email}</span>
+                <LastLoginStamp user={authMember} />
               </span>
             </button>
             {memberMenuOpen ? (

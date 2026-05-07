@@ -1,6 +1,6 @@
 import json
 
-from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import load_cors_origins
@@ -90,26 +90,34 @@ def require_admin_user(authorization: str | None = Header(None)) -> dict:
     return user
 
 
+def _login_audit_context(request: Request) -> dict:
+    return {
+        "client_ip": request.client.host if request.client else "",
+        "forwarded_for": request.headers.get("x-forwarded-for", ""),
+        "user_agent": request.headers.get("user-agent", ""),
+    }
+
+
 @app.post("/api/auth/login")
-def login(username: str = Form(...), password: str = Form(...)) -> dict:
+def login(request: Request, username: str = Form(...), password: str = Form(...)) -> dict:
     try:
-        return service().login_member(username, password)
+        return service().login_member(username, password, _login_audit_context(request))
     except ValueError as exc:
         raise HTTPException(status_code=401, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.post("/api/builder/auth/login")
-def builder_login(username: str = Form(...), password: str = Form(...)) -> dict:
+def builder_login(request: Request, username: str = Form(...), password: str = Form(...)) -> dict:
     try:
-        return service().login_builder(username, password)
+        return service().login_builder(username, password, _login_audit_context(request))
     except ValueError as exc:
         raise HTTPException(status_code=401, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.post("/api/staff/auth/login")
-def staff_login(username: str = Form(...), password: str = Form(...)) -> dict:
+def staff_login(request: Request, username: str = Form(...), password: str = Form(...)) -> dict:
     try:
-        return service().login_staff(username, password)
+        return service().login_staff(username, password, _login_audit_context(request))
     except ValueError as exc:
         raise HTTPException(status_code=401, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 

@@ -50,6 +50,9 @@ class ApiTests(unittest.TestCase):
             response = self.client.post("/api/auth/login", data={"username": "vas@ascend.com", "password": "secret123"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["token"], "sess_1")
+        args = service.login_member.call_args.args
+        self.assertEqual(args[:2], ("vas@ascend.com", "secret123"))
+        self.assertIn("client_ip", args[2])
 
     def test_change_password_uses_service(self):
         service = Mock()

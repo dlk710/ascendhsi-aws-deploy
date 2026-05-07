@@ -458,6 +458,10 @@ class EvidenceService:
         error_code: str = "",
         message: str = "",
         metadata: dict | None = None,
+        actor_role: str = "",
+        actor_key: str = "",
+        related_client_id: str = "",
+        related_case_id: str = "",
     ) -> dict:
         event = {
             "id": f"ops_{uuid.uuid4().hex[:12]}",
@@ -470,16 +474,50 @@ class EvidenceService:
             "error_code": error_code,
             "message": message,
             "metadata": json.dumps(metadata or {}, ensure_ascii=True),
+            "actor_role": actor_role,
+            "actor_key": actor_key,
+            "related_client_id": related_client_id,
+            "related_case_id": related_case_id,
         }
         self.conn.execute(
             """
-            INSERT INTO operational_events(id, event_type, status, portal, client_id, case_id, endpoint, error_code, message, metadata)
-            VALUES (:id, :event_type, :status, :portal, :client_id, :case_id, :endpoint, :error_code, :message, :metadata)
+            INSERT INTO operational_events(
+              id, event_type, status, portal, client_id, case_id, endpoint, error_code, message, metadata,
+              actor_role, actor_key, related_client_id, related_case_id
+            )
+            VALUES (
+              :id, :event_type, :status, :portal, :client_id, :case_id, :endpoint, :error_code, :message, :metadata,
+              :actor_role, :actor_key, :related_client_id, :related_case_id
+            )
             """,
             event,
         )
         self.conn.commit()
         return event
+
+    def _login_audit_metadata(self, audit_context: dict | None = None) -> dict:
+        context = audit_context or {}
+        return {
+            "client_ip": str(context.get("client_ip", "") or "")[:120],
+            "forwarded_for": str(context.get("forwarded_for", "") or "")[:240],
+            "user_agent": str(context.get("user_agent", "") or "")[:500],
+        }
+
+    def _mark_account_login(self, table: str, account_id: str, audit_context: dict | None = None) -> tuple[str, dict]:
+        metadata = self._login_audit_metadata(audit_context)
+        logged_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        self.conn.execute(
+            f"""
+            UPDATE {table}
+            SET last_login_at = ?,
+                last_login_ip = ?,
+                last_login_user_agent = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (logged_at, metadata["client_ip"] or metadata["forwarded_for"], metadata["user_agent"], account_id),
+        )
+        return logged_at, metadata
 
     def _portal_label(self, role: str) -> str:
         return {
@@ -1148,10 +1186,11 @@ class EvidenceService:
     def criteria(self) -> list[dict]:
         return rows(self.conn, "SELECT code, name, description FROM criteria ORDER BY display_order, name")
 
-    def login_builder(self, username: str, password: str) -> dict:
+    def login_builder(self, username: str, password: str, audit_context: dict | None = None) -> dict:
         username = username.strip().lower()
+        metadata = self._login_audit_metadata(audit_context)
         if not username or not password:
-            self.record_operational_event("builder_auth", status="error", portal="builder", endpoint="/api/builder/auth/login", error_code="missing_credentials", message="Builder username or password missing.")
+            self.record_operational_event("builder_auth", status="error", portal="builder", endpoint="/api/builder/auth/login", error_code="missing_credentials", message="Builder username or password missing.", metadata=metadata, actor_role="builder", actor_key=username)
             raise ValueError("username and password are required")
         account = one(
             self.conn,
@@ -1163,12 +1202,15 @@ class EvidenceService:
             (username, username),
         )
         if not account or not self._verify_password(password, account["password_hash"]):
-            self.record_operational_event("builder_auth", status="error", portal="builder", endpoint="/api/builder/auth/login", error_code="invalid_credentials", message="Builder login failed.")
+            self.record_operational_event("builder_auth", status="error", portal="builder", endpoint="/api/builder/auth/login", error_code="invalid_credentials", message="Builder login failed.", metadata=metadata, actor_role="builder", actor_key=username)
             raise ValueError("Invalid credentials")
         token = f"bsess_{secrets.token_urlsafe(24)}"
         self.conn.execute("INSERT INTO profile_builder_sessions(token, account_id) VALUES (?, ?)", (token, account["id"]))
+        logged_at, metadata = self._mark_account_login("profile_builder_accounts", account["id"], audit_context)
         self.conn.commit()
-        self.record_operational_event("builder_auth", status="success", portal="builder", endpoint="/api/builder/auth/login", message="Builder login succeeded.")
+        metadata["last_login_at"] = logged_at
+        self.record_operational_event("builder_auth", status="success", portal="builder", endpoint="/api/builder/auth/login", message="Builder login succeeded.", metadata=metadata, actor_role="builder", actor_key=account["email"].strip().lower())
+        account = one(self.conn, "SELECT * FROM profile_builder_accounts WHERE id = ?", (account["id"],)) or account
         return {"token": token, "builder": self._builder_payload(account)}
 
     def _staff_payload(self, account: dict) -> dict:
@@ -1180,11 +1222,14 @@ class EvidenceService:
             "email": account["email"].strip().lower(),
             "display_name": actor["name"],
             "role": role,
+            "last_login_at": account.get("last_login_at", ""),
         }
 
-    def login_staff(self, username: str, password: str) -> dict:
+    def login_staff(self, username: str, password: str, audit_context: dict | None = None) -> dict:
         username = username.strip().lower()
+        metadata = self._login_audit_metadata(audit_context)
         if not username or not password:
+            self.record_operational_event("staff_auth", status="error", portal="staff", endpoint="/api/staff/auth/login", error_code="missing_credentials", message="Staff username or password missing.", metadata=metadata, actor_key=username)
             raise ValueError("username and password are required")
         account = one(
             self.conn,
@@ -1196,10 +1241,16 @@ class EvidenceService:
             (username, username),
         )
         if not account or not self._verify_password(password, account["password_hash"]):
+            self.record_operational_event("staff_auth", status="error", portal="staff", endpoint="/api/staff/auth/login", error_code="invalid_credentials", message="Staff login failed.", metadata=metadata, actor_key=username)
             raise ValueError("Invalid credentials")
         token = f"ssess_{secrets.token_urlsafe(24)}"
         self.conn.execute("INSERT INTO staff_sessions(token, account_id) VALUES (?, ?)", (token, account["id"]))
+        logged_at, metadata = self._mark_account_login("staff_accounts", account["id"], audit_context)
         self.conn.commit()
+        metadata["last_login_at"] = logged_at
+        role = account["role"].strip().lower()
+        self.record_operational_event(f"{role}_auth", status="success", portal=role, endpoint="/api/staff/auth/login", message=f"{role.title()} login succeeded.", metadata=metadata, actor_role=role, actor_key=account["email"].strip().lower())
+        account = one(self.conn, "SELECT * FROM staff_accounts WHERE id = ?", (account["id"],)) or account
         return {"token": token, "user": self._staff_payload(account)}
 
     def staff_session(self, token: str) -> dict:
@@ -4249,6 +4300,7 @@ class EvidenceService:
             "email": account["email"],
             "display_name": builder["display_name"] if builder else "Profile Builder",
             "role": "builder",
+            "last_login_at": account.get("last_login_at", ""),
         }
 
     def _criteria_started(self, case_id: str) -> int:
@@ -4577,12 +4629,14 @@ class EvidenceService:
             "display_name": profile.get("preferred_name") or profile.get("first_name") or self.config.default_client["display_name"],
             "profile_confirmed": bool(profile.get("profile_confirmed")),
             "role": "member",
+            "last_login_at": account.get("last_login_at", ""),
         }
 
-    def login_member(self, username: str, password: str) -> dict:
+    def login_member(self, username: str, password: str, audit_context: dict | None = None) -> dict:
         username = username.strip().lower()
+        metadata = self._login_audit_metadata(audit_context)
         if not username or not password:
-            self.record_operational_event("member_auth", status="error", portal="member", endpoint="/api/auth/login", error_code="missing_credentials", message="Member username or password missing.")
+            self.record_operational_event("member_auth", status="error", portal="member", endpoint="/api/auth/login", error_code="missing_credentials", message="Member username or password missing.", metadata=metadata, actor_role="member", actor_key=username)
             raise ValueError("username and password are required")
         account = one(
             self.conn,
@@ -4594,10 +4648,11 @@ class EvidenceService:
             (username, username),
         )
         if not account or not self._verify_password(password, account["password_hash"]):
-            self.record_operational_event("member_auth", status="error", portal="member", endpoint="/api/auth/login", error_code="invalid_credentials", message="Member login failed.")
+            self.record_operational_event("member_auth", status="error", portal="member", endpoint="/api/auth/login", error_code="invalid_credentials", message="Member login failed.", metadata=metadata, actor_role="member", actor_key=username)
             raise ValueError("Invalid credentials")
         token = f"sess_{secrets.token_urlsafe(24)}"
         self.conn.execute("INSERT INTO member_sessions(token, account_id) VALUES (?, ?)", (token, account["id"]))
+        logged_at, metadata = self._mark_account_login("member_accounts", account["id"], audit_context)
         self.conn.execute(
             """
             UPDATE member_registration_invites
@@ -4608,7 +4663,9 @@ class EvidenceService:
             (account["client_id"], account["case_id"], account["email"].strip().lower()),
         )
         self.conn.commit()
-        self.record_operational_event("member_auth", status="success", portal="member", client_id=account["client_id"], case_id=account["case_id"], endpoint="/api/auth/login", message="Member login succeeded.")
+        metadata["last_login_at"] = logged_at
+        self.record_operational_event("member_auth", status="success", portal="member", client_id=account["client_id"], case_id=account["case_id"], endpoint="/api/auth/login", message="Member login succeeded.", metadata=metadata, actor_role="member", actor_key=account["client_id"])
+        account = one(self.conn, "SELECT * FROM member_accounts WHERE id = ?", (account["id"],)) or account
         return {"token": token, "member": self._member_payload(account)}
 
     def _infer_domain(self, item: dict) -> str:

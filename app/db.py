@@ -165,7 +165,10 @@ CREATE TABLE IF NOT EXISTS member_accounts (
   password_hash TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  last_password_changed_at TEXT
+  last_password_changed_at TEXT,
+  last_login_at TEXT,
+  last_login_ip TEXT NOT NULL DEFAULT '',
+  last_login_user_agent TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS member_sessions (
@@ -189,7 +192,10 @@ CREATE TABLE IF NOT EXISTS profile_builder_accounts (
   password_hash TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  last_password_changed_at TEXT
+  last_password_changed_at TEXT,
+  last_login_at TEXT,
+  last_login_ip TEXT NOT NULL DEFAULT '',
+  last_login_user_agent TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS profile_builder_sessions (
@@ -215,7 +221,10 @@ CREATE TABLE IF NOT EXISTS staff_accounts (
   password_hash TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  last_password_changed_at TEXT
+  last_password_changed_at TEXT,
+  last_login_at TEXT,
+  last_login_ip TEXT NOT NULL DEFAULT '',
+  last_login_user_agent TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS staff_sessions (
@@ -277,6 +286,10 @@ CREATE TABLE IF NOT EXISTS operational_events (
   error_code TEXT NOT NULL DEFAULT '',
   message TEXT NOT NULL DEFAULT '',
   metadata TEXT NOT NULL DEFAULT '{}',
+  actor_role TEXT NOT NULL DEFAULT '',
+  actor_key TEXT NOT NULL DEFAULT '',
+  related_client_id TEXT NOT NULL DEFAULT '',
+  related_case_id TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -524,9 +537,17 @@ def initialize(conn: ConnectionAdapter | sqlite3.Connection) -> None:
     ensure_column(conn, "evidence_items", "archive_reason", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "evidence_items", "folder_id", "TEXT REFERENCES evidence_folders(id)")
     ensure_column(conn, "evidence_items", "document_type", "TEXT NOT NULL DEFAULT 'Other'")
+    for table in ("member_accounts", "profile_builder_accounts", "staff_accounts"):
+        ensure_column(conn, table, "last_login_at", "TEXT")
+        ensure_column(conn, table, "last_login_ip", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, table, "last_login_user_agent", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "member_profiles", "industry_domain", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "messages", "thread_id", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "messages", "parent_message_id", "TEXT REFERENCES messages(id)")
+    ensure_column(conn, "operational_events", "actor_role", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "operational_events", "actor_key", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "operational_events", "related_client_id", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "operational_events", "related_case_id", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "tasks", "assigned_by_builder_id", "TEXT REFERENCES profile_builders(id)")
     ensure_column(conn, "tasks", "opportunity_id", "TEXT REFERENCES opportunity_library(id)")
     ensure_column(conn, "tasks", "criterion_code", "TEXT REFERENCES criteria(code)")

@@ -60,6 +60,19 @@ class DatabaseTests(unittest.TestCase):
         self.assertIn("batch_intake_sessions", names)
         self.assertIn("batch_intake_items", names)
 
+    def test_account_tables_track_last_login_audit_fields(self):
+        for table in ("member_accounts", "profile_builder_accounts", "staff_accounts"):
+            columns = rows(self.conn, f"PRAGMA table_info({table})")
+            names = {item["name"] for item in columns}
+            self.assertIn("last_login_at", names)
+            self.assertIn("last_login_ip", names)
+            self.assertIn("last_login_user_agent", names)
+
+        columns = rows(self.conn, "PRAGMA table_info(operational_events)")
+        names = {item["name"] for item in columns}
+        self.assertIn("actor_role", names)
+        self.assertIn("actor_key", names)
+
     def test_seed_default_case(self):
         seed_default_case(self.conn, "client_1", "case_1", "Vas")
         client = one(self.conn, "SELECT * FROM clients WHERE id = ?", ("client_1",))
