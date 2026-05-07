@@ -126,9 +126,9 @@ def builder_login(request: Request, username: str = Form(...), password: str = F
 
 
 @app.post("/api/staff/auth/login")
-def staff_login(request: Request, username: str = Form(...), password: str = Form(...)) -> dict:
+def staff_login(request: Request, username: str = Form(...), password: str = Form(...), portal_role: str = Form("")) -> dict:
     try:
-        return service().login_staff(username, password, _login_audit_context(request))
+        return service().login_staff(username, password, _login_audit_context(request), portal_role)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 

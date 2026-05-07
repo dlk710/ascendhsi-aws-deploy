@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const runtimeApiUrl = window.ASCEND_RUNTIME_CONFIG?.apiUrl;
 const API_URL = runtimeApiUrl !== undefined ? runtimeApiUrl : window.ASCEND_API_URL || import.meta.env.VITE_ASCEND_API_URL || "http://127.0.0.1:8000";
@@ -14,6 +14,12 @@ const PORTAL_OPTIONS = [
   { value: "attorney", label: "Attorney Portal", intro: "Sign in to review the full client profile, assess gaps and strengths, and prepare petition strategy with complete context.", username: "attorney@ascendhsi.com" },
   { value: "admin", label: "Admin Portal", intro: "Sign in to monitor system health, operational flow, user activity, and case movement across the platform.", username: "admin@ascendhsi.com" },
 ];
+const PORTAL_ROLE_VALUES = new Set(PORTAL_OPTIONS.map((item) => item.value));
+const STAFF_ROLE_VALUES = new Set(["leader", "attorney", "admin"]);
+const BUILDER_SECTIONS = new Set(["home", "members", "opportunities", "messages"]);
+const ATTORNEY_SECTIONS = new Set(["home", "dossier", "petition", "batch", "evidence", "messages"]);
+const LEADER_EXEC_SECTIONS = new Set(["home", "members", "risks", "capacity", "oversight", "opportunities", "batch", "messages"]);
+const ADMIN_SECTIONS = new Set(["home", "health", "costs", "issues", "support", "debug", "messages"]);
 const LOGIN_HELPERS_ENABLED = window.ASCEND_RUNTIME_CONFIG?.showDemoLogins !== false;
 const PREVIEW_ROLES = [];
 const PREVIEW_ACCOUNTS = {
@@ -104,6 +110,11 @@ function readStoredMember() {
   }
 }
 
+function normalizePortalRole(role) {
+  const cleaned = String(role || "").trim().toLowerCase();
+  return PORTAL_ROLE_VALUES.has(cleaned) ? cleaned : "";
+}
+
 function roleConfig(role) {
   return role === "builder"
     ? {
@@ -134,7 +145,10 @@ function portalMeta(role) {
 function requestedPortalSection(role, fallback = "home") {
   const requested = new URLSearchParams(window.location.search).get("section") || fallback;
   const allowed = {
-    admin: new Set(["home", "health", "costs", "issues", "support", "debug", "messages"]),
+    builder: BUILDER_SECTIONS,
+    leader: LEADER_EXEC_SECTIONS,
+    attorney: ATTORNEY_SECTIONS,
+    admin: ADMIN_SECTIONS,
   };
   return allowed[role]?.has(requested) ? requested : fallback;
 }
@@ -169,6 +183,16 @@ function requestedMemberView(criteria = []) {
   const page = MEMBER_PAGE_ALIASES[rawPage];
   if (page) return { view: { type: page, criterionCode: "" }, folderId: "", invalidPage: "", invalidKind: "" };
   return { view: { type: "home", criterionCode: "" }, folderId: "", invalidPage: rawPage, invalidKind: "page" };
+}
+
+function readPortalRoute() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    portal: normalizePortalRole(params.get("portal") || ""),
+    page: params.get("page") || "",
+    section: params.get("section") || "",
+    memberId: params.get("member") || "",
+  };
 }
 
 function isPreviewRole(role) {
@@ -2289,9 +2313,11 @@ function emptyMemberDashboard(member, criteria = []) {
 }
 
 function App() {
-  const [authMode, setAuthMode] = useState(readStoredMember()?.role || "member");
+  const initialStoredMember = readStoredMember();
+  const initialRoute = readPortalRoute();
+  const [authMode, setAuthMode] = useState(initialRoute.portal || normalizePortalRole(initialStoredMember?.role) || "member");
   const [authReady, setAuthReady] = useState(false);
-  const [authMember, setAuthMember] = useState(readStoredMember());
+  const [authMember, setAuthMember] = useState(initialStoredMember);
   const [builderDashboard, setBuilderDashboard] = useState(null);
   const [builderMembers, setBuilderMembers] = useState([]);
   const [memberSearchQuery, setMemberSearchQuery] = useState("");
@@ -2385,6 +2411,7 @@ function App() {
   const [supportBusy, setSupportBusy] = useState(false);
   const [supportForm, setSupportForm] = useState(emptySupportForm());
   const [supportSubmission, setSupportSubmission] = useState(null);
+  const routeHistoryRef = useRef({ lastUrl: window.location.href, fromPopState: false });
 
   const criteriaByCode = useMemo(() => Object.fromEntries((criteriaList || dashboard?.criteria || []).map((item) => [item.code, item])), [criteriaList, dashboard]);
   const actionItems = useMemo(() => buildActionItems(dashboard?.criteria || [], evidenceItems), [dashboard, evidenceItems]);
@@ -2572,8 +2599,19 @@ function App() {
     });
   }
 
+  function writePortalUrl(nextUrl, replace = false) {
+    if (routeHistoryRef.current.lastUrl === nextUrl) return;
+    if (replace) {
+      window.history.replaceState({}, "", nextUrl);
+    } else {
+      window.history.pushState({}, "", nextUrl);
+    }
+    routeHistoryRef.current.lastUrl = nextUrl;
+  }
+
   function syncMemberUrl(nextView) {
     const url = new URL(window.location.href);
+    url.searchParams.set("portal", "member");
     if (nextView?.type === "workspace" && nextView.criterionCode) {
       url.searchParams.set("page", "workspace");
       url.searchParams.set("criterion", nextView.criterionCode);
@@ -2582,7 +2620,56 @@ function App() {
       url.searchParams.delete("criterion");
       url.searchParams.delete("folder");
     }
-    window.history.replaceState({}, "", url.toString());
+    writePortalUrl(url.toString(), routeHistoryRef.current.fromPopState);
+    routeHistoryRef.current.fromPopState = false;
+  }
+
+  function syncStaffUrl() {
+    if (!authMember || authMember.role === "member") return;
+    const url = new URL(window.location.href);
+    ["portal", "page", "section", "member", "criterion", "folder"].forEach((key) => url.searchParams.delete(key));
+    url.searchParams.set("portal", authMember.role);
+    url.searchParams.set("section", portalSection || "home");
+    if (["builder", "leader", "attorney", "admin"].includes(authMember.role) && selectedBuilderMemberId) {
+      url.searchParams.set("member", selectedBuilderMemberId);
+    }
+    writePortalUrl(url.toString(), routeHistoryRef.current.fromPopState);
+    routeHistoryRef.current.fromPopState = false;
+  }
+
+  function applyRouteFromBrowser() {
+    const route = readPortalRoute();
+    const authenticatedRole = normalizePortalRole(authMember?.role);
+    routeHistoryRef.current.fromPopState = true;
+    routeHistoryRef.current.lastUrl = window.location.href;
+    if (authMember && route.portal && route.portal !== authenticatedRole) {
+      clearAuth();
+      clearAssistantSessions();
+      setAuthMember(null);
+      setAuthMode(route.portal);
+      setLoading(false);
+      setMessage({ type: "error", text: `Please sign in with ${portalMeta(route.portal).label} credentials to open that portal.` });
+      return;
+    }
+    if (!authMember) {
+      if (route.portal) setAuthMode(route.portal);
+      return;
+    }
+    if (authenticatedRole === "member") {
+      const memberRoute = requestedMemberView(criteriaList);
+      setSelectedFolderId(memberRoute.folderId || "");
+      setView(memberRoute.view);
+      return;
+    }
+    const allowed = authenticatedRole === "builder"
+      ? BUILDER_SECTIONS
+      : authenticatedRole === "leader"
+      ? LEADER_EXEC_SECTIONS
+      : authenticatedRole === "attorney"
+      ? ATTORNEY_SECTIONS
+      : ADMIN_SECTIONS;
+    setPortalSection(allowed.has(route.section) ? route.section : "home");
+    setSelectedBuilderMemberId(route.memberId || "");
   }
 
   async function loadHome() {
@@ -2976,25 +3063,37 @@ function App() {
   }
 
   async function bootstrapAuth() {
+    const route = readPortalRoute();
     const token = authToken();
     if (!token) {
+      if (route.portal) setAuthMode(route.portal);
       setAuthReady(true);
       setLoading(false);
       return;
     }
     try {
       const stored = readStoredMember();
-      const role = stored?.role || "member";
+      const role = normalizePortalRole(stored?.role) || "member";
+      if (route.portal && route.portal !== role) {
+        clearAuth();
+        clearAssistantSessions();
+        setAuthMember(null);
+        setAuthMode(route.portal);
+        setMessage({ type: "error", text: `Please sign in with ${portalMeta(route.portal).label} credentials to open that portal.` });
+        setLoading(false);
+        return;
+      }
       if (isPreviewRole(role)) {
         setAuthMember(stored);
         setAuthMode(role);
         if (role === "admin") {
-          await loadAdminPortal();
+          await loadAdminPortal(route.memberId);
         } else if (role === "leader") {
           setLeaderPerspective("leader");
-          await loadLeaderPortal();
+          setPortalSection(requestedPortalSection("leader", "home"));
+          await loadLeaderPortal(route.memberId);
         } else {
-          await loadReviewPortals(selectedBuilderMemberId, stored?.email || "");
+          await loadReviewPortals(route.memberId || selectedBuilderMemberId, stored?.email || "");
         }
         setAuthReady(true);
         return;
@@ -3004,14 +3103,17 @@ function App() {
       setAuthMode(role);
       persistAuth(token, identity);
       if (role === "builder") {
-        await loadBuilderDashboard();
+        setPortalSection(requestedPortalSection("builder", "home"));
+        await loadBuilderDashboard(route.memberId);
       } else if (role === "leader") {
         setLeaderPerspective("leader");
-        await loadLeaderPortal();
+        setPortalSection(requestedPortalSection("leader", "home"));
+        await loadLeaderPortal(route.memberId);
       } else if (role === "attorney") {
-        await loadReviewPortals(selectedBuilderMemberId, identity.email || "");
+        setPortalSection(requestedPortalSection("attorney", "home"));
+        await loadReviewPortals(route.memberId || selectedBuilderMemberId, identity.email || "");
       } else if (role === "admin") {
-        await loadAdminPortal();
+        await loadAdminPortal(route.memberId);
       } else {
         await loadHome();
       }
@@ -3234,6 +3336,11 @@ function App() {
 
   useEffect(() => { bootstrapAuth(); }, []);
   useEffect(() => {
+    const handlePopState = () => applyRouteFromBrowser();
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [authMember, criteriaList]);
+  useEffect(() => {
     if (!authMember) return;
     loadMessageCenterData(authMember);
   }, [authMember]);
@@ -3247,6 +3354,10 @@ function App() {
       syncMemberUrl(view);
     }
   }, [view, workspaceQuery]);
+  useEffect(() => {
+    if (!["builder", "leader", "attorney", "admin"].includes(authMember?.role)) return;
+    syncStaffUrl();
+  }, [authMember?.role, portalSection, selectedBuilderMemberId]);
   useEffect(() => {
     if (!workspace || !selectedFolderId) return;
     const folder = workspace.folders.find((item) => item.id === selectedFolderId);
@@ -3333,9 +3444,20 @@ function App() {
       const formData = new FormData();
       formData.set("username", loginForm.username);
       formData.set("password", loginForm.password);
+      if (STAFF_ROLE_VALUES.has(authMode)) {
+        formData.set("portal_role", authMode);
+      }
       const result = await sendForm(roleConfig(authMode).loginPath, formData);
       if (result.ok) {
         const payloadUser = result.payload.member || result.payload.builder || result.payload.user;
+        const expectedRole = normalizePortalRole(authMode) || "member";
+        const actualRole = normalizePortalRole(payloadUser?.role);
+        if (!actualRole || actualRole !== expectedRole) {
+          clearAuth();
+          setAuthMember(null);
+          setMessage({ type: "error", text: `These credentials belong to ${actualRole ? portalMeta(actualRole).label : "another portal"}, not ${portalMeta(expectedRole).label}.` });
+          return;
+        }
         persistAuth(result.payload.token, payloadUser);
         setAuthMember(payloadUser);
         setLoginForm({ username: "", password: "" });
@@ -3386,9 +3508,20 @@ function App() {
       const formData = new FormData();
       formData.set("username", username);
       formData.set("password", password);
+      if (STAFF_ROLE_VALUES.has(authMode)) {
+        formData.set("portal_role", authMode);
+      }
       const result = await sendForm(roleConfig(authMode).loginPath, formData);
       if (result.ok) {
         const payloadUser = result.payload.member || result.payload.builder || result.payload.user;
+        const expectedRole = normalizePortalRole(authMode) || "member";
+        const actualRole = normalizePortalRole(payloadUser?.role);
+        if (!actualRole || actualRole !== expectedRole) {
+          clearAuth();
+          setAuthMember(null);
+          setMessage({ type: "error", text: `These saved credentials belong to ${actualRole ? portalMeta(actualRole).label : "another portal"}, not ${portalMeta(expectedRole).label}.` });
+          return;
+        }
         persistAuth(result.payload.token, payloadUser);
         setAuthMember(payloadUser);
         setLoginForm({ username: "", password: "" });
@@ -4740,8 +4873,8 @@ function App() {
                   visible={filteredBuilderMembers.length}
                   label="Search roster"
                 />
-                <div className="event-planner-list">
-                  <div className="event-planner-head" style={{ gridTemplateColumns: "1.2fr 0.8fr 0.8fr 1fr 1fr 0.9fr 0.8fr" }}>
+                <div className="assignment-oversight-table">
+                  <div className="assignment-oversight-row assignment-oversight-head">
                     <span>Member</span>
                     <span>Domain</span>
                     <span>Registration</span>
@@ -4752,11 +4885,18 @@ function App() {
                   </div>
                   {filteredBuilderMembers.map((item) => {
                     const assignment = leaderAssignments.find((entry) => entry.client_id === item.client_id) || {};
+                    const memberSummary = `${item.display_name} • ${item.readiness_score || 0}% readiness`;
+                    const domain = item.industry_domain || "Other";
+                    const registration = item.registration_status === "registered" ? "Registered" : "Invite sent";
+                    const stage = item.status.replaceAll("_", " ");
                     return (
-                      <div key={`asg_${item.client_id}`} className="event-row" style={{ gridTemplateColumns: "1.2fr 0.8fr 0.8fr 1fr 1fr 0.9fr 0.8fr" }}>
-                        <input value={`${item.display_name} • ${item.readiness_score}% readiness`} disabled />
-                        <input value={item.industry_domain || "Other"} disabled />
-                        <input value={item.registration_status === "registered" ? "Registered" : "Invite sent"} disabled />
+                      <article key={`asg_${item.client_id}`} className="assignment-oversight-row">
+                        <div className="assignment-member-cell" title={memberSummary}>
+                          <strong>{item.display_name}</strong>
+                          <small>{item.readiness_score || 0}% readiness</small>
+                        </div>
+                        <span title={domain}>{domain}</span>
+                        <span title={registration}>{registration}</span>
                         <select value={assignment.builder_id || ""} onChange={(event) => setLeaderBuilderAssignment(item.client_id, event.target.value)}>
                           <option value="">Select builder</option>
                           {leaderBuilders.map((builder) => <option key={builder.id} value={builder.id}>{builder.display_name}</option>)}
@@ -4765,9 +4905,9 @@ function App() {
                           <option value="">Select attorney</option>
                           {leaderAttorneys.map((attorney) => <option key={attorney.id} value={attorney.id}>{attorney.display_name}</option>)}
                         </select>
-                        <input value={item.status.replaceAll("_", " ")} disabled />
-                        <div className="event-row-actions"><button className="ghost compact-btn" type="button" onClick={() => { setSelectedBuilderMemberId(item.client_id); setPortalSection("home"); }}>Review</button></div>
-                      </div>
+                        <span title={stage}>{stage}</span>
+                        <button className="ghost compact-btn" type="button" onClick={() => { setSelectedBuilderMemberId(item.client_id); setPortalSection("home"); }}>Review</button>
+                      </article>
                     );
                   })}
                   {filteredBuilderMembers.length ? null : <p className="empty-state">No members match that search.</p>}

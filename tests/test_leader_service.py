@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.config import AppConfig
-from app.services import EvidenceService
+from app.services import DEFAULT_MEMBER_PASSWORD, EvidenceService
 
 
 class LeaderPortalServiceTests(unittest.TestCase):
@@ -53,6 +53,16 @@ class LeaderPortalServiceTests(unittest.TestCase):
         self.assertIn("last_name", dashboard["members"][0])
         self.assertIn("email", dashboard["members"][0])
         self.assertIn("phone", dashboard["members"][0])
+
+    def test_staff_login_rejects_credentials_for_wrong_portal(self):
+        with self.assertRaises(ValueError) as context:
+            self.service.login_staff("leader@ascendhsi.com", DEFAULT_MEMBER_PASSWORD, {}, "attorney")
+
+        self.assertIn("Leader Portal", str(context.exception))
+        self.assertIn("Attorney Portal", str(context.exception))
+
+        result = self.service.login_staff("leader@ascendhsi.com", DEFAULT_MEMBER_PASSWORD, {}, "leader")
+        self.assertEqual(result["user"]["role"], "leader")
 
     def test_leader_dashboard_flags_unassigned_members_for_attention(self):
         self.service.leader_invite_member(

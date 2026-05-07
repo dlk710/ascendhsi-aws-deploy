@@ -1307,6 +1307,72 @@ textarea { min-height: 150px; resize: vertical; }
   font-size: 0.68rem;
   line-height: 1.35;
 }
+.assignment-oversight-table {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+.assignment-oversight-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.12fr) minmax(118px, 0.82fr) 96px minmax(150px, 1fr) minmax(150px, 1fr) minmax(104px, 0.72fr) 72px;
+  gap: 7px;
+  align-items: center;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--green);
+  border-radius: 7px;
+  background: rgba(255, 253, 250, 0.76);
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.assignment-oversight-head {
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.assignment-oversight-row > span,
+.assignment-member-cell strong,
+.assignment-member-cell small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assignment-oversight-row > span {
+  display: block;
+}
+.assignment-member-cell {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.assignment-member-cell strong {
+  color: var(--green-dark);
+  font-size: 0.72rem;
+}
+.assignment-member-cell small {
+  color: var(--muted);
+  font-size: 0.62rem;
+  line-height: 1.15;
+}
+.assignment-oversight-row select {
+  min-height: 28px;
+  padding: 5px 7px;
+  border-radius: 7px;
+  font-size: 0.7rem;
+}
+.assignment-oversight-row .compact-btn {
+  min-height: 28px;
+  padding: 5px 8px;
+  font-size: 0.66rem;
+}
 .task-mini-list {
   margin-top: 18px;
   display: grid;
@@ -2742,6 +2808,7 @@ textarea { min-height: 150px; resize: vertical; }
   }
   .issue-entry-row,
   .issue-log-row,
+  .assignment-oversight-row,
   .debug-error-row,
   .debug-member-row,
   .roadmap-criterion-head,

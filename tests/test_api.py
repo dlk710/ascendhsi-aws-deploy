@@ -78,9 +78,13 @@ class ApiTests(unittest.TestCase):
         service = Mock()
         service.login_staff.return_value = {"token": "ssess_1", "user": {"display_name": "Marcus Reed", "role": "attorney"}}
         with patch("app.api.service", return_value=service):
-            response = self.client.post("/api/staff/auth/login", data={"username": "marcus.reed@ascendhsi.com", "password": "secret123"})
+            response = self.client.post("/api/staff/auth/login", data={"username": "marcus.reed@ascendhsi.com", "password": "secret123", "portal_role": "attorney"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["token"], "ssess_1")
+        args = service.login_staff.call_args.args
+        self.assertEqual(args[:2], ("marcus.reed@ascendhsi.com", "secret123"))
+        self.assertIn("client_ip", args[2])
+        self.assertEqual(args[3], "attorney")
 
     def test_staff_auth_me_uses_service(self):
         service = Mock()

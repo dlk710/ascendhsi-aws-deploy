@@ -2204,12 +2204,16 @@ class EvidenceService:
             "last_login_at": account.get("last_login_at", ""),
         }
 
-    def login_staff(self, username: str, password: str, audit_context: dict | None = None) -> dict:
+    def login_staff(self, username: str, password: str, audit_context: dict | None = None, expected_role: str = "") -> dict:
         username = username.strip().lower()
+        expected_role = expected_role.strip().lower()
         metadata = self._login_audit_metadata(audit_context)
         if not username or not password:
             self.record_operational_event("staff_auth", status="error", portal="staff", endpoint="/api/staff/auth/login", error_code="missing_credentials", message="Staff username or password missing.", metadata=metadata, actor_key=username)
             raise ValueError("username and password are required")
+        if expected_role and expected_role not in {"leader", "attorney", "admin"}:
+            self.record_operational_event("staff_auth", status="error", portal="staff", endpoint="/api/staff/auth/login", error_code="invalid_portal_role", message="Staff login requested for an invalid portal role.", metadata=metadata, actor_key=username)
+            raise ValueError("Invalid portal role")
         account = one(
             self.conn,
             """
@@ -2222,12 +2226,25 @@ class EvidenceService:
         if not account or not self._verify_password(password, account["password_hash"]):
             self.record_operational_event("staff_auth", status="error", portal="staff", endpoint="/api/staff/auth/login", error_code="invalid_credentials", message="Staff login failed.", metadata=metadata, actor_key=username)
             raise ValueError("Invalid credentials")
+        role = account["role"].strip().lower()
+        if expected_role and role != expected_role:
+            self.record_operational_event(
+                "staff_auth",
+                status="error",
+                portal=expected_role,
+                endpoint="/api/staff/auth/login",
+                error_code="role_mismatch",
+                message=f"{role.title()} credentials were used on the {expected_role.title()} portal.",
+                metadata={**metadata, "actual_role": role, "expected_role": expected_role},
+                actor_role=role,
+                actor_key=account["email"].strip().lower(),
+            )
+            raise ValueError(f"These credentials are assigned to {self._portal_label(role)}, not {self._portal_label(expected_role)}")
         token = f"ssess_{secrets.token_urlsafe(24)}"
         self.conn.execute("INSERT INTO staff_sessions(token, account_id) VALUES (?, ?)", (token, account["id"]))
         logged_at, metadata = self._mark_account_login("staff_accounts", account["id"], audit_context)
         self.conn.commit()
         metadata["last_login_at"] = logged_at
-        role = account["role"].strip().lower()
         self.record_operational_event(f"{role}_auth", status="success", portal=role, endpoint="/api/staff/auth/login", message=f"{role.title()} login succeeded.", metadata=metadata, actor_role=role, actor_key=account["email"].strip().lower())
         account = one(self.conn, "SELECT * FROM staff_accounts WHERE id = ?", (account["id"],)) or account
         return {"token": token, "user": self._staff_payload(account)}
