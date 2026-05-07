@@ -86,6 +86,12 @@ variable "logs_bucket_base_name" {
   default     = "ascend-observability-logs"
 }
 
+variable "issue_log_table_name" {
+  description = "DynamoDB table used by the Admin Issue Portal AWS mirror."
+  type        = string
+  default     = "ascend_product_issue_logs"
+}
+
 variable "athena_results_bucket_base_name" {
   description = "Base name for Athena query results."
   type        = string

@@ -79,6 +79,23 @@ data "aws_iam_policy_document" "ecs_task_policy" {
       aws_secretsmanager_secret.openai_api_key.arn,
     ]
   }
+
+  statement {
+    sid = "AllowIssueLogDynamoDBMirror"
+
+    actions = [
+      "dynamodb:DescribeTable",
+      "dynamodb:CreateTable",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:GetItem",
+    ]
+
+    resources = [
+      "arn:aws:dynamodb:${var.aws_region}:${local.account_id}:table/${var.issue_log_table_name}",
+    ]
+  }
 }
 
 resource "aws_iam_role" "ecs_task" {

@@ -123,6 +123,7 @@ resource "aws_ecs_task_definition" "backend" {
         { name = "ASCEND_STORAGE_PUBLIC_BASE_URL", value = "" },
         { name = "ASCEND_S3_SERVER_SIDE_ENCRYPTION", value = "AES256" },
         { name = "ASCEND_API_DOMAIN", value = var.api_domain },
+        { name = "ASCEND_BUG_LOG_TABLE", value = var.issue_log_table_name },
         { name = "AWS_REGION", value = var.aws_region },
       ]
       secrets = local.backend_secrets
