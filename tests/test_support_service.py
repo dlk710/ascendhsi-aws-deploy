@@ -37,6 +37,41 @@ class SupportTicketServiceTests(unittest.TestCase):
             patcher.stop()
         self.tmp.cleanup()
 
+    def test_capture_marketing_lead_stores_public_lead_separately(self):
+        result = self.service.capture_marketing_lead(
+            lead_source="visa_compass",
+            campaign="Ascend Visa Compass",
+            email=" Prospect@Example.com ",
+            phone=" 555 111 2222 ",
+            name=" Test Prospect ",
+            source_url="https://ascendhsi.com/",
+            answers={"goal": "green_card"},
+            result={"top_match": "eb1a", "match_label": "EB-1A", "readiness_score": "72"},
+            metadata={"tool": "landing_page"},
+            audit_context={"client_ip": "127.0.0.1", "user_agent": "unit-test"},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["lead"]["email"], "prospect@example.com")
+        self.assertEqual(result["lead"]["phone"], "555 111 2222")
+        self.assertEqual(result["lead"]["top_match"], "eb1a")
+        self.assertEqual(result["lead"]["readiness_score"], 72)
+        stored = one(self.service.conn, "SELECT * FROM marketing_leads WHERE id = ?", (result["lead"]["id"],))
+        self.assertEqual(stored["lead_source"], "visa_compass")
+        self.assertEqual(stored["client_ip"], "127.0.0.1")
+        self.assertIn("green_card", stored["answers_json"])
+        events = rows(self.service.conn, "SELECT * FROM operational_events WHERE event_type = ?", ("marketing_lead_created",))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["actor_key"], "prospect@example.com")
+
+    def test_capture_marketing_lead_requires_valid_email(self):
+        with self.assertRaisesRegex(ValueError, "valid email"):
+            self.service.capture_marketing_lead(
+                lead_source="visa_compass",
+                campaign="Ascend Visa Compass",
+                email="not-an-email",
+            )
+
     def test_member_support_ticket_creates_mailbox_thread(self):
         result = self.service.report_support_ticket(
             "member",

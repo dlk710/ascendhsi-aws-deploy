@@ -29,6 +29,26 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["storage"]["name"], "Amazon S3")
 
+    def test_visa_compass_lead_capture_uses_service(self):
+        service = Mock()
+        service.capture_marketing_lead.return_value = {"ok": True, "lead": {"id": "lead_1", "email": "prospect@example.com"}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post(
+                "/api/marketing/leads/visa-compass",
+                json={
+                    "email": "prospect@example.com",
+                    "phone": "555-111-2222",
+                    "answers": {"goal": "green_card"},
+                    "result": {"top_match": "eb1a", "match_label": "EB-1A", "readiness_score": 72},
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["lead"]["id"], "lead_1")
+        kwargs = service.capture_marketing_lead.call_args.kwargs
+        self.assertEqual(kwargs["email"], "prospect@example.com")
+        self.assertEqual(kwargs["phone"], "555-111-2222")
+        self.assertEqual(kwargs["lead_source"], "visa_compass")
+
     def test_dashboard_uses_service(self):
         service = Mock()
         service.dashboard.return_value = {

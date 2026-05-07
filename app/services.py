@@ -504,6 +504,95 @@ class EvidenceService:
         self.conn.commit()
         return event
 
+    def capture_marketing_lead(
+        self,
+        lead_source: str,
+        campaign: str,
+        email: str,
+        phone: str = "",
+        name: str = "",
+        source_url: str = "",
+        answers: dict | None = None,
+        result: dict | None = None,
+        metadata: dict | None = None,
+        audit_context: dict | None = None,
+    ) -> dict:
+        cleaned_email = str(email or "").strip().lower()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", cleaned_email):
+            raise ValueError("A valid email is required to view your result.")
+        cleaned_phone = re.sub(r"\s+", " ", str(phone or "").strip())[:80]
+        cleaned_name = re.sub(r"\s+", " ", str(name or "").strip())[:160]
+        result_payload = result or {}
+        try:
+            readiness_score = int(result_payload.get("readiness_score") or 0)
+        except (TypeError, ValueError):
+            readiness_score = 0
+        lead = {
+            "id": f"lead_{uuid.uuid4().hex[:12]}",
+            "lead_source": str(lead_source or "visa_compass").strip()[:80] or "visa_compass",
+            "campaign": str(campaign or "Ascend Visa Compass").strip()[:160] or "Ascend Visa Compass",
+            "email": cleaned_email,
+            "phone": cleaned_phone,
+            "name": cleaned_name,
+            "source_url": str(source_url or "").strip()[:500],
+            "top_match": str(result_payload.get("top_match", "") or "").strip()[:80],
+            "match_label": str(result_payload.get("match_label", "") or result_payload.get("label", "") or "").strip()[:160],
+            "readiness_score": readiness_score,
+            "answers_json": json.dumps(answers or {}, ensure_ascii=True),
+            "result_json": json.dumps(result_payload, ensure_ascii=True),
+            "metadata_json": json.dumps(metadata or {}, ensure_ascii=True),
+            "status": "new",
+            "user_agent": str((audit_context or {}).get("user_agent", "") or "")[:500],
+            "client_ip": str((audit_context or {}).get("client_ip", "") or (audit_context or {}).get("forwarded_for", "") or "")[:160],
+        }
+        self.conn.execute(
+            """
+            INSERT INTO marketing_leads(
+              id, lead_source, campaign, email, phone, name, source_url, top_match, match_label,
+              readiness_score, answers_json, result_json, metadata_json, status, user_agent, client_ip
+            )
+            VALUES (
+              :id, :lead_source, :campaign, :email, :phone, :name, :source_url, :top_match, :match_label,
+              :readiness_score, :answers_json, :result_json, :metadata_json, :status, :user_agent, :client_ip
+            )
+            """,
+            lead,
+        )
+        self.conn.commit()
+        stored_row = one(self.conn, "SELECT * FROM marketing_leads WHERE id = ?", (lead["id"],))
+        stored = dict(stored_row) if stored_row else lead
+        self.record_operational_event(
+            "marketing_lead_created",
+            status="success",
+            portal="public",
+            endpoint="/api/marketing/leads/visa-compass",
+            message=f"New {lead['campaign']} lead captured.",
+            metadata={
+                "lead_id": lead["id"],
+                "lead_source": lead["lead_source"],
+                "top_match": lead["top_match"],
+                "readiness_score": lead["readiness_score"],
+            },
+            actor_role="lead",
+            actor_key=cleaned_email,
+        )
+        return {
+            "ok": True,
+            "lead": {
+                "id": stored["id"],
+                "email": stored["email"],
+                "phone": stored.get("phone", ""),
+                "name": stored.get("name", ""),
+                "lead_source": stored["lead_source"],
+                "campaign": stored["campaign"],
+                "top_match": stored.get("top_match", ""),
+                "match_label": stored.get("match_label", ""),
+                "readiness_score": int(stored.get("readiness_score") or 0),
+                "created_at": stored.get("created_at", ""),
+                "status": stored.get("status", "new"),
+            },
+        }
+
     def _login_audit_metadata(self, audit_context: dict | None = None) -> dict:
         context = audit_context or {}
         return {

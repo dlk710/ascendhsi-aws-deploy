@@ -74,6 +74,114 @@ const FOLDER_COLORS = {
   Slate: "#51606f",
 };
 
+const VISA_COMPASS_QUESTIONS = [
+  {
+    id: "goal",
+    eyebrow: "Step 1",
+    question: "What outcome are you trying to reach?",
+    helper: "Choose the path closest to your current immigration goal.",
+    type: "single",
+    options: [
+      { value: "green_card", label: "Permanent residence without relying on one employer", detail: "I want a green card strategy that can stand on my own profile.", scores: { eb1a: 4, niw: 3, o1: 1 }, reason: "You are prioritizing a self-petition style permanent path." },
+      { value: "temporary_work", label: "Temporary work authorization as soon as possible", detail: "I need to work in the U.S. while a longer case develops.", scores: { o1: 4, h1b: 3, eb1a: 1 }, reason: "A temporary work visa may be useful while permanent strategy matures." },
+      { value: "startup_transfer", label: "Build, invest, or transfer a business into the U.S.", detail: "My move is connected to a company, founder role, or investment plan.", scores: { l1: 4, e2: 4, o1: 2, niw: 1 }, reason: "Business ownership, transfer, or investment can point to founder/operator routes." },
+      { value: "unsure", label: "I am not sure yet", detail: "I want Ascend to tell me which track looks most realistic.", scores: { eb1a: 1, niw: 1, o1: 1, h1b: 1 }, reason: "The tool will compare multiple paths from your profile signals." },
+    ],
+  },
+  {
+    id: "profile",
+    eyebrow: "Step 2",
+    question: "Which profile best describes you?",
+    helper: "This helps weigh extraordinary ability, national interest, and employer-driven routes.",
+    type: "single",
+    options: [
+      { value: "researcher", label: "Researcher, scientist, physician, or academic expert", detail: "Publications, citations, grants, patents, clinical impact, or peer review may matter.", scores: { eb1a: 3, niw: 4, o1: 2 }, reason: "Research and expert work can support both national interest and extraordinary ability." },
+      { value: "tech_leader", label: "Technology, product, data, or engineering leader", detail: "Scale, critical systems, original products, and business impact can be central.", scores: { eb1a: 3, o1: 3, niw: 2, h1b: 1 }, reason: "High-impact technology work often maps to critical role and original contribution evidence." },
+      { value: "founder_exec", label: "Founder, executive, investor, or business operator", detail: "Revenue, funding, job creation, press, market adoption, or leadership role may matter.", scores: { eb1a: 3, o1: 3, e2: 3, l1: 2, niw: 1 }, reason: "Founder and executive profiles can combine business impact with leadership evidence." },
+      { value: "creator", label: "Artist, designer, media, sports, or creator profile", detail: "Awards, press, judging, commercial success, exhibitions, or audience reach may matter.", scores: { o1: 4, eb1a: 3 }, reason: "Creative recognition is often evaluated through sustained acclaim and public impact." },
+      { value: "professional", label: "Professional specialist with strong employer support", detail: "A role, employer, degree, and specialty occupation may be the strongest starting point.", scores: { h1b: 4, niw: 1, o1: 1 }, reason: "Employer-backed routes may be more realistic if independent evidence is still developing." },
+    ],
+  },
+  {
+    id: "recognition",
+    eyebrow: "Step 3",
+    question: "Which recognition or evidence signals do you already have?",
+    helper: "Select everything you can document. Ascend will later help convert these into evidence buckets.",
+    type: "multi",
+    options: [
+      { value: "awards", label: "Major awards or competitive prizes", detail: "Awards from recognized institutions, competitions, or professional bodies.", scores: { eb1a: 3, o1: 3 }, reason: "Awards can demonstrate recognized achievement." },
+      { value: "press", label: "Press, media, interviews, or public coverage", detail: "Articles, podcasts, broadcasts, profiles, or credible third-party mentions.", scores: { eb1a: 2, o1: 3 }, reason: "Published coverage can support public recognition." },
+      { value: "publications", label: "Publications, citations, patents, or technical authorship", detail: "Scholarship, technical papers, patents, books, or widely referenced work.", scores: { eb1a: 3, niw: 3, o1: 1 }, reason: "Published work and citations can show contribution and expert standing." },
+      { value: "judging", label: "Judging, peer review, selection panels, or advisory review", detail: "Reviewing others' work, judging competitions, peer review, grants, or panels.", scores: { eb1a: 2, o1: 2, niw: 1 }, reason: "Judging is a strong expert-recognition signal when well documented." },
+      { value: "critical_role", label: "Leading or critical role at a distinguished organization", detail: "Important role in a notable company, institution, product, or initiative.", scores: { eb1a: 3, o1: 2, l1: 1 }, reason: "Critical role evidence can connect your work to distinguished organizations." },
+      { value: "original_contribution", label: "Original contribution with measurable field or business value", detail: "A product, method, platform, research, or system others use or rely on.", scores: { eb1a: 3, niw: 2, o1: 2 }, reason: "Original contribution evidence can be central for EB-1A and NIW strategy." },
+      { value: "high_salary", label: "High salary, equity, revenue, or commercial success", detail: "Compensation, funding, adoption, sales, or financial outcomes above peers.", scores: { eb1a: 2, o1: 2, e2: 1 }, reason: "Commercial success and compensation can show market recognition." },
+      { value: "none_yet", label: "Not much yet", detail: "I need help identifying what evidence can be built or collected.", scores: { h1b: 2, niw: 1 }, reason: "If evidence is early, Ascend can help plan what to gather next." },
+    ],
+  },
+  {
+    id: "impact",
+    eyebrow: "Step 4",
+    question: "How broad is the impact of your work?",
+    helper: "The strongest cases usually connect achievements to measurable outcomes.",
+    type: "single",
+    options: [
+      { value: "field_level", label: "Field, industry, national, or global impact", detail: "Others outside my company use, cite, adopt, or recognize my work.", scores: { eb1a: 4, niw: 4, o1: 3 }, reason: "External impact is highly valuable for self-petition and extraordinary ability routes." },
+      { value: "company_level", label: "Major company or product-level impact", detail: "My work drove revenue, scale, cost savings, reliability, users, or strategic outcomes.", scores: { eb1a: 3, o1: 2, l1: 2, h1b: 1 }, reason: "Company-level impact can support critical role and business value narratives." },
+      { value: "team_level", label: "Important team-level impact", detail: "I can show strong internal contributions but limited external proof so far.", scores: { o1: 1, h1b: 2, niw: 1 }, reason: "This may need more external corroboration before an EB-1A strategy is strong." },
+      { value: "early", label: "Still early or hard to quantify", detail: "I need help turning my work into evidence and measurable claims.", scores: { h1b: 2, niw: 1 }, reason: "Early evidence should be strengthened before relying on high-threshold categories." },
+    ],
+  },
+  {
+    id: "education",
+    eyebrow: "Step 5",
+    question: "What education or specialized expertise can you document?",
+    helper: "This is especially important for NIW, H-1B, and some employer-backed paths.",
+    type: "multi",
+    options: [
+      { value: "advanced_degree", label: "Master's, PhD, MD, or equivalent advanced degree", detail: "Advanced academic qualification in the field.", scores: { niw: 4, h1b: 2, eb1a: 1 }, reason: "Advanced education is a strong NIW and specialty-role signal." },
+      { value: "bachelor_five", label: "Bachelor's degree plus 5 or more years of progressive experience", detail: "Documented experience that shows deep specialization.", scores: { niw: 3, h1b: 2 }, reason: "Experience can support advanced ability and specialty occupation arguments." },
+      { value: "licenses", label: "Professional license, certification, or regulated credential", detail: "Credential required or valued in your field.", scores: { niw: 2, h1b: 2, eb1a: 1 }, reason: "Credentials can strengthen expert positioning." },
+      { value: "no_degree", label: "No degree path, but strong achievement record", detail: "My case depends more on achievements than formal education.", scores: { eb1a: 2, o1: 2, e2: 1 }, reason: "Extraordinary ability routes can rely more on achievement evidence." },
+    ],
+  },
+  {
+    id: "support",
+    eyebrow: "Step 6",
+    question: "What support path is available right now?",
+    helper: "Some visas need an employer, petitioner, investment, or company relationship.",
+    type: "single",
+    options: [
+      { value: "self", label: "I prefer a self-directed route", detail: "I do not want the case to depend on one employer.", scores: { eb1a: 4, niw: 4 }, reason: "Self-directed preference points toward EB-1A or NIW when evidence supports it." },
+      { value: "us_employer", label: "A U.S. employer can sponsor or petition", detail: "I have an employer, offer, or strong company backing.", scores: { h1b: 4, o1: 2, eb1a: 1 }, reason: "Employer support opens specialty or petitioning options." },
+      { value: "foreign_company", label: "I work for a foreign company with a U.S. affiliate", detail: "A transfer or executive/manager/specialized knowledge story may apply.", scores: { l1: 5, h1b: 1 }, reason: "A multinational relationship may support L-1 style planning." },
+      { value: "investment", label: "I can invest or operate a qualifying U.S. business", detail: "I am exploring investor or founder pathways.", scores: { e2: 5, l1: 2, o1: 1 }, reason: "Investment or operating control may support business visa planning." },
+    ],
+  },
+  {
+    id: "timeline",
+    eyebrow: "Step 7",
+    question: "How soon do you need a strategy?",
+    helper: "This helps separate urgent work authorization from longer evidence-building plans.",
+    type: "single",
+    options: [
+      { value: "now", label: "Immediately or within 3 months", detail: "I need a practical path quickly.", scores: { o1: 2, h1b: 2, l1: 1 }, reason: "Urgent timelines may require a temporary or employer-supported bridge." },
+      { value: "six_months", label: "Within 3 to 6 months", detail: "I can gather evidence but want a clear plan soon.", scores: { eb1a: 2, niw: 2, o1: 1 }, reason: "A few months can support evidence cleanup and attorney strategy." },
+      { value: "year", label: "Six months or more", detail: "I can build profile strength before filing.", scores: { eb1a: 3, niw: 2 }, reason: "A longer runway helps build a stronger evidence record." },
+      { value: "exploring", label: "Just exploring", detail: "I want to understand my best options.", scores: { eb1a: 1, niw: 1, o1: 1 }, reason: "Exploration is a good time to map evidence gaps." },
+    ],
+  },
+];
+
+const VISA_PATH_INFO = {
+  eb1a: { label: "EB-1A", title: "Extraordinary Ability Green Card", summary: "Best when the record shows sustained acclaim, strong third-party recognition, and multiple documented EB-1A criteria.", next: "Map your evidence into awards, judging, original contributions, critical role, media, authorship, high salary, and related categories." },
+  niw: { label: "EB-2 NIW", title: "National Interest Waiver", summary: "Best when your work has national importance, you are well positioned to advance it, and the U.S. benefits from waiving employer sponsorship.", next: "Clarify the proposed endeavor, national importance, credentials, impact proof, and independent recommendation support." },
+  o1: { label: "O-1", title: "Extraordinary Ability Temporary Visa", summary: "Best when strong recognition exists and a petitioner or work arrangement can support a temporary U.S. work path.", next: "Organize acclaim, expert letters, work itinerary, press, judging, awards, and critical project proof." },
+  h1b: { label: "H-1B", title: "Specialty Occupation", summary: "Best when a U.S. employer can sponsor a role that requires specialized education or equivalent experience.", next: "Confirm role requirements, degree fit, employer sponsorship readiness, and timing constraints." },
+  l1: { label: "L-1", title: "Company Transfer", summary: "Best when you have qualifying work for a foreign company and a related U.S. entity can receive you.", next: "Document company relationship, prior employment, executive/manager or specialized knowledge role, and U.S. role plan." },
+  e2: { label: "E-2", title: "Treaty Investor", summary: "Best when nationality, investment, ownership, and active business operation requirements can be satisfied.", next: "Confirm treaty eligibility, investment source, operating plan, ownership/control, and business viability." },
+};
+
 function authToken() {
   return window.localStorage.getItem(AUTH_TOKEN_KEY) || "";
 }
@@ -609,6 +717,165 @@ async function sendJson(path, body, method = "POST") {
   });
   const payload = await response.json();
   return { ok: response.ok, status: response.status, payload: payload.detail || payload };
+}
+
+function visaCompassResult(answers) {
+  const scores = { eb1a: 0, niw: 0, o1: 0, h1b: 0, l1: 0, e2: 0 };
+  const reasons = [];
+  const selectedLabels = {};
+  VISA_COMPASS_QUESTIONS.forEach((question) => {
+    const rawAnswer = answers[question.id];
+    const selectedValues = Array.isArray(rawAnswer) ? rawAnswer : rawAnswer ? [rawAnswer] : [];
+    const selectedOptions = question.options.filter((option) => selectedValues.includes(option.value));
+    selectedLabels[question.id] = selectedOptions.map((option) => option.label);
+    selectedOptions.forEach((option) => {
+      Object.entries(option.scores || {}).forEach(([key, value]) => {
+        scores[key] = (scores[key] || 0) + Number(value || 0);
+      });
+      if (option.reason) reasons.push(option.reason);
+    });
+  });
+  const ranked = Object.entries(scores).map(([key, score]) => ({ key, score, ...(VISA_PATH_INFO[key] || {}) })).sort((left, right) => right.score - left.score);
+  const top = ranked[0] || { key: "eb1a", score: 0, ...VISA_PATH_INFO.eb1a };
+  const second = ranked[1] || { key: "niw", score: 0, ...VISA_PATH_INFO.niw };
+  const readinessScore = Math.min(99, Math.max(18, Math.round((top.score / Math.max(1, VISA_COMPASS_QUESTIONS.length * 5)) * 100)));
+  return {
+    top_match: top.key,
+    match_label: top.label,
+    title: top.title,
+    summary: top.summary,
+    next: top.next,
+    readiness_score: readinessScore,
+    runner_up: { key: second.key, label: second.label, title: second.title, score: second.score },
+    ranked: ranked.slice(0, 4).map((item) => ({ key: item.key, label: item.label, title: item.title, score: item.score })),
+    reasons: [...new Set(reasons)].slice(0, 5),
+    selected_labels: selectedLabels,
+  };
+}
+
+function AscendVisaCompass() {
+  const [answers, setAnswers] = useState({});
+  const [step, setStep] = useState(0);
+  const [leadForm, setLeadForm] = useState({ name: "", email: "", phone: "" });
+  const [leadCaptured, setLeadCaptured] = useState(false);
+  const [leadBusy, setLeadBusy] = useState(false);
+  const [leadError, setLeadError] = useState("");
+  const currentQuestion = VISA_COMPASS_QUESTIONS[step];
+  const answeredCount = VISA_COMPASS_QUESTIONS.filter((question) => {
+    const value = answers[question.id];
+    return Array.isArray(value) ? value.length > 0 : Boolean(value);
+  }).length;
+  const isComplete = answeredCount === VISA_COMPASS_QUESTIONS.length;
+  const result = visaCompassResult(answers);
+  const progress = Math.round((answeredCount / VISA_COMPASS_QUESTIONS.length) * 100);
+
+  function chooseAnswer(question, value) {
+    setLeadError("");
+    setLeadCaptured(false);
+    setAnswers((current) => {
+      if (question.type === "multi") {
+        const existing = Array.isArray(current[question.id]) ? current[question.id] : [];
+        return { ...current, [question.id]: existing.includes(value) ? existing.filter((item) => item !== value) : [...existing, value] };
+      }
+      return { ...current, [question.id]: value };
+    });
+  }
+
+  function questionAnswered(question) {
+    const value = answers[question.id];
+    return Array.isArray(value) ? value.length > 0 : Boolean(value);
+  }
+
+  async function submitLead(event) {
+    event.preventDefault();
+    setLeadBusy(true);
+    setLeadError("");
+    try {
+      const response = await sendJson("/api/marketing/leads/visa-compass", {
+        name: leadForm.name,
+        email: leadForm.email,
+        phone: leadForm.phone,
+        source_url: window.location.href,
+        answers,
+        result,
+        metadata: { answered_count: answeredCount, tool: "Ascend Visa Compass", version: "2026-05-07" },
+      });
+      if (!response.ok) {
+        setLeadError(response.payload?.error || "Please enter a valid email to view your result.");
+        return;
+      }
+      setLeadCaptured(true);
+    } catch (_error) {
+      setLeadError("We could not save your lead right now. Please try again in a moment.");
+    } finally {
+      setLeadBusy(false);
+    }
+  }
+
+  function resetCompass() {
+    setAnswers({});
+    setStep(0);
+    setLeadForm({ name: "", email: "", phone: "" });
+    setLeadCaptured(false);
+    setLeadError("");
+  }
+
+  return (
+    <section className="visa-compass-card">
+      <div className="visa-compass-top">
+        <div>
+          <p className="eyebrow">Free Assessment Tool</p>
+          <h2>Ascend Visa Compass</h2>
+          <p>Answer a few profile questions and see which immigration strategy may deserve attorney review first.</p>
+        </div>
+        <span>{progress}%</span>
+      </div>
+      <div className="visa-progress"><span style={{ width: `${progress}%` }} /></div>
+      {!isComplete ? (
+        <div className="visa-question-panel">
+          <div className="visa-step-row"><span>{currentQuestion.eyebrow} of {VISA_COMPASS_QUESTIONS.length}</span><strong>{currentQuestion.type === "multi" ? "Select all that apply" : "Choose one"}</strong></div>
+          <h3>{currentQuestion.question}</h3>
+          <p>{currentQuestion.helper}</p>
+          <div className="visa-option-grid">
+            {currentQuestion.options.map((option) => {
+              const value = answers[currentQuestion.id];
+              const active = Array.isArray(value) ? value.includes(option.value) : value === option.value;
+              return <button key={option.value} className={`visa-option ${active ? "active" : ""}`} type="button" onClick={() => chooseAnswer(currentQuestion, option.value)}><strong>{option.label}</strong><span>{option.detail}</span></button>;
+            })}
+          </div>
+          <div className="visa-compass-actions">
+            <button className="ghost compact-btn" type="button" disabled={step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>Back</button>
+            <button className="primary compact-btn" type="button" disabled={!questionAnswered(currentQuestion)} onClick={() => setStep((value) => Math.min(VISA_COMPASS_QUESTIONS.length - 1, value + 1))}>{step === VISA_COMPASS_QUESTIONS.length - 1 ? "Continue" : "Next"}</button>
+          </div>
+        </div>
+      ) : !leadCaptured ? (
+        <div className="visa-lead-panel">
+          <p className="eyebrow">Almost done</p>
+          <h3>Where should Ascend send your assessment follow-up?</h3>
+          <p>Your final match is ready. Enter your email to unlock the result. Phone is optional.</p>
+          <form className="visa-lead-form" onSubmit={submitLead}>
+            <label>Name<input value={leadForm.name} onChange={(event) => setLeadForm((current) => ({ ...current, name: event.target.value }))} placeholder="Your name" /></label>
+            <label>Email required<input type="email" required value={leadForm.email} onChange={(event) => setLeadForm((current) => ({ ...current, email: event.target.value }))} placeholder="you@example.com" /></label>
+            <label>Phone optional<input value={leadForm.phone} onChange={(event) => setLeadForm((current) => ({ ...current, phone: event.target.value }))} placeholder="+1 555 000 0000" /></label>
+            {leadError ? <div className="banner error">{leadError}</div> : null}
+            <button className="primary" type="submit" disabled={leadBusy}>{leadBusy ? "Saving..." : "Show My Match"}</button>
+          </form>
+          <button className="link-btn" type="button" onClick={() => setStep(VISA_COMPASS_QUESTIONS.length - 1)}>Review answers</button>
+        </div>
+      ) : (
+        <div className="visa-result-panel">
+          <p className="eyebrow">Your first-pass match</p>
+          <div className="visa-result-hero"><span>{result.match_label}</span><strong>{result.readiness_score}% signal fit</strong></div>
+          <h3>{result.title}</h3>
+          <p>{result.summary}</p>
+          <div className="visa-result-grid"><div><strong>Runner-up path</strong><span>{result.runner_up.label} • {result.runner_up.title}</span></div><div><strong>Recommended next step</strong><span>{result.next}</span></div></div>
+          <div className="visa-reason-list">{result.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div>
+          <p className="visa-disclaimer">This is a product intake screen, not legal advice. Ascend and an attorney should review your documents before any filing decision.</p>
+          <div className="visa-compass-actions"><button className="ghost compact-btn" type="button" onClick={resetCompass}>Start over</button><button className="primary compact-btn" type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>Start Ascend Portal</button></div>
+        </div>
+      )}
+    </section>
+  );
 }
 
 function formatUploadedAt(value) {
@@ -4323,50 +4590,53 @@ function App() {
     const loginChoices = devLoginOptions(authMode);
     return (
       <main className="login-page">
-        <section className="login-hero">
-          <img className="brand-logo login-logo" src={LOGO_URL} alt="Ascend HSI logo" />
-          <p className="eyebrow">{selectedPortal.label}</p>
-          <h1>Welcome back.</h1>
-          <p>{selectedPortal.intro}</p>
-          {message ? <div className={`banner ${message.type}`}>{message.text}</div> : null}
-          <label className="portal-select-label">
-            Portal
-            <select value={authMode} onChange={(event) => setAuthMode(event.target.value)}>
-              {PORTAL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </label>
-          <form className="login-card" onSubmit={handleLogin}>
-            <label>
-              Email or username
-              <input value={loginForm.username} onChange={(event) => setLoginForm((current) => ({ ...current, username: event.target.value }))} placeholder="member@example.com" />
+        <div className="landing-grid">
+          <section className="login-hero">
+            <img className="brand-logo login-logo" src={LOGO_URL} alt="Ascend HSI logo" />
+            <p className="eyebrow">{selectedPortal.label}</p>
+            <h1>Welcome back.</h1>
+            <p>{selectedPortal.intro}</p>
+            {message ? <div className={`banner ${message.type}`}>{message.text}</div> : null}
+            <label className="portal-select-label">
+              Portal
+              <select value={authMode} onChange={(event) => setAuthMode(event.target.value)}>
+                {PORTAL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
             </label>
-            <label>
-              Password
-              <input type="password" value={loginForm.password} onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))} placeholder="Enter your password" />
-            </label>
-            <button className="primary" type="submit" disabled={loginBusy}>{loginBusy ? "Signing in..." : "Sign In"}</button>
-            <p className="login-note">{previewLoginNote(authMode)}</p>
-          </form>
-          {loginChoices.length ? (
-            <div className="dev-login-panel">
-              <div className="section-kicker">Quick Login Shortcuts</div>
-              <div className="dev-login-grid">
-                {loginChoices.map((account) => (
-                  <button
-                    key={account.username}
-                    className="dev-login-btn"
-                    type="button"
-                    disabled={loginBusy}
-                    onClick={() => handleDevLogin(account)}
-                  >
-                    <strong>{account.display_name || account.username}</strong>
-                    <span>{account.username}</span>
-                  </button>
-                ))}
+            <form className="login-card" onSubmit={handleLogin}>
+              <label>
+                Email or username
+                <input value={loginForm.username} onChange={(event) => setLoginForm((current) => ({ ...current, username: event.target.value }))} placeholder="member@example.com" />
+              </label>
+              <label>
+                Password
+                <input type="password" value={loginForm.password} onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))} placeholder="Enter your password" />
+              </label>
+              <button className="primary" type="submit" disabled={loginBusy}>{loginBusy ? "Signing in..." : "Sign In"}</button>
+              <p className="login-note">{previewLoginNote(authMode)}</p>
+            </form>
+            {loginChoices.length ? (
+              <div className="dev-login-panel">
+                <div className="section-kicker">Quick Login Shortcuts</div>
+                <div className="dev-login-grid">
+                  {loginChoices.map((account) => (
+                    <button
+                      key={account.username}
+                      className="dev-login-btn"
+                      type="button"
+                      disabled={loginBusy}
+                      onClick={() => handleDevLogin(account)}
+                    >
+                      <strong>{account.display_name || account.username}</strong>
+                      <span>{account.username}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          ) : null}
-        </section>
+            ) : null}
+          </section>
+          <AscendVisaCompass />
+        </div>
       </main>
     );
   }

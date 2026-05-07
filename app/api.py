@@ -62,6 +62,25 @@ def ready() -> dict:
     }
 
 
+@app.post("/api/marketing/leads/visa-compass")
+def capture_visa_compass_lead(request: Request, payload: dict = Body(...)) -> dict:
+    try:
+        return service().capture_marketing_lead(
+            lead_source="visa_compass",
+            campaign="Ascend Visa Compass",
+            email=str(payload.get("email", "")),
+            phone=str(payload.get("phone", "")),
+            name=str(payload.get("name", "")),
+            source_url=str(payload.get("source_url", "")),
+            answers=payload.get("answers") if isinstance(payload.get("answers"), dict) else {},
+            result=payload.get("result") if isinstance(payload.get("result"), dict) else {},
+            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+            audit_context=_login_audit_context(request),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
 def bearer_token(authorization: str | None = Header(None)) -> str:
     if not authorization:
         raise HTTPException(status_code=401, detail={"ok": False, "status": "failed", "error": "Authorization required"})

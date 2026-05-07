@@ -438,6 +438,26 @@ CREATE TABLE IF NOT EXISTS admin_cost_snapshots (
   payload TEXT NOT NULL DEFAULT '{}',
   detail TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS marketing_leads (
+  id TEXT PRIMARY KEY,
+  lead_source TEXT NOT NULL DEFAULT 'visa_compass',
+  campaign TEXT NOT NULL DEFAULT 'Ascend Visa Compass',
+  email TEXT NOT NULL,
+  phone TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL DEFAULT '',
+  source_url TEXT NOT NULL DEFAULT '',
+  top_match TEXT NOT NULL DEFAULT '',
+  match_label TEXT NOT NULL DEFAULT '',
+  readiness_score INTEGER NOT NULL DEFAULT 0,
+  answers_json TEXT NOT NULL DEFAULT '{}',
+  result_json TEXT NOT NULL DEFAULT '{}',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'new',
+  user_agent TEXT NOT NULL DEFAULT '',
+  client_ip TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
