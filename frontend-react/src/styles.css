@@ -93,7 +93,7 @@ textarea { line-height: 1.45; }
   margin-bottom: 12px;
 }
 .side-card strong { display: block; margin-bottom: 6px; font-size: 0.98rem; }
-.side-card p { margin: 0 0 8px; color: rgba(255,253,248,0.72); line-height: 1.45; font-size: 0.88rem; }
+.side-card p { margin: 0 0 8px; color: rgba(255,253,248,0.72); line-height: 1.45; font-size: 0.8rem; }
 .side-note { color: rgba(255,253,248,0.72); font-size: 0.84rem; }
 .sidebar-nav {
   display: grid;
@@ -336,7 +336,7 @@ textarea { line-height: 1.45; }
 }
 .executive-bar-value {
   color: var(--green-dark);
-  font-size: 0.94rem;
+  font-size: 0.92rem;
 }
 
 .timeline-plot {
@@ -375,7 +375,7 @@ textarea { line-height: 1.45; }
 }
 .timeline-column span {
   color: var(--ink);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 800;
 }
 .timeline-column small {
@@ -398,7 +398,7 @@ textarea { line-height: 1.45; }
 }
 .watchlist-head {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1079,7 +1079,7 @@ textarea { min-height: 150px; resize: vertical; }
   background: #e3efe9;
   border-color: #b3cbbf;
 }
-.builder-member-card strong { color: var(--green-dark); }
+.builder-member-card strong { color: var(--green-dark); font-size: 0.92rem; }
 .builder-member-card span { color: var(--muted); }
 .attorney-shell {
   height: 100vh;
@@ -1109,7 +1109,7 @@ textarea { min-height: 150px; resize: vertical; }
   align-content: start;
 }
 .attorney-member-card strong {
-  font-size: 0.95rem;
+  font-size: 0.92rem;
 }
 .attorney-member-card span {
   font-size: 0.84rem;
@@ -1163,8 +1163,8 @@ textarea { min-height: 150px; resize: vertical; }
   border-radius: 999px;
   padding: 6px 10px;
   font-size: 0.8rem;
-  font-weight: 800;
-  text-transform: capitalize;
+  font-weight: 700;
+  text-transform: none;
   background: #efe7d7;
   color: var(--ink);
 }
@@ -1223,7 +1223,7 @@ textarea { min-height: 150px; resize: vertical; }
 }
 .criterion-card:hover { border-color: #cdb98f; box-shadow: 0 10px 24px rgba(18,69,55,0.06); transform: translateY(-1px); }
 .criterion-card strong { color: var(--green-dark); font-size: 1rem; }
-.criterion-card span { color: var(--muted); font-size: 0.94rem; }
+.criterion-card span { color: var(--muted); font-size: 0.92rem; }
 
 .workspace-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .workspace-top h2 { margin: 0 0 6px; }
