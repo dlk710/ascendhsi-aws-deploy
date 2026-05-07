@@ -10,6 +10,14 @@ from app.services import DuplicateEvidenceError
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
+        self.member_headers = {"Authorization": "Bearer sess_member"}
+        self.builder_headers = {"Authorization": "Bearer bsess_1"}
+        self.leader_headers = {"Authorization": "Bearer ssess_leader"}
+        self.attorney_headers = {"Authorization": "Bearer ssess_attorney"}
+        self.member_user = {"client_id": "client_1", "case_id": "case_1", "display_name": "Vas"}
+        self.builder_user = {"email": "builder@ascendhsi.com", "role": "builder", "display_name": "Ava"}
+        self.leader_user = {"email": "leader@ascendhsi.com", "role": "leader", "display_name": "Ava Morales"}
+        self.attorney_user = {"email": "attorney@ascendhsi.com", "role": "attorney", "display_name": "Sophia Chen"}
 
     def test_health(self):
         response = self.client.get("/health")
@@ -51,17 +59,18 @@ class ApiTests(unittest.TestCase):
 
     def test_dashboard_uses_service(self):
         service = Mock()
-        service.dashboard.return_value = {
+        service.member_session.return_value = self.member_user
+        service.member_dashboard.return_value = {
             "client": {"display_name": "Vas"},
             "metrics": {"evidence_count": 1},
             "criteria": [],
         }
         with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/member/dashboard")
+            response = self.client.get("/api/member/dashboard", headers=self.member_headers)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["client"]["display_name"], "Vas")
-        service.dashboard.assert_called_once_with()
+        service.member_dashboard.assert_called_once_with("client_1", "case_1", "Vas")
 
     def test_login_uses_service(self):
         service = Mock()
@@ -128,26 +137,30 @@ class ApiTests(unittest.TestCase):
 
     def test_builder_dashboard_uses_service(self):
         service = Mock()
+        service.builder_session.return_value = self.builder_user
         service.builder_dashboard.return_value = {"builder": {"display_name": "Ava"}, "metrics": {}, "members": [], "opportunities": []}
         with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/builder/dashboard")
+            response = self.client.get("/api/builder/dashboard", headers=self.builder_headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["builder"]["display_name"], "Ava")
 
     def test_leader_dashboard_uses_service(self):
         service = Mock()
+        service.staff_session.return_value = self.leader_user
         service.leader_dashboard.return_value = {"metrics": {"member_count": 2}, "members": [], "builders": [], "attorneys": [], "invites": [], "domain_summary": []}
         with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/leader/dashboard")
+            response = self.client.get("/api/leader/dashboard", headers=self.leader_headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["metrics"]["member_count"], 2)
 
     def test_leader_invite_uses_service(self):
         service = Mock()
+        service.staff_session.return_value = self.leader_user
         service.leader_invite_member.return_value = {"ok": True, "client_id": "client_2", "display_name": "Sam Lee"}
         with patch("app.api.service", return_value=service):
             response = self.client.post(
                 "/api/leader/invites",
+                headers=self.leader_headers,
                 data={
                     "first_name": "Sam",
                     "last_name": "Lee",
@@ -163,17 +176,19 @@ class ApiTests(unittest.TestCase):
 
     def test_leader_builder_assignment_uses_service(self):
         service = Mock()
+        service.staff_session.return_value = self.leader_user
         service.leader_assign_builder.return_value = {"ok": True, "builder_name": "Ava Morales"}
         with patch("app.api.service", return_value=service):
-            response = self.client.patch("/api/leader/members/client_1/builder-assignment", data={"builder_id": "bld_1"})
+            response = self.client.patch("/api/leader/members/client_1/builder-assignment", headers=self.leader_headers, data={"builder_id": "bld_1"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["builder_name"], "Ava Morales")
 
     def test_leader_attorney_assignment_uses_service(self):
         service = Mock()
+        service.staff_session.return_value = self.leader_user
         service.leader_assign_attorney.return_value = {"ok": True, "attorney_name": "Sophia Chen"}
         with patch("app.api.service", return_value=service):
-            response = self.client.patch("/api/leader/members/client_1/attorney-assignment", data={"attorney_id": "att_1"})
+            response = self.client.patch("/api/leader/members/client_1/attorney-assignment", headers=self.leader_headers, data={"attorney_id": "att_1"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["attorney_name"], "Sophia Chen")
 
@@ -309,12 +324,13 @@ class ApiTests(unittest.TestCase):
 
     def test_attorney_petition_generator_uses_service(self):
         service = Mock()
+        service.staff_session.return_value = self.attorney_user
         service.attorney_petition_generator.return_value = {"ok": True, "status": "success", "executive_summary": "Draft"}
         with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/attorney/petition-generator", params={"client_id": "client_1"})
+            response = self.client.get("/api/attorney/petition-generator", headers=self.attorney_headers, params={"client_id": "client_1"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "success")
-        service.attorney_petition_generator.assert_called_once_with("client_1")
+        service.attorney_petition_generator.assert_called_once_with("client_1", attorney_email="attorney@ascendhsi.com")
 
     def test_portal_assistant_reply_uses_service(self):
         service = Mock()
@@ -401,10 +417,12 @@ class ApiTests(unittest.TestCase):
 
     def test_attorney_batch_intake_create_uses_service(self):
         service = Mock()
+        service.staff_session.return_value = self.attorney_user
         service.attorney_batch_intake_create.return_value = {"id": "bat_1", "counts": {"items": 2}}
         with patch("app.api.service", return_value=service):
             response = self.client.post(
                 "/api/attorney/batch-intake",
+                headers=self.attorney_headers,
                 data={"client_id": "client_1", "member_context": "Large intake from counsel", "actor_role": "attorney", "actor_email": "attorney@ascendhsi.com"},
                 files={"file": ("intake.zip", b"PK\x03\x04", "application/zip")},
             )
@@ -414,10 +432,12 @@ class ApiTests(unittest.TestCase):
 
     def test_attorney_member_evidence_uses_service(self):
         service = Mock()
+        service.staff_session.return_value = self.attorney_user
         service.attorney_member_evidence.return_value = [{"id": "ev_1", "file_name": "review.pdf"}]
         with patch("app.api.service", return_value=service):
             response = self.client.get(
                 "/api/attorney/members/client_1/evidence",
+                headers=self.attorney_headers,
                 params={"actor_role": "attorney", "actor_email": "attorney@ascendhsi.com"},
             )
         self.assertEqual(response.status_code, 200)
@@ -426,54 +446,61 @@ class ApiTests(unittest.TestCase):
 
     def test_batch_intake_sessions_uses_service(self):
         service = Mock()
+        service.staff_session.return_value = self.leader_user
         service.batch_intake_sessions.return_value = [{"id": "bat_1"}]
         with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/batch-intake/sessions", params={"client_id": "client_1", "actor_role": "leader"})
+            response = self.client.get("/api/batch-intake/sessions", headers=self.leader_headers, params={"client_id": "client_1", "actor_role": "leader"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]["id"], "bat_1")
-        service.batch_intake_sessions.assert_called_once_with("client_1", actor_role="leader", actor_email="")
+        service.batch_intake_sessions.assert_called_once_with("client_1", actor_role="leader", actor_email="leader@ascendhsi.com")
 
     def test_attorney_batch_intake_session_uses_service(self):
         service = Mock()
+        service.staff_session.return_value = self.attorney_user
         service.attorney_batch_intake_session.return_value = {"id": "bat_1", "items": []}
         with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/attorney/batch-intake/bat_1", params={"actor_role": "attorney", "actor_email": "attorney@ascendhsi.com"})
+            response = self.client.get("/api/attorney/batch-intake/bat_1", headers=self.attorney_headers, params={"actor_role": "attorney", "actor_email": "attorney@ascendhsi.com"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["id"], "bat_1")
         service.attorney_batch_intake_session.assert_called_once_with("bat_1", actor_role="attorney", actor_email="attorney@ascendhsi.com")
 
     def test_update_attorney_batch_intake_item_uses_service(self):
         service = Mock()
+        service.staff_session.return_value = self.leader_user
         service.update_attorney_batch_intake_item.return_value = {"id": "bat_1", "items": [{"id": "bti_1"}]}
         with patch("app.api.service", return_value=service):
             response = self.client.patch(
                 "/api/attorney/batch-intake/bat_1/items/bti_1",
+                headers=self.leader_headers,
                 data={"criterion_code": "judging", "review_status": "ready", "actor_role": "leader"},
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "updated")
-        service.update_attorney_batch_intake_item.assert_called_once_with("bat_1", "bti_1", criterion_code="judging", review_status="ready", actor_role="leader")
+        service.update_attorney_batch_intake_item.assert_called_once_with("bat_1", "bti_1", criterion_code="judging", review_status="ready", actor_role="leader", actor_email="leader@ascendhsi.com")
 
     def test_bulk_update_attorney_batch_intake_uses_service(self):
         service = Mock()
+        service.staff_session.return_value = self.leader_user
         service.bulk_update_attorney_batch_intake.return_value = {"id": "bat_1", "items": []}
         with patch("app.api.service", return_value=service):
             response = self.client.post(
                 "/api/attorney/batch-intake/bat_1/bulk-update",
+                headers=self.leader_headers,
                 data={"item_ids": "bti_1,bti_2", "review_status": "ready", "actor_role": "leader"},
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "updated")
-        service.bulk_update_attorney_batch_intake.assert_called_once_with("bat_1", ["bti_1", "bti_2"], actor_role="leader", actor_email="", review_status="ready")
+        service.bulk_update_attorney_batch_intake.assert_called_once_with("bat_1", ["bti_1", "bti_2"], actor_role="leader", actor_email="leader@ascendhsi.com", review_status="ready")
 
     def test_commit_attorney_batch_intake_uses_service(self):
         service = Mock()
+        service.staff_session.return_value = self.leader_user
         service.commit_attorney_batch_intake.return_value = {"ok": True, "status": "committed", "committed_count": 4}
         with patch("app.api.service", return_value=service):
-            response = self.client.post("/api/attorney/batch-intake/bat_1/commit", data={"actor_role": "leader"})
+            response = self.client.post("/api/attorney/batch-intake/bat_1/commit", headers=self.leader_headers, data={"actor_role": "leader"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "committed")
-        service.commit_attorney_batch_intake.assert_called_once_with("bat_1", actor_role="leader", actor_email="")
+        service.commit_attorney_batch_intake.assert_called_once_with("bat_1", actor_role="leader", actor_email="leader@ascendhsi.com")
 
     def test_message_center_uses_service(self):
         service = Mock()
@@ -515,12 +542,13 @@ class ApiTests(unittest.TestCase):
 
     def test_member_profile_uses_service(self):
         service = Mock()
+        service.member_session.return_value = self.member_user
         service.member_profile.return_value = {"first_name": "Vas", "last_name": "D", "email": "vas@ascend.com"}
         with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/member/profile")
+            response = self.client.get("/api/member/profile", headers=self.member_headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["first_name"], "Vas")
-        service.member_profile.assert_called_once_with()
+        service.member_profile.assert_called_once_with("client_1", "case_1")
 
     def test_member_dashboard_rejects_non_member_token_as_json(self):
         service = Mock()
@@ -542,10 +570,12 @@ class ApiTests(unittest.TestCase):
 
     def test_update_member_profile_calls_service(self):
         service = Mock()
+        service.member_session.return_value = self.member_user
         service.update_member_profile.return_value = {"first_name": "Vas", "last_name": "D", "email": "vas@ascend.com"}
         with patch("app.api.service", return_value=service):
             response = self.client.put(
                 "/api/member/profile",
+                headers=self.member_headers,
                 data={
                     "first_name": "Vas",
                     "last_name": "D",

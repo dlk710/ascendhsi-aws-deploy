@@ -315,6 +315,131 @@ CREATE TABLE IF NOT EXISTS product_issue_logs (
   deleted_by_key TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS product_feature_requests (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  request_type TEXT NOT NULL DEFAULT 'enhancement',
+  target_portals TEXT NOT NULL DEFAULT '',
+  priority TEXT NOT NULL DEFAULT 'P2',
+  status TEXT NOT NULL DEFAULT 'backlog',
+  business_value TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  acceptance_criteria TEXT NOT NULL DEFAULT '',
+  requested_by TEXT NOT NULL DEFAULT '',
+  created_by_role TEXT NOT NULL DEFAULT 'leader',
+  created_by_key TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS product_feature_request_attachments (
+  id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL REFERENCES product_feature_requests(id) ON DELETE CASCADE,
+  file_name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+  local_path TEXT NOT NULL DEFAULT '',
+  drive_path TEXT NOT NULL DEFAULT '',
+  drive_file_id TEXT NOT NULL DEFAULT '',
+  drive_web_url TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS critical_role_projects (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id),
+  case_id TEXT NOT NULL REFERENCES cases(id),
+  organization_name TEXT NOT NULL DEFAULT '',
+  organization_unit TEXT NOT NULL DEFAULT '',
+  organization_location TEXT NOT NULL DEFAULT '',
+  organization_website TEXT NOT NULL DEFAULT '',
+  employment_type TEXT NOT NULL DEFAULT '',
+  role_title TEXT NOT NULL DEFAULT '',
+  role_start_date TEXT NOT NULL DEFAULT '',
+  role_end_date TEXT NOT NULL DEFAULT '',
+  is_current_role INTEGER NOT NULL DEFAULT 0,
+  project_name TEXT NOT NULL DEFAULT '',
+  project_start_date TEXT NOT NULL DEFAULT '',
+  project_end_date TEXT NOT NULL DEFAULT '',
+  project_status TEXT NOT NULL DEFAULT 'Active',
+  organization_achievements TEXT NOT NULL DEFAULT '',
+  organization_distinctiveness TEXT NOT NULL DEFAULT '',
+  role_summary TEXT NOT NULL DEFAULT '',
+  role_responsibilities TEXT NOT NULL DEFAULT '',
+  role_evolution TEXT NOT NULL DEFAULT '',
+  leadership_scope TEXT NOT NULL DEFAULT '',
+  cross_functional_partners TEXT NOT NULL DEFAULT '',
+  project_summary TEXT NOT NULL DEFAULT '',
+  business_need TEXT NOT NULL DEFAULT '',
+  strategic_importance TEXT NOT NULL DEFAULT '',
+  contributions_summary TEXT NOT NULL DEFAULT '',
+  innovation_originality TEXT NOT NULL DEFAULT '',
+  business_value_summary TEXT NOT NULL DEFAULT '',
+  quantitative_metrics TEXT NOT NULL DEFAULT '',
+  revenue_impact TEXT NOT NULL DEFAULT '',
+  cost_savings TEXT NOT NULL DEFAULT '',
+  efficiency_gain TEXT NOT NULL DEFAULT '',
+  user_or_customer_impact TEXT NOT NULL DEFAULT '',
+  market_or_geographic_impact TEXT NOT NULL DEFAULT '',
+  compliance_or_risk_impact TEXT NOT NULL DEFAULT '',
+  peer_distinction_summary TEXT NOT NULL DEFAULT '',
+  mentorship_leadership TEXT NOT NULL DEFAULT '',
+  executive_visibility TEXT NOT NULL DEFAULT '',
+  evidence_available TEXT NOT NULL DEFAULT '',
+  attorney_friendly_summary TEXT NOT NULL DEFAULT '',
+  workflow_status TEXT NOT NULL DEFAULT 'draft',
+  submitted_at TEXT,
+  export_evidence_id TEXT NOT NULL DEFAULT '',
+  export_generated_at TEXT,
+  deleted_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS original_contribution_entries (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id),
+  case_id TEXT NOT NULL REFERENCES cases(id),
+  contribution_title TEXT NOT NULL DEFAULT '',
+  contribution_category TEXT NOT NULL DEFAULT 'Work-related',
+  field_of_expertise TEXT NOT NULL DEFAULT '',
+  job_title TEXT NOT NULL DEFAULT '',
+  organization_name TEXT NOT NULL DEFAULT '',
+  project_name TEXT NOT NULL DEFAULT '',
+  contribution_start_date TEXT NOT NULL DEFAULT '',
+  contribution_end_date TEXT NOT NULL DEFAULT '',
+  contribution_status TEXT NOT NULL DEFAULT 'Completed',
+  originality_summary TEXT NOT NULL DEFAULT '',
+  challenging_paradigms TEXT NOT NULL DEFAULT '',
+  prior_state_of_field TEXT NOT NULL DEFAULT '',
+  work_vs_external_context TEXT NOT NULL DEFAULT '',
+  personal_role TEXT NOT NULL DEFAULT '',
+  distinct_contribution_summary TEXT NOT NULL DEFAULT '',
+  technical_or_business_problem TEXT NOT NULL DEFAULT '',
+  solution_or_innovation TEXT NOT NULL DEFAULT '',
+  unique_features TEXT NOT NULL DEFAULT '',
+  impact_metrics TEXT NOT NULL DEFAULT '',
+  adoption_scale TEXT NOT NULL DEFAULT '',
+  beneficiary_summary TEXT NOT NULL DEFAULT '',
+  time_savings TEXT NOT NULL DEFAULT '',
+  cost_savings TEXT NOT NULL DEFAULT '',
+  revenue_impact TEXT NOT NULL DEFAULT '',
+  quality_or_risk_impact TEXT NOT NULL DEFAULT '',
+  field_wide_impact TEXT NOT NULL DEFAULT '',
+  recognition_and_influence TEXT NOT NULL DEFAULT '',
+  media_or_public_mentions TEXT NOT NULL DEFAULT '',
+  adoption_letters_targets TEXT NOT NULL DEFAULT '',
+  evidence_available TEXT NOT NULL DEFAULT '',
+  attorney_friendly_summary TEXT NOT NULL DEFAULT '',
+  workflow_status TEXT NOT NULL DEFAULT 'draft',
+  submitted_at TEXT,
+  export_evidence_id TEXT NOT NULL DEFAULT '',
+  export_generated_at TEXT,
+  deleted_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
   thread_id TEXT NOT NULL,
@@ -383,6 +508,30 @@ CREATE TABLE IF NOT EXISTS support_ticket_attachments (
   drive_file_id TEXT NOT NULL DEFAULT '',
   drive_web_url TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS recommendation_letters (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id),
+  case_id TEXT NOT NULL REFERENCES cases(id),
+  letter_kind TEXT NOT NULL DEFAULT 'independent',
+  criterion_code TEXT NOT NULL DEFAULT '',
+  project_type TEXT NOT NULL DEFAULT '',
+  project_id TEXT NOT NULL DEFAULT '',
+  recommender_name TEXT NOT NULL DEFAULT '',
+  recommender_title TEXT NOT NULL DEFAULT '',
+  recommender_organization TEXT NOT NULL DEFAULT '',
+  recommender_relationship TEXT NOT NULL DEFAULT '',
+  attorney_notes TEXT NOT NULL DEFAULT '',
+  prompt_config_json TEXT NOT NULL DEFAULT '{}',
+  letter_json TEXT NOT NULL DEFAULT '{}',
+  plain_text TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'generated',
+  generated_by_key TEXT NOT NULL DEFAULT '',
+  approved_at TEXT,
+  sent_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS batch_intake_sessions (
@@ -605,6 +754,20 @@ def initialize(conn: ConnectionAdapter | sqlite3.Connection) -> None:
     ensure_column(conn, "product_issue_logs", "last_synced_at", "TEXT")
     ensure_column(conn, "product_issue_logs", "deleted_at", "TEXT")
     ensure_column(conn, "product_issue_logs", "deleted_by_key", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "product_feature_requests", "acceptance_criteria", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "recommendation_letters", "approved_at", "TEXT")
+    ensure_column(conn, "recommendation_letters", "sent_at", "TEXT")
+    ensure_column(conn, "critical_role_projects", "workflow_status", "TEXT NOT NULL DEFAULT 'draft'")
+    ensure_column(conn, "critical_role_projects", "submitted_at", "TEXT")
+    ensure_column(conn, "critical_role_projects", "export_evidence_id", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "critical_role_projects", "export_generated_at", "TEXT")
+    ensure_column(conn, "critical_role_projects", "deleted_at", "TEXT")
+    ensure_column(conn, "original_contribution_entries", "workflow_status", "TEXT NOT NULL DEFAULT 'draft'")
+    ensure_column(conn, "original_contribution_entries", "submitted_at", "TEXT")
+    ensure_column(conn, "original_contribution_entries", "job_title", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "original_contribution_entries", "export_evidence_id", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "original_contribution_entries", "export_generated_at", "TEXT")
+    ensure_column(conn, "original_contribution_entries", "deleted_at", "TEXT")
     ensure_column(conn, "tasks", "assigned_by_builder_id", "TEXT REFERENCES profile_builders(id)")
     ensure_column(conn, "tasks", "opportunity_id", "TEXT REFERENCES opportunity_library(id)")
     ensure_column(conn, "tasks", "criterion_code", "TEXT REFERENCES criteria(code)")

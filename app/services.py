@@ -21,6 +21,25 @@ DEFAULT_MEMBER_EMAIL = "vas@ascendhsi.com"
 ADMIN_COST_SNAPSHOT_SOURCE = "cost_explorer"
 ISSUE_PRIORITIES = {"P0", "P1", "P2", "P3"}
 ISSUE_STATUSES = {"open", "triaged", "in_progress", "blocked", "fixed", "closed"}
+CRITICAL_ROLE_FIELDS = [
+    "organization_name", "organization_unit", "organization_location", "organization_website", "employment_type",
+    "role_title", "role_start_date", "role_end_date", "is_current_role", "project_name", "project_start_date",
+    "project_end_date", "project_status", "organization_achievements", "organization_distinctiveness", "role_summary",
+    "role_responsibilities", "role_evolution", "leadership_scope", "cross_functional_partners", "project_summary",
+    "business_need", "strategic_importance", "contributions_summary", "innovation_originality", "business_value_summary",
+    "quantitative_metrics", "revenue_impact", "cost_savings", "efficiency_gain", "user_or_customer_impact",
+    "market_or_geographic_impact", "compliance_or_risk_impact", "peer_distinction_summary", "mentorship_leadership",
+    "executive_visibility", "evidence_available", "attorney_friendly_summary", "workflow_status",
+]
+ORIGINAL_CONTRIBUTION_FIELDS = [
+    "contribution_title", "contribution_category", "field_of_expertise", "job_title", "organization_name", "project_name",
+    "contribution_start_date", "contribution_end_date", "contribution_status", "originality_summary", "challenging_paradigms",
+    "prior_state_of_field", "work_vs_external_context", "personal_role", "distinct_contribution_summary",
+    "technical_or_business_problem", "solution_or_innovation", "unique_features", "impact_metrics", "adoption_scale",
+    "beneficiary_summary", "time_savings", "cost_savings", "revenue_impact", "quality_or_risk_impact",
+    "field_wide_impact", "recognition_and_influence", "media_or_public_mentions", "adoption_letters_targets",
+    "evidence_available", "attorney_friendly_summary", "workflow_status",
+]
 
 from app.config import load_app_config, load_openai_config, load_storage_config
 from app.db import connect, initialize, one, rows, seed_default_case
@@ -729,6 +748,257 @@ class EvidenceService:
             "storage_provider": "local",
             "storage_class": "",
         }
+
+    def _serialize_feature_attachment(self, attachment: dict | None) -> dict:
+        return self._serialize_support_attachment(attachment)
+
+    def _feature_attachments(self, request_id: str) -> list[dict]:
+        if not request_id:
+            return []
+        attachment_rows = rows(
+            self.conn,
+            """
+            SELECT *
+            FROM product_feature_request_attachments
+            WHERE request_id = ?
+            ORDER BY created_at ASC
+            """,
+            (request_id,),
+        )
+        return [self._serialize_feature_attachment(item) for item in attachment_rows]
+
+    def _store_feature_attachment(
+        self,
+        request_id: str,
+        file_name: str,
+        content_type: str,
+        file_bytes: bytes,
+        description: str = "",
+    ) -> dict:
+        attachment_id = f"featatt_{uuid.uuid4().hex[:12]}"
+        cleaned_file_name = safe_file_name(file_name or "feature-screenshot")
+        normalized_content_type = (content_type or "").strip() or mimetypes.guess_type(cleaned_file_name)[0] or "application/octet-stream"
+        relative_path = Path("product") / "feature-requests" / request_id / attachment_id / cleaned_file_name
+        drive_path = relative_path.as_posix()
+        object_storage = self.storage.object_storage
+        if object_storage and object_storage.enabled:
+            try:
+                parent_id = object_storage.ensure_folder_path(["product", "feature-requests", request_id, attachment_id])
+                uploaded = object_storage.upload_bytes(parent_id, cleaned_file_name, file_bytes, normalized_content_type)
+                drive_file_id = str(uploaded.get("id", "")).strip()
+                drive_web_url = str(uploaded.get("webViewLink", "")).strip() or (object_storage.build_file_url(drive_file_id) if drive_file_id else "")
+                return {
+                    "id": attachment_id,
+                    "file_name": cleaned_file_name,
+                    "description": description.strip(),
+                    "content_type": normalized_content_type,
+                    "local_path": "",
+                    "drive_path": drive_path,
+                    "drive_file_id": drive_file_id,
+                    "drive_web_url": drive_web_url,
+                }
+            except (S3ConfigError, S3StorageError):
+                pass
+        local_dir = self.config.upload_root / relative_path.parent
+        mirror_dir = self.config.drive_mirror_root / relative_path.parent
+        local_dir.mkdir(parents=True, exist_ok=True)
+        mirror_dir.mkdir(parents=True, exist_ok=True)
+        local_path = local_dir / cleaned_file_name
+        mirror_path = mirror_dir / cleaned_file_name
+        local_path.write_bytes(file_bytes)
+        mirror_path.write_bytes(file_bytes)
+        return {
+            "id": attachment_id,
+            "file_name": cleaned_file_name,
+            "description": description.strip(),
+            "content_type": normalized_content_type,
+            "local_path": str(local_path),
+            "drive_path": str(mirror_path),
+            "drive_file_id": "",
+            "drive_web_url": "",
+        }
+
+    def _serialize_feature_request(self, item: dict | None) -> dict:
+        if not item:
+            return {}
+        decorated = dict(item)
+        decorated["attachments"] = self._feature_attachments(item["id"])
+        decorated["attachment_count"] = len(decorated["attachments"])
+        return decorated
+
+    def product_feature_backlog(self) -> dict:
+        request_rows = rows(
+            self.conn,
+            """
+            SELECT *
+            FROM product_feature_requests
+            ORDER BY
+              CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+              created_at DESC
+            """,
+        )
+        items = [self._serialize_feature_request(item) for item in request_rows]
+        priority_counts = {priority: sum(1 for item in items if item.get("priority") == priority) for priority in ["P0", "P1", "P2", "P3"]}
+        status_counts: dict[str, int] = {}
+        for item in items:
+            status_counts[item.get("status", "backlog")] = status_counts.get(item.get("status", "backlog"), 0) + 1
+        return {"items": items, "priority_counts": priority_counts, "status_counts": status_counts}
+
+    def create_product_feature_request(
+        self,
+        actor_email: str = "",
+        title: str = "",
+        request_type: str = "enhancement",
+        target_portals: str = "",
+        priority: str = "P2",
+        business_value: str = "",
+        description: str = "",
+        acceptance_criteria: str = "",
+        requested_by: str = "",
+        attachments: list[dict] | None = None,
+    ) -> dict:
+        actor = self._actor_identity("leader", actor_email)
+        cleaned_title = title.strip()
+        cleaned_description = description.strip()
+        if not cleaned_title or not cleaned_description:
+            raise ValueError("title and description are required")
+        normalized_priority = priority.strip().upper()
+        if normalized_priority not in {"P0", "P1", "P2", "P3"}:
+            normalized_priority = "P2"
+        normalized_type = request_type.strip().lower() or "enhancement"
+        if normalized_type not in {"new_feature", "enhancement", "style", "bug_fix", "workflow"}:
+            normalized_type = "enhancement"
+        request_id = f"feat_{uuid.uuid4().hex[:12]}"
+        self.conn.execute(
+            """
+            INSERT INTO product_feature_requests(
+              id, title, request_type, target_portals, priority, business_value, description,
+              acceptance_criteria, requested_by, created_by_role, created_by_key
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'leader', ?)
+            """,
+            (
+                request_id,
+                cleaned_title,
+                normalized_type,
+                target_portals.strip(),
+                normalized_priority,
+                business_value.strip(),
+                cleaned_description,
+                acceptance_criteria.strip(),
+                requested_by.strip() or actor["name"],
+                actor["key"],
+            ),
+        )
+        for attachment in attachments or []:
+            file_name = str(attachment.get("file_name", "")).strip()
+            file_bytes = attachment.get("bytes", b"")
+            if not file_name or not file_bytes:
+                continue
+            stored = self._store_feature_attachment(
+                request_id,
+                file_name,
+                str(attachment.get("content_type", "")).strip(),
+                file_bytes,
+                str(attachment.get("description", "")).strip(),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO product_feature_request_attachments(
+                  id, request_id, file_name, description, content_type, local_path,
+                  drive_path, drive_file_id, drive_web_url
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    stored["id"],
+                    request_id,
+                    stored["file_name"],
+                    stored["description"],
+                    stored["content_type"],
+                    stored["local_path"],
+                    stored["drive_path"],
+                    stored["drive_file_id"],
+                    stored["drive_web_url"],
+                ),
+            )
+        self.conn.commit()
+        saved = self._serialize_feature_request(one(self.conn, "SELECT * FROM product_feature_requests WHERE id = ?", (request_id,)))
+        self.record_operational_event(
+            "product_feature_request_created",
+            status="success",
+            portal="leader",
+            endpoint="/api/leader/product-backlog",
+            message=f"Leader added product backlog item: {saved['title']}.",
+            metadata={"priority": saved["priority"], "request_type": saved["request_type"], "attachment_count": saved["attachment_count"]},
+            actor_role="leader",
+            actor_key=actor["key"],
+        )
+        return saved
+
+    def update_product_feature_request(self, request_id: str, priority: str = "", status: str = "", actor_email: str = "") -> dict:
+        actor = self._actor_identity("leader", actor_email)
+        existing = one(self.conn, "SELECT * FROM product_feature_requests WHERE id = ?", (request_id.strip(),))
+        if not existing:
+            raise ValueError("Feature request not found")
+        next_priority = priority.strip().upper() if priority.strip() else existing["priority"]
+        if next_priority not in {"P0", "P1", "P2", "P3"}:
+            next_priority = existing["priority"]
+        next_status = status.strip().lower() if status.strip() else existing["status"]
+        if next_status not in {"backlog", "ready", "in_progress", "testing", "deployed", "blocked"}:
+            next_status = existing["status"]
+        self.conn.execute(
+            """
+            UPDATE product_feature_requests
+            SET priority = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (next_priority, next_status, existing["id"]),
+        )
+        self.conn.commit()
+        updated = self._serialize_feature_request(one(self.conn, "SELECT * FROM product_feature_requests WHERE id = ?", (existing["id"],)))
+        self.record_operational_event(
+            "product_feature_request_updated",
+            status="success",
+            portal="leader",
+            endpoint="/api/leader/product-backlog",
+            message=f"Leader updated product backlog item: {updated['title']}.",
+            metadata={"priority": updated["priority"], "status": updated["status"]},
+            actor_role="leader",
+            actor_key=actor["key"],
+        )
+        return updated
+
+    def log_portal_activity(
+        self,
+        actor_role: str,
+        actor_email: str = "",
+        actor_client_id: str = "",
+        event_type: str = "page_view",
+        message: str = "",
+        endpoint: str = "/web/activity",
+        metadata: dict | None = None,
+        related_client_id: str = "",
+    ) -> dict:
+        actor = self._actor_identity(actor_role, actor_email, actor_client_id)
+        related_case_id = ""
+        if related_client_id:
+            related_member = self._member_case(related_client_id)
+            related_case_id = related_member["case_id"]
+        return self.record_operational_event(
+            event_type,
+            status="info",
+            portal=actor["role"],
+            client_id=actor.get("client_id", ""),
+            case_id=actor.get("case_id", ""),
+            endpoint=endpoint,
+            message=message,
+            metadata=metadata or {},
+            actor_role=actor["role"],
+            actor_key=actor["key"],
+            related_client_id=related_client_id,
+            related_case_id=related_case_id,
+        )
 
     def _bug_log_id(self) -> str:
         return f"BUG-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
@@ -1505,31 +1775,32 @@ class EvidenceService:
 
     def _admin_platform_health_items(self) -> list[dict]:
         database_configured = bool(os.environ.get("ASCEND_DATABASE_URL") or os.environ.get("DATABASE_URL"))
-        storage_bucket = os.environ.get("ASCEND_STORAGE_BUCKET") or os.environ.get("ASCEND_EVIDENCE_S3_BUCKET") or "client-data-dev-027903151318"
-        archive_bucket = os.environ.get("ASCEND_ARCHIVE_BUCKET") or "client-data-archive-dev-027903151318"
-        frontend_bucket = os.environ.get("ASCEND_FRONTEND_BUCKET") or "ascend-frontend-dev-027903151318"
-        cloudfront_distribution = os.environ.get("ASCEND_CLOUDFRONT_DISTRIBUTION_ID") or "EV6WT9DUO1GQH"
-        ecs_cluster = os.environ.get("ASCEND_ECS_CLUSTER") or "ascend-dev-cluster"
-        ecs_service = os.environ.get("ASCEND_ECS_SERVICE") or "ascend-dev-backend"
-        ecr_repo = os.environ.get("ASCEND_ECR_REPOSITORY") or "ascend-dev-backend"
-        alb_name = os.environ.get("ASCEND_ALB_NAME") or "ascend-dev-api"
-        secrets_scope = os.environ.get("ASCEND_SECRETS_SCOPE") or "Secrets Manager runtime secrets"
+        storage_bucket_configured = bool(os.environ.get("ASCEND_STORAGE_BUCKET") or os.environ.get("ASCEND_EVIDENCE_S3_BUCKET"))
+        archive_bucket_configured = bool(os.environ.get("ASCEND_ARCHIVE_BUCKET"))
+        frontend_bucket_configured = bool(os.environ.get("ASCEND_FRONTEND_BUCKET"))
+        cloudfront_configured = bool(os.environ.get("ASCEND_CLOUDFRONT_DISTRIBUTION_ID"))
+        ecs_configured = bool(os.environ.get("ASCEND_ECS_CLUSTER") and os.environ.get("ASCEND_ECS_SERVICE"))
+        ecr_configured = bool(os.environ.get("ASCEND_ECR_REPOSITORY"))
+        alb_configured = bool(os.environ.get("ASCEND_ALB_NAME"))
+        secrets_configured = bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_ADMIN_API_KEY"))
+        database_detail = "Managed PostgreSQL connection configured." if database_configured else "Local development SQLite fallback active."
+        storage_detail = "Evidence and archive storage configured." if storage_bucket_configured and archive_bucket_configured else "Evidence storage configuration needs review."
         return [
             {"name": "Member Portal", "layer": "Portal", "status": "online", "detail": "React member workspace served by CloudFront."},
             {"name": "Profile Builder Portal", "layer": "Portal", "status": "online", "detail": "Assigned-member workflow served by the shared React app."},
             {"name": "Leader Portal", "layer": "Portal", "status": "online", "detail": "Executive and assignment review workspace."},
             {"name": "Attorney Portal", "layer": "Portal", "status": "online", "detail": "Dossier, petition, and recommendation workflow."},
             {"name": "Admin Portal", "layer": "Portal", "status": "online", "detail": "Operational monitoring and debugging workspace."},
-            {"name": "CloudFront CDN", "layer": "Edge", "status": "online", "detail": f"Distribution {cloudfront_distribution} fronts the product suite."},
-            {"name": "S3 Frontend Bucket", "layer": "Static hosting", "status": "healthy", "detail": frontend_bucket},
-            {"name": "Application Load Balancer", "layer": "Network", "status": "online", "detail": alb_name},
-            {"name": "ECS Fargate", "layer": "Compute", "status": "online", "detail": f"{ecs_cluster} / {ecs_service}"},
-            {"name": "ECR Backend Image", "layer": "Container registry", "status": "healthy", "detail": ecr_repo},
-            {"name": "FastAPI", "layer": "API", "status": "online", "detail": "Backend API running through Uvicorn on ECS."},
-            {"name": "RDS PostgreSQL", "layer": "Database", "status": "healthy" if database_configured else "degraded", "detail": "ASCEND_DATABASE_URL configured" if database_configured else f"Local SQLite fallback at {self.config.database_path}"},
-            {"name": "S3 Evidence Buckets", "layer": "Secure storage", "status": "healthy" if storage_bucket else "degraded", "detail": f"Active: {storage_bucket} / Archive: {archive_bucket}"},
-            {"name": "DynamoDB Bug Log", "layer": "Operations data", "status": "healthy", "detail": self._aws_issue_table_name()},
-            {"name": "Secrets Manager", "layer": "Secrets", "status": "healthy", "detail": secrets_scope},
+            {"name": "CloudFront CDN", "layer": "Edge", "status": "online" if cloudfront_configured else "degraded", "detail": "Public edge distribution configured." if cloudfront_configured else "Distribution configuration needs review."},
+            {"name": "S3 Frontend Bucket", "layer": "Static hosting", "status": "healthy" if frontend_bucket_configured else "degraded", "detail": "Static app bucket configured." if frontend_bucket_configured else "Static app bucket needs review."},
+            {"name": "Application Load Balancer", "layer": "Network", "status": "online" if alb_configured else "degraded", "detail": "Public API routing configured." if alb_configured else "API routing configuration needs review."},
+            {"name": "ECS Fargate", "layer": "Compute", "status": "online" if ecs_configured else "degraded", "detail": "Container service configured for backend runtime." if ecs_configured else "Container service configuration needs review."},
+            {"name": "ECR Backend Image", "layer": "Container registry", "status": "healthy" if ecr_configured else "degraded", "detail": "Backend image repository configured." if ecr_configured else "Backend image repository needs review."},
+            {"name": "FastAPI", "layer": "API", "status": "online", "detail": "Backend API running through managed container runtime."},
+            {"name": "RDS PostgreSQL", "layer": "Database", "status": "healthy" if database_configured else "degraded", "detail": database_detail},
+            {"name": "S3 Evidence Buckets", "layer": "Secure storage", "status": "healthy" if storage_bucket_configured else "degraded", "detail": storage_detail},
+            {"name": "DynamoDB Bug Log", "layer": "Operations data", "status": "healthy", "detail": "Issue-log table configured." if self._aws_issue_table_name() else "Issue-log table needs review."},
+            {"name": "Secrets Manager", "layer": "Secrets", "status": "healthy" if secrets_configured else "degraded", "detail": "Runtime secrets configured." if secrets_configured else "Runtime secrets need review."},
             {"name": "OpenAI", "layer": "AI", "status": "healthy" if self.openai.enabled else "degraded", "detail": self.openai.config.get("model", "not configured")},
         ]
 
@@ -2706,12 +2977,16 @@ class EvidenceService:
         )
         evidence = self._assistant_evidence(member["client_id"], member["case_id"])
         criterion_tracker = self._criterion_tracker(criteria)
+        critical_role_projects = self.critical_role_projects(member["client_id"], member["case_id"])
+        original_contribution_entries = self.original_contribution_entries(member["client_id"], member["case_id"])
         return {
             "member": member,
             "profile": profile,
             "criteria": criteria,
             "tasks": tasks,
             "evidence": evidence,
+            "critical_role_projects": critical_role_projects,
+            "original_contribution_entries": original_contribution_entries,
             "builder_workbench": self._builder_workbench(member, profile, criterion_tracker, tasks),
             "legal_workbench": self._legal_workbench(member, profile, criterion_tracker, tasks, evidence),
         }
@@ -3007,27 +3282,15 @@ class EvidenceService:
             for item in sessions
         ]
 
-    def attorney_petition_generator(self, client_id: str = "") -> dict:
-        client_id = client_id.strip() or self.config.default_client["client_id"]
-        detail = self.builder_member_detail(client_id)
+    def _attorney_case_context(self, client_id: str = "", actor_role: str = "attorney", actor_email: str = "") -> dict:
+        resolved_client_id = client_id.strip() or self.config.default_client["client_id"]
+        if actor_role.strip().lower() == "attorney":
+            detail = self.attorney_member_detail(resolved_client_id, actor_email)
+        else:
+            detail = self.builder_member_detail(resolved_client_id)
         member = detail["member"]
         profile = detail.get("profile") or {}
-        folders = rows(
-            self.conn,
-            "SELECT * FROM evidence_folders WHERE client_id = ? AND case_id = ?",
-            (member["client_id"], member["case_id"]),
-        )
-        evidence_rows = rows(
-            self.conn,
-            """
-            SELECT *
-            FROM evidence_items
-            WHERE client_id = ? AND case_id = ? AND status != 'archived'
-            ORDER BY created_at DESC
-            """,
-            (member["client_id"], member["case_id"]),
-        )
-        evidence_items = [self._decorate_file(item, folders) for item in evidence_rows]
+        evidence_items = detail.get("evidence") or self._assistant_evidence(member["client_id"], member["case_id"])
         planner_rows = rows(
             self.conn,
             """
@@ -3039,6 +3302,7 @@ class EvidenceService:
             """,
             (member["client_id"], member["case_id"]),
         )
+        folders = self._folders_for_case(member["client_id"], member["case_id"])
         for item in planner_rows:
             item["folder_path"] = self._folder_path(item["folder_id"], folders) if item.get("folder_id") else ""
         recent_messages = rows(
@@ -3052,8 +3316,24 @@ class EvidenceService:
             """,
             (member["client_id"], member["client_id"], member["display_name"], member["display_name"]),
         )
+        return {
+            "detail": detail,
+            "member": member,
+            "profile": profile,
+            "evidence_items": evidence_items,
+            "planner_rows": planner_rows,
+            "recent_messages": recent_messages,
+        }
+
+    def _attorney_case_payload(self, context: dict) -> dict:
+        detail = context["detail"]
+        member = context["member"]
+        profile = context["profile"]
+        evidence_items = context["evidence_items"]
+        planner_rows = context["planner_rows"]
+        recent_messages = context["recent_messages"]
         criteria_lookup = {item["code"]: item["name"] for item in detail.get("criteria", [])}
-        payload = {
+        return {
             "member_name": member.get("display_name", "Member"),
             "client_id": member["client_id"],
             "case_id": member["case_id"],
@@ -3139,6 +3419,15 @@ class EvidenceService:
                 for item in recent_messages
             ],
         }
+
+    def attorney_petition_generator(self, client_id: str = "", attorney_email: str = "") -> dict:
+        context = self._attorney_case_context(client_id, "attorney", attorney_email)
+        detail = context["detail"]
+        member = context["member"]
+        profile = context["profile"]
+        evidence_items = context["evidence_items"]
+        planner_rows = context["planner_rows"]
+        payload = self._attorney_case_payload(context)
         try:
             draft = self.openai.generate_petition_package(payload)
             source = draft.pop("source", "fallback")
@@ -3193,6 +3482,393 @@ class EvidenceService:
             "legal_workbench": detail.get("legal_workbench") or self._legal_workbench(member, profile, self._criterion_tracker(detail.get("criteria", [])), detail.get("tasks", []), evidence_items),
             **draft,
         }
+
+    def _iso_date(self, value: datetime | None) -> str:
+        return value.date().isoformat() if value else ""
+
+    def _timeline_status_for_stage(self, stage: dict, today: date) -> str:
+        if stage.get("completed"):
+            return "completed"
+        end_date = self._parse_datetime(stage.get("end_date"))
+        if end_date and end_date.date() < today:
+            return "late"
+        start_date = self._parse_datetime(stage.get("start_date"))
+        if start_date and start_date.date() <= today:
+            return "active"
+        return "upcoming"
+
+    def petition_delivery_timeline(
+        self,
+        client_id: str = "",
+        actor_role: str = "member",
+        actor_email: str = "",
+        actor_client_id: str = "",
+    ) -> dict:
+        role = actor_role.strip().lower() or "member"
+        resolved_client_id = client_id.strip() or actor_client_id.strip() or self.config.default_client["client_id"]
+        if role == "attorney":
+            self.attorney_member_detail(resolved_client_id, actor_email)
+        elif role == "member" and actor_client_id and actor_client_id != resolved_client_id:
+            raise ValueError("Member cannot view another member timeline")
+        elif role not in {"member", "leader", "admin", "builder", "attorney"}:
+            raise ValueError("Unsupported actor role")
+        context = self._attorney_case_context(resolved_client_id, "leader" if role in {"leader", "admin", "member", "builder"} else "attorney", actor_email)
+        member = context["member"]
+        profile = context["profile"]
+        detail = context["detail"]
+        evidence_items = context["evidence_items"]
+        tasks = detail.get("tasks", [])
+        criteria_started = sum(1 for item in detail.get("criteria", []) if int(item.get("evidence_count") or 0) > 0)
+        submitted_intakes = len([item for item in detail.get("critical_role_projects", []) + detail.get("original_contribution_entries", []) if item.get("is_submitted")])
+        readiness = int(member.get("readiness_score") or 0)
+        evidence_count = len(evidence_items)
+        remaining_days = 28
+        if readiness < 25:
+            remaining_days += 56
+        elif readiness < 50:
+            remaining_days += 42
+        elif readiness < 75:
+            remaining_days += 28
+        if evidence_count < 5:
+            remaining_days += 21
+        if criteria_started < 3:
+            remaining_days += 18
+        if submitted_intakes == 0:
+            remaining_days += 10
+        open_tasks = [item for item in tasks if item.get("status") == "open"]
+        if open_tasks:
+            remaining_days += min(18, len(open_tasks) * 4)
+        active_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        durations = [10, 18, 14, 12, 7, 6, 2]
+        scale = max(1, remaining_days / sum(durations))
+        stage_defs = [
+            ("profile_evidence", "Profile and evidence baseline", "Member, builder, and attorney confirm the profile, uploaded evidence, and criterion coverage.", criteria_started >= 3 and evidence_count >= 5),
+            ("gap_closure", "Criteria gap closure", "Close high-value gaps for Critical Role, Original Contributions, judging, published material, and awards.", readiness >= 55 and evidence_count >= 8),
+            ("recommendations", "Recommendation letters", "Draft independent and project-specific letters, route to member, and collect signatures.", False),
+            ("attorney_draft", "Attorney petition draft", "Attorney produces claim map, final merits narrative, and petition draft using source-linked evidence.", readiness >= 75),
+            ("member_review", "Member review and signatures", "Member reviews attorney materials, signs recommendation letters, and confirms biographical facts.", False),
+            ("filing_qa", "Final QA and exhibit assembly", "Team checks dates, exhibit order, source links, document quality, and filing package completeness.", False),
+            ("file_petition", "File petition", "Submit the final petition package after attorney approval and member signoff.", readiness >= 90),
+        ]
+        today = datetime.utcnow().date()
+        stages = []
+        cursor = active_start
+        for index, (key, label, description, completed) in enumerate(stage_defs):
+            days = max(2, round(durations[index] * scale))
+            start = cursor
+            end = cursor + timedelta(days=days)
+            stage = {
+                "key": key,
+                "label": label,
+                "description": description,
+                "start_date": self._iso_date(start),
+                "end_date": self._iso_date(end),
+                "duration_days": days,
+                "completed": bool(completed),
+                "owner": "member" if key in {"profile_evidence", "member_review"} else "attorney" if key in {"recommendations", "attorney_draft"} else "operations",
+            }
+            stage["status"] = self._timeline_status_for_stage(stage, today)
+            stages.append(stage)
+            cursor = end + timedelta(days=1)
+        target_filing_date = stages[-1]["end_date"] if stages else ""
+        late_stages = [item for item in stages if item["status"] == "late"]
+        rfe_start = (self._parse_datetime(target_filing_date) or cursor) + timedelta(days=90)
+        rfe_end = rfe_start + timedelta(days=90)
+        alerts = []
+        for task in open_tasks:
+            due_date = self._parse_datetime(task.get("due_date"))
+            if due_date and due_date.date() < today:
+                alerts.append({"severity": "high", "message": f"Task overdue: {task.get('title', 'Untitled task')}", "owner": "member"})
+        if evidence_count < 5:
+            alerts.append({"severity": "medium", "message": "Evidence volume is still below a realistic filing path.", "owner": "member"})
+        if criteria_started < 3:
+            alerts.append({"severity": "high", "message": "Fewer than three criteria have active support.", "owner": "builder"})
+        if not profile.get("profile_confirmed"):
+            alerts.append({"severity": "medium", "message": "Member profile is not confirmed yet.", "owner": "member"})
+        for stage in late_stages:
+            alerts.append({"severity": "high", "message": f"{stage['label']} is past its target end date.", "owner": stage["owner"]})
+        return {
+            "ok": True,
+            "status": "late" if late_stages else "on_track" if not alerts else "at_risk",
+            "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+            "member": {"client_id": member["client_id"], "case_id": member["case_id"], "display_name": member.get("display_name", "Member"), "readiness_score": readiness, "target_filing_date": target_filing_date},
+            "summary": {
+                "target_filing_date": target_filing_date,
+                "days_to_target": (self._parse_datetime(target_filing_date).date() - today).days if target_filing_date else 0,
+                "evidence_count": evidence_count,
+                "criteria_started": criteria_started,
+                "submitted_project_intakes": submitted_intakes,
+                "late_stage_count": len(late_stages),
+                "alert_count": len(alerts),
+            },
+            "stages": stages,
+            "rfe_support": {
+                "label": "RFE support window if needed",
+                "start_date": self._iso_date(rfe_start),
+                "end_date": self._iso_date(rfe_end),
+                "duration_days": max(0, (rfe_end.date() - rfe_start.date()).days),
+                "style": "dotted",
+                "description": "Contingency support window for RFE or NOID response work if USCIS asks for more evidence.",
+            },
+            "alerts": alerts[:8],
+        }
+
+    def petition_acceleration_workspace(self, client_id: str = "", actor_role: str = "attorney", actor_email: str = "") -> dict:
+        context = self._attorney_case_context(client_id, "attorney" if actor_role == "attorney" else "leader", actor_email)
+        detail = context["detail"]
+        member = context["member"]
+        profile = context["profile"]
+        evidence = context["evidence_items"]
+        criteria = detail.get("criteria", [])
+        tasks = detail.get("tasks", [])
+        gaps = [
+            {
+                "criterion_code": item.get("code", ""),
+                "criterion_name": item.get("name", ""),
+                "severity": "high" if int(item.get("evidence_count") or 0) == 0 else "medium",
+                "issues": ["No evidence uploaded yet"] if int(item.get("evidence_count") or 0) == 0 else ["Needs attorney quality review"],
+            }
+            for item in criteria
+            if int(item.get("evidence_count") or 0) == 0
+        ]
+        claim_map = [
+            {
+                "criterion_code": item.get("code", ""),
+                "criterion_name": item.get("name", ""),
+                "status": "supported" if int(item.get("evidence_count") or 0) else "gap",
+                "evidence_count": int(item.get("evidence_count") or 0),
+            }
+            for item in criteria
+        ]
+        document_flags = [{"severity": "medium", "type": "review", "message": "Review AI fallback items manually.", "recommended_fix": "Confirm category, document type, and exhibit value before drafting."}] if any(item.get("analysis_source") == "fallback" for item in evidence) else []
+        recommendation_workspace = {
+            "recommended_targets": [
+                {"target_type": "Project recommendation", "purpose": "Corroborate Critical Role or Original Contribution project facts.", "linked_criteria": ["Leading or Critical Role", "Original Contributions"], "status": "needed"}
+            ] if detail.get("critical_role_projects") or detail.get("original_contribution_entries") else [],
+            "existing_letters": [],
+        }
+        return {
+            "ok": True,
+            "status": "success",
+            "member": {"client_id": member["client_id"], "case_id": member["case_id"], "display_name": member.get("display_name", "Member")},
+            "snapshot": {
+                "evidence_count": len(evidence),
+                "criteria_started": sum(1 for item in criteria if int(item.get("evidence_count") or 0) > 0),
+                "high_severity_gaps": sum(1 for item in gaps if item["severity"] == "high"),
+                "qa_flags": len(document_flags),
+            },
+            "p0": {
+                "claim_map": claim_map,
+                "gap_detector": {"gaps": gaps},
+                "top_next_actions": [
+                    {"action": "Close highest evidence gap", "why_it_matters": "Attorney drafting is stronger when at least three criteria have corroborated support.", "priority": "high", "owner": "builder"},
+                    {"action": "Confirm recommendation targets", "why_it_matters": "Letters should map to specific projects and evidence facts.", "priority": "medium", "owner": "attorney"},
+                ],
+                "criterion_request_packs": [{"criterion_code": item["criterion_code"], "criterion_name": item["criterion_name"], "member_prompt": "Upload primary proof, third-party corroboration, and measurable outcome documents.", "upload_checklist": ["Primary proof", "Corroboration", "Metrics"]} for item in claim_map[:6]],
+                "recommendation_letter_workspace": recommendation_workspace,
+                "attorney_review_queue": {"counts": {"evidence": len(evidence), "tasks": len(tasks), "projects": len(detail.get("critical_role_projects", [])) + len(detail.get("original_contribution_entries", []))}},
+            },
+            "p1": {
+                "filing_qa_checklist": {"checks": [
+                    {"item": "Profile facts confirmed", "status": "pass" if profile.get("profile_confirmed") else "warn", "detail": "Member profile confirmation is required before final filing."},
+                    {"item": "Evidence exhibits available", "status": "pass" if len(evidence) >= 8 else "warn", "detail": "Build enough source-linked evidence for attorney review."},
+                    {"item": "Project narratives submitted", "status": "pass" if recommendation_workspace["recommended_targets"] else "warn", "detail": "Critical Role and Original Contributions narratives strengthen letters."},
+                ]},
+                "document_qa": {"flags": document_flags},
+                "exhibit_assembly_manager": {"exhibits": [{"exhibit_number": f"Exhibit {index}", "criterion_name": item.get("criterion_code", ""), "file_name": item.get("file_name", "")} for index, item in enumerate(evidence[:8], start=1)]},
+            },
+        }
+
+    def attorney_endeavor_letter_generator(self, client_id: str = "", prompt_config: dict | None = None, actor_role: str = "attorney", actor_email: str = "") -> dict:
+        context = self._attorney_case_context(client_id, "attorney" if actor_role == "attorney" else "leader", actor_email)
+        payload = self._attorney_case_payload(context)
+        parsed_evidence = []
+        for item in context["evidence_items"][:20]:
+            excerpt = ""
+            local_path = str(item.get("local_path", "") or "")
+            if local_path:
+                try:
+                    excerpt = extract_document_excerpt(Path(local_path))
+                except Exception:
+                    excerpt = ""
+            parsed_evidence.append({"title": item.get("title", ""), "file_name": item.get("file_name", ""), "excerpt": excerpt[:1200]})
+        payload["parsed_evidence"] = parsed_evidence
+        prepared_prompt = self.openai.normalize_endeavor_prompt_config(prompt_config or {}, payload) if hasattr(self.openai, "normalize_endeavor_prompt_config") else (prompt_config or {})
+        result = self.openai.generate_endeavor_letter(payload, prepared_prompt)
+        return {
+            "ok": True,
+            "status": "success" if result.get("source") == "openai" else "fallback",
+            "source": result.get("source", "fallback"),
+            "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+            "member": payload.get("member_name", ""),
+            "snapshot": {"parsed_documents": len(parsed_evidence), "parsed_with_text": sum(1 for item in parsed_evidence if item.get("excerpt"))},
+            "prompt_config": prepared_prompt,
+            "letter": result.get("letter", result),
+        }
+
+    def _recommendation_project_options(self, detail: dict) -> list[dict]:
+        options = []
+        for item in detail.get("critical_role_projects", []):
+            options.append({
+                "id": item["id"],
+                "project_type": "critical_role",
+                "criterion_code": "leading_critical_role",
+                "criterion_name": "Leading or Critical Role",
+                "title": item.get("project_name") or item.get("organization_name") or "Critical Role project",
+                "organization_name": item.get("organization_name", ""),
+                "summary": item.get("attorney_friendly_summary") or item.get("business_value_summary") or item.get("role_summary") or "",
+            })
+        for item in detail.get("original_contribution_entries", []):
+            options.append({
+                "id": item["id"],
+                "project_type": "original_contribution",
+                "criterion_code": "original_contributions",
+                "criterion_name": "Original Contributions",
+                "title": item.get("contribution_title") or item.get("project_name") or "Original Contribution",
+                "organization_name": item.get("organization_name", ""),
+                "summary": item.get("attorney_friendly_summary") or item.get("impact_metrics") or item.get("originality_summary") or "",
+            })
+        if not options:
+            for item in (detail.get("legal_workbench", {}).get("recommendation_letters", {}).get("project_options", []) or []):
+                options.append({
+                    "id": item.get("id", ""),
+                    "project_type": "evidence",
+                    "criterion_code": item.get("criterion_code", ""),
+                    "criterion_name": item.get("criterion_name", ""),
+                    "title": item.get("title", "Project evidence"),
+                    "organization_name": "",
+                    "summary": "",
+                })
+        return options
+
+    def _serialize_recommendation_letter(self, letter: dict | None) -> dict:
+        if not letter:
+            return {}
+        decorated = dict(letter)
+        try:
+            decorated["letter"] = json.loads(letter.get("letter_json") or "{}")
+        except json.JSONDecodeError:
+            decorated["letter"] = {}
+        try:
+            decorated["prompt_config"] = json.loads(letter.get("prompt_config_json") or "{}")
+        except json.JSONDecodeError:
+            decorated["prompt_config"] = {}
+        decorated["download_url"] = f"/api/recommendation-letters/{letter['id']}/download"
+        return decorated
+
+    def recommendation_letter_workspace(self, client_id: str = "", actor_role: str = "attorney", actor_email: str = "") -> dict:
+        context = self._attorney_case_context(client_id, "attorney" if actor_role == "attorney" else "leader", actor_email)
+        detail = context["detail"]
+        member = context["member"]
+        project_options = self._recommendation_project_options(detail)
+        letter_rows = rows(self.conn, "SELECT * FROM recommendation_letters WHERE client_id = ? AND case_id = ? ORDER BY created_at DESC", (member["client_id"], member["case_id"]))
+        return {
+            "ok": True,
+            "member": {"client_id": member["client_id"], "case_id": member["case_id"], "display_name": member.get("display_name", "Member")},
+            "projects": project_options,
+            "letters": [self._serialize_recommendation_letter(item) for item in letter_rows],
+            "default_prompt": {
+                "who_you_are": "You are an expert EB1A attorney drafting a recommendation letter for review and signature by a recommender.",
+                "facts_to_confirm": "Confirm dates, scope, personal contribution, measurable impact, and why this project matters.",
+                "independence_guidance": "For independent letters, explain independence and field authority; for dependent letters, explain firsthand project knowledge.",
+                "attorney_strategy_notes": "Ground the letter in the selected project and avoid generic praise.",
+                "tone_guidance": "Professional, factual, concrete, and suitable for recommender signature.",
+                "length_constraints": "Keep the letter around one to two pages.",
+            },
+        }
+
+    def attorney_recommendation_letter_generator(self, client_id: str = "", letter_kind: str = "independent", project_type: str = "", project_id: str = "", prompt_config: dict | None = None, actor_role: str = "attorney", actor_email: str = "") -> dict:
+        context = self._attorney_case_context(client_id, "attorney" if actor_role == "attorney" else "leader", actor_email)
+        detail = context["detail"]
+        member = context["member"]
+        projects = self._recommendation_project_options(detail)
+        selected_project = next((item for item in projects if item.get("id") == project_id and item.get("project_type") == project_type), None)
+        if not selected_project:
+            raise ValueError("Select a Critical Role or Original Contribution project before generating a recommendation letter")
+        payload = self._attorney_case_payload(context)
+        payload["selected_project"] = selected_project
+        payload["letter_kind"] = letter_kind
+        prepared_prompt = dict(prompt_config or {})
+        result = self.openai.generate_recommendation_letter(payload, prepared_prompt)
+        letter = result.get("letter", result)
+        plain_text = letter.get("plain_text") or "\n\n".join([letter.get("title", ""), letter.get("opening_paragraph", ""), *[section.get("body", "") for section in letter.get("sections", [])], letter.get("closing_paragraph", ""), letter.get("signature_line", "")])
+        letter_id = f"recltr_{uuid.uuid4().hex[:12]}"
+        actor = self._actor_identity(actor_role, actor_email)
+        self.conn.execute(
+            """
+            INSERT INTO recommendation_letters(
+              id, client_id, case_id, letter_kind, criterion_code, project_type, project_id,
+              recommender_name, recommender_title, recommender_organization, recommender_relationship,
+              attorney_notes, prompt_config_json, letter_json, plain_text, status, generated_by_key
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'generated', ?)
+            """,
+            (
+                letter_id,
+                member["client_id"],
+                member["case_id"],
+                letter_kind,
+                selected_project.get("criterion_code", ""),
+                project_type,
+                project_id,
+                prepared_prompt.get("recommender_name", ""),
+                prepared_prompt.get("recommender_title", ""),
+                prepared_prompt.get("recommender_organization", ""),
+                prepared_prompt.get("recommender_relationship", ""),
+                prepared_prompt.get("attorney_strategy_notes", ""),
+                json.dumps(prepared_prompt),
+                json.dumps(letter),
+                plain_text,
+                actor["key"],
+            ),
+        )
+        self.conn.commit()
+        saved = self._serialize_recommendation_letter(one(self.conn, "SELECT * FROM recommendation_letters WHERE id = ?", (letter_id,)))
+        return {"ok": True, "status": "generated", "source": result.get("source", "fallback"), "letter_record": saved}
+
+    def update_recommendation_letter_status(self, letter_id: str, status: str = "", actor_role: str = "attorney", actor_email: str = "") -> dict:
+        letter = one(self.conn, "SELECT * FROM recommendation_letters WHERE id = ?", (letter_id.strip(),))
+        if not letter:
+            raise ValueError("Recommendation letter not found")
+        next_status = status.strip().lower()
+        if next_status not in {"generated", "approved", "sent_to_member"}:
+            raise ValueError("Unsupported recommendation letter status")
+        approved_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if next_status == "approved" else letter.get("approved_at")
+        self.conn.execute("UPDATE recommendation_letters SET status = ?, approved_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (next_status, approved_at, letter["id"]))
+        self.conn.commit()
+        return self._serialize_recommendation_letter(one(self.conn, "SELECT * FROM recommendation_letters WHERE id = ?", (letter["id"],)))
+
+    def send_recommendation_letter_to_member(self, letter_id: str, actor_role: str = "attorney", actor_email: str = "") -> dict:
+        letter = one(self.conn, "SELECT * FROM recommendation_letters WHERE id = ?", (letter_id.strip(),))
+        if not letter:
+            raise ValueError("Recommendation letter not found")
+        if letter.get("status") != "approved":
+            raise ValueError("Approve recommendation letter before sending it to the member")
+        serialized = self._serialize_recommendation_letter(letter)
+        self.send_message(
+            actor_role,
+            "Recommendation letter ready for review",
+            f"A recommendation letter draft is ready for your review and signature.\n\nDownload link: {serialized['download_url']}",
+            "member",
+            letter["client_id"],
+            False,
+            actor_email,
+            "",
+            "",
+            "",
+        )
+        sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        self.conn.execute("UPDATE recommendation_letters SET status = 'sent_to_member', sent_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (sent_at, letter["id"]))
+        self.conn.commit()
+        updated = self._serialize_recommendation_letter(one(self.conn, "SELECT * FROM recommendation_letters WHERE id = ?", (letter["id"],)))
+        return {"ok": True, "status": "sent_to_member", "letter": updated}
+
+    def recommendation_letter_download(self, letter_id: str) -> dict:
+        letter = one(self.conn, "SELECT * FROM recommendation_letters WHERE id = ?", (letter_id.strip(),))
+        if not letter:
+            raise ValueError("Recommendation letter not found")
+        file_name = safe_file_name(f"{letter.get('project_type', 'project')}-{letter.get('letter_kind', 'recommendation')}-{letter['id']}.txt")
+        return {"file_name": file_name, "content_type": "text/plain; charset=utf-8", "content": letter.get("plain_text", "")}
 
     def portal_assistant_reply(
         self,
@@ -3871,7 +4547,127 @@ class EvidenceService:
             raise ValueError("Member profile not found")
         profile["profile_confirmed"] = bool(profile.get("profile_confirmed"))
         profile["completion_score"] = self._profile_completion_score(profile)
+        profile["critical_role_projects"] = self.critical_role_projects(client["client_id"], client["case_id"])
+        profile["original_contribution_entries"] = self.original_contribution_entries(client["client_id"], client["case_id"])
         return profile
+
+    def _project_date_label(self, start: str, end: str, is_current: bool = False) -> str:
+        if start and (end or is_current):
+            return f"{start} to {'Present' if is_current else end}"
+        return start or end or "Dates not added yet"
+
+    def _serialize_critical_role_project(self, item: dict | None) -> dict:
+        if not item:
+            return {}
+        decorated = dict(item)
+        decorated["is_current_role"] = bool(decorated.get("is_current_role"))
+        decorated["is_submitted"] = decorated.get("workflow_status") == "submitted"
+        decorated["role_date_label"] = self._project_date_label(decorated.get("role_start_date", ""), decorated.get("role_end_date", ""), decorated["is_current_role"])
+        decorated["project_date_label"] = self._project_date_label(decorated.get("project_start_date", ""), decorated.get("project_end_date", ""))
+        return decorated
+
+    def _serialize_original_contribution(self, item: dict | None) -> dict:
+        if not item:
+            return {}
+        decorated = dict(item)
+        decorated["is_submitted"] = decorated.get("workflow_status") == "submitted"
+        decorated["date_label"] = self._project_date_label(decorated.get("contribution_start_date", ""), decorated.get("contribution_end_date", ""))
+        decorated["summary_line"] = decorated.get("impact_metrics") or decorated.get("field_wide_impact") or decorated.get("adoption_scale") or ""
+        return decorated
+
+    def critical_role_projects(self, client_id: str, case_id: str) -> list[dict]:
+        records = rows(
+            self.conn,
+            """
+            SELECT *
+            FROM critical_role_projects
+            WHERE client_id = ? AND case_id = ? AND (deleted_at IS NULL OR deleted_at = '')
+            ORDER BY updated_at DESC, created_at DESC
+            """,
+            (client_id, case_id),
+        )
+        return [self._serialize_critical_role_project(item) for item in records]
+
+    def original_contribution_entries(self, client_id: str, case_id: str) -> list[dict]:
+        records = rows(
+            self.conn,
+            """
+            SELECT *
+            FROM original_contribution_entries
+            WHERE client_id = ? AND case_id = ? AND (deleted_at IS NULL OR deleted_at = '')
+            ORDER BY updated_at DESC, created_at DESC
+            """,
+            (client_id, case_id),
+        )
+        return [self._serialize_original_contribution(item) for item in records]
+
+    def save_critical_role_project(self, client_id: str, case_id: str, project_id: str = "", **fields) -> dict:
+        self._member_case(client_id)
+        cleaned = {key: (1 if str(fields.get(key, "")).lower() in {"true", "1", "yes", "on"} else 0) if key == "is_current_role" else str(fields.get(key, "") or "").strip() for key in CRITICAL_ROLE_FIELDS}
+        cleaned["workflow_status"] = cleaned.get("workflow_status") if cleaned.get("workflow_status") in {"draft", "submitted"} else "draft"
+        submitted_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if cleaned["workflow_status"] == "submitted" else None
+        if project_id:
+            existing = one(self.conn, "SELECT * FROM critical_role_projects WHERE id = ? AND client_id = ? AND case_id = ? AND (deleted_at IS NULL OR deleted_at = '')", (project_id, client_id, case_id))
+            if not existing:
+                raise ValueError("Critical role project not found")
+            assignments = ", ".join([f"{key} = ?" for key in CRITICAL_ROLE_FIELDS] + ["submitted_at = ?", "updated_at = CURRENT_TIMESTAMP"])
+            self.conn.execute(
+                f"UPDATE critical_role_projects SET {assignments} WHERE id = ?",
+                tuple(cleaned[key] for key in CRITICAL_ROLE_FIELDS) + (submitted_at if submitted_at else existing.get("submitted_at"), project_id),
+            )
+            saved_id = project_id
+        else:
+            saved_id = f"crp_{uuid.uuid4().hex[:12]}"
+            columns = ["id", "client_id", "case_id"] + CRITICAL_ROLE_FIELDS + ["submitted_at"]
+            placeholders = ", ".join(["?"] * len(columns))
+            self.conn.execute(
+                f"INSERT INTO critical_role_projects({', '.join(columns)}) VALUES ({placeholders})",
+                (saved_id, client_id, case_id) + tuple(cleaned[key] for key in CRITICAL_ROLE_FIELDS) + (submitted_at,),
+            )
+        self.conn.commit()
+        return self._serialize_critical_role_project(one(self.conn, "SELECT * FROM critical_role_projects WHERE id = ?", (saved_id,)))
+
+    def delete_critical_role_project(self, client_id: str, case_id: str, project_id: str) -> dict:
+        existing = one(self.conn, "SELECT * FROM critical_role_projects WHERE id = ? AND client_id = ? AND case_id = ? AND (deleted_at IS NULL OR deleted_at = '')", (project_id, client_id, case_id))
+        if not existing:
+            raise ValueError("Critical role project not found")
+        self.conn.execute("UPDATE critical_role_projects SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (project_id,))
+        self.conn.commit()
+        return {"ok": True, "status": "archived", "id": project_id}
+
+    def save_original_contribution(self, client_id: str, case_id: str, entry_id: str = "", **fields) -> dict:
+        self._member_case(client_id)
+        cleaned = {key: str(fields.get(key, "") or "").strip() for key in ORIGINAL_CONTRIBUTION_FIELDS}
+        cleaned["workflow_status"] = cleaned.get("workflow_status") if cleaned.get("workflow_status") in {"draft", "submitted"} else "draft"
+        submitted_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if cleaned["workflow_status"] == "submitted" else None
+        if entry_id:
+            existing = one(self.conn, "SELECT * FROM original_contribution_entries WHERE id = ? AND client_id = ? AND case_id = ? AND (deleted_at IS NULL OR deleted_at = '')", (entry_id, client_id, case_id))
+            if not existing:
+                raise ValueError("Original contribution not found")
+            assignments = ", ".join([f"{key} = ?" for key in ORIGINAL_CONTRIBUTION_FIELDS] + ["submitted_at = ?", "updated_at = CURRENT_TIMESTAMP"])
+            self.conn.execute(
+                f"UPDATE original_contribution_entries SET {assignments} WHERE id = ?",
+                tuple(cleaned[key] for key in ORIGINAL_CONTRIBUTION_FIELDS) + (submitted_at if submitted_at else existing.get("submitted_at"), entry_id),
+            )
+            saved_id = entry_id
+        else:
+            saved_id = f"ocp_{uuid.uuid4().hex[:12]}"
+            columns = ["id", "client_id", "case_id"] + ORIGINAL_CONTRIBUTION_FIELDS + ["submitted_at"]
+            placeholders = ", ".join(["?"] * len(columns))
+            self.conn.execute(
+                f"INSERT INTO original_contribution_entries({', '.join(columns)}) VALUES ({placeholders})",
+                (saved_id, client_id, case_id) + tuple(cleaned[key] for key in ORIGINAL_CONTRIBUTION_FIELDS) + (submitted_at,),
+            )
+        self.conn.commit()
+        return self._serialize_original_contribution(one(self.conn, "SELECT * FROM original_contribution_entries WHERE id = ?", (saved_id,)))
+
+    def delete_original_contribution(self, client_id: str, case_id: str, entry_id: str) -> dict:
+        existing = one(self.conn, "SELECT * FROM original_contribution_entries WHERE id = ? AND client_id = ? AND case_id = ? AND (deleted_at IS NULL OR deleted_at = '')", (entry_id, client_id, case_id))
+        if not existing:
+            raise ValueError("Original contribution not found")
+        self.conn.execute("UPDATE original_contribution_entries SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (entry_id,))
+        self.conn.commit()
+        return {"ok": True, "status": "archived", "id": entry_id}
 
     def update_member_profile(self, client_id: str | None = None, case_id: str | None = None, **fields) -> dict:
         existing = self.member_profile(client_id=client_id, case_id=case_id)
@@ -4955,25 +5751,20 @@ class EvidenceService:
     def _assistant_references(self, evidence: list[dict]) -> list[dict]:
         references: list[dict] = []
         for index, item in enumerate(evidence[:6], start=1):
-            local_path = item.get("drive_path", "") or item.get("local_path", "")
-            local_url = ""
-            if local_path:
-                try:
-                    local_url = Path(local_path).resolve().as_uri()
-                except ValueError:
-                    local_url = ""
+            folder_label = item.get("folder_path", "") or "Secure evidence storage"
+            open_url = item.get("open_url", "") or item.get("drive_web_url", "")
             references.append(
                 {
                     "id": f"ref_{index}",
                     "title": item.get("title", "") or item.get("file_name", f"Reference {index}"),
                     "label": item.get("file_name", f"Reference {index}"),
-                    "location": item.get("folder_path", "") or item.get("drive_path", "") or "Root",
+                    "location": folder_label,
                     "summary": item.get("ai_summary", "") or item.get("description", ""),
                     "excerpt": item.get("excerpt", ""),
                     "document_type": item.get("document_type", "Other"),
                     "criterion_name": item.get("criterion_code", ""),
                     "created_at": item.get("created_at", ""),
-                    "url": item.get("open_url", "") or item.get("drive_web_url", "") or local_url,
+                    "url": open_url if open_url.startswith(("https://", "http://")) else "",
                 }
             )
         return references

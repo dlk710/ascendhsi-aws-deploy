@@ -1,8 +1,13 @@
 import os
 import json
+import html
+import re
 import urllib.error
 import urllib.request
+import zipfile
+import zlib
 from datetime import datetime
+from xml.etree import ElementTree as ET
 
 from app.db import CRITERIA
 
@@ -281,6 +286,196 @@ class OpenAIService:
         result["source"] = "openai"
         return result
 
+    def generate_endeavor_letter(self, case_payload: dict, prompt_config: dict) -> dict:
+        compact_payload = compact_endeavor_payload(case_payload)
+        normalized_config = normalize_endeavor_prompt_config(prompt_config, compact_payload)
+        compiled_prompt = build_endeavor_letter_prompt(compact_payload, normalized_config)
+        if not self.enabled:
+            result = fallback_endeavor_letter(compact_payload, normalized_config)
+            result["compiled_prompt"] = compiled_prompt
+            result["normalized_prompt_config"] = normalized_config
+            result["source"] = "disabled"
+            return result
+
+        payload = {
+            "model": self.config.get("model", "gpt-5.4-mini"),
+            "input": compiled_prompt,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "endeavor_letter_generator",
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "title": {"type": "string"},
+                            "date_line": {"type": "string"},
+                            "re_line": {"type": "string"},
+                            "beneficiary_line": {"type": "string"},
+                            "subject_line": {"type": "string"},
+                            "salutation": {"type": "string"},
+                            "opening_paragraph": {"type": "string"},
+                            "sections": {
+                                "type": "array",
+                                "minItems": 4,
+                                "maxItems": 4,
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "heading": {"type": "string"},
+                                        "body": {"type": "string"},
+                                    },
+                                    "required": ["heading", "body"],
+                                },
+                            },
+                            "closing_paragraph": {"type": "string"},
+                            "signature_line": {"type": "string"},
+                        },
+                        "required": [
+                            "title",
+                            "date_line",
+                            "re_line",
+                            "beneficiary_line",
+                            "subject_line",
+                            "salutation",
+                            "opening_paragraph",
+                            "sections",
+                            "closing_paragraph",
+                            "signature_line",
+                        ],
+                    },
+                }
+            },
+        }
+        request = urllib.request.Request(
+            "https://api.openai.com/v1/responses",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key()}",
+                "Content-Type": "application/json",
+                "OpenAI-User": self.config.get("user", "ascend-suite-local"),
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=int(self.config.get("timeout_seconds", 60))) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+            result = fallback_endeavor_letter(compact_payload, normalized_config)
+            result["compiled_prompt"] = compiled_prompt
+            result["normalized_prompt_config"] = normalized_config
+            result["source"] = "fallback"
+            return result
+        text = raw.get("output_text")
+        if not text:
+            for item in raw.get("output", []):
+                for content in item.get("content", []):
+                    if content.get("type") in {"output_text", "text"} and content.get("text"):
+                        text = content["text"]
+                        break
+                if text:
+                    break
+        result = normalize_endeavor_letter(json.loads(text or "{}"), compact_payload, normalized_config)
+        result["compiled_prompt"] = compiled_prompt
+        result["normalized_prompt_config"] = normalized_config
+        result["source"] = "openai"
+        return result
+
+    def generate_recommendation_letter(self, case_payload: dict, prompt_config: dict) -> dict:
+        compact_payload = compact_recommendation_payload(case_payload)
+        normalized_config = normalize_recommendation_prompt_config(prompt_config, compact_payload)
+        compiled_prompt = build_recommendation_letter_prompt(compact_payload, normalized_config)
+        if not self.enabled:
+            result = fallback_recommendation_letter(compact_payload, normalized_config)
+            result["compiled_prompt"] = compiled_prompt
+            result["normalized_prompt_config"] = normalized_config
+            result["source"] = "disabled"
+            return result
+
+        payload = {
+            "model": self.config.get("model", "gpt-5.4-mini"),
+            "input": compiled_prompt,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "recommendation_letter_generator",
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "title": {"type": "string"},
+                            "date_line": {"type": "string"},
+                            "re_line": {"type": "string"},
+                            "addressee_line": {"type": "string"},
+                            "salutation": {"type": "string"},
+                            "opening_paragraph": {"type": "string"},
+                            "sections": {
+                                "type": "array",
+                                "minItems": 4,
+                                "maxItems": 4,
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "heading": {"type": "string"},
+                                        "body": {"type": "string"},
+                                    },
+                                    "required": ["heading", "body"],
+                                },
+                            },
+                            "closing_paragraph": {"type": "string"},
+                            "signature_line": {"type": "string"},
+                        },
+                        "required": [
+                            "title",
+                            "date_line",
+                            "re_line",
+                            "addressee_line",
+                            "salutation",
+                            "opening_paragraph",
+                            "sections",
+                            "closing_paragraph",
+                            "signature_line",
+                        ],
+                    },
+                }
+            },
+        }
+        request = urllib.request.Request(
+            "https://api.openai.com/v1/responses",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key()}",
+                "Content-Type": "application/json",
+                "OpenAI-User": self.config.get("user", "ascend-suite-local"),
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=int(self.config.get("timeout_seconds", 60))) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+            result = fallback_recommendation_letter(compact_payload, normalized_config)
+            result["compiled_prompt"] = compiled_prompt
+            result["normalized_prompt_config"] = normalized_config
+            result["source"] = "fallback"
+            return result
+        text = raw.get("output_text")
+        if not text:
+            for item in raw.get("output", []):
+                for content in item.get("content", []):
+                    if content.get("type") in {"output_text", "text"} and content.get("text"):
+                        text = content["text"]
+                        break
+                if text:
+                    break
+        result = normalize_recommendation_letter(json.loads(text or "{}"), compact_payload, normalized_config)
+        result["compiled_prompt"] = compiled_prompt
+        result["normalized_prompt_config"] = normalized_config
+        result["source"] = "openai"
+        return result
+
     def answer_portal_question(self, assistant_payload: dict) -> dict:
         if not self.enabled:
             result = fallback_portal_assistant(assistant_payload)
@@ -490,6 +685,23 @@ def compact_case_payload(case_payload: dict) -> dict:
     return payload
 
 
+def compact_endeavor_payload(case_payload: dict) -> dict:
+    payload = dict(case_payload or {})
+    payload["evidence_files"] = list((case_payload or {}).get("evidence_files", []))[:80]
+    payload["parsed_evidence"] = list((case_payload or {}).get("parsed_evidence", []))[:80]
+    payload["tasks"] = list((case_payload or {}).get("tasks", []))[:20]
+    payload["planner_items"] = list((case_payload or {}).get("planner_items", []))[:20]
+    payload["recent_messages"] = list((case_payload or {}).get("recent_messages", []))[:12]
+    return payload
+
+
+def compact_recommendation_payload(case_payload: dict) -> dict:
+    payload = compact_endeavor_payload(case_payload)
+    payload["selected_project"] = dict((case_payload or {}).get("selected_project") or {})
+    payload["letter_kind"] = str((case_payload or {}).get("letter_kind") or "independent").strip()
+    return payload
+
+
 def fallback_petition_package(case_payload: dict) -> dict:
     criteria = case_payload.get("criteria_summary", [])
     started = [item for item in criteria if int(item.get("evidence_count") or 0) > 0]
@@ -562,6 +774,64 @@ def fallback_petition_package(case_payload: dict) -> dict:
     }
 
 
+def normalize_endeavor_prompt_config(raw: dict, case_payload: dict) -> dict:
+    profile = case_payload.get("profile", {}) or {}
+    member_name = case_payload.get("member_name") or profile.get("preferred_name") or profile.get("first_name") or "the member"
+    field = " ".join(
+        part for part in [
+            profile.get("primary_field", "").strip(),
+            profile.get("specialization", "").strip(),
+        ] if part
+    ).strip() or profile.get("industry_domain", "").strip() or "the member's field of expertise"
+    role_line = " • ".join(
+        part for part in [
+            profile.get("current_title", "").strip(),
+            profile.get("current_employer", "").strip(),
+        ] if part
+    )
+    strengths = [item.get("criterion_name") or item.get("name") for item in case_payload.get("criteria_summary", []) if int(item.get("evidence_count") or 0) > 0]
+    evidence_titles = [item.get("title") or item.get("file_name") for item in case_payload.get("evidence_files", [])[:6] if item.get("title") or item.get("file_name")]
+    planner_focus = [item.get("description") for item in case_payload.get("planner_items", [])[:3] if item.get("description")]
+
+    defaults = {
+        "who_you_are": "You are an expert EB1A Attorney looking at multiple successful cases. Write down the endeavor letter so that USCIS officer is convinced naturally without RFE.",
+        "field_of_expertise": field,
+        "proposed_endeavor": f"{member_name} will continue advancing {field} in the United States through ongoing professional work, technical leadership, and field-shaping contributions.",
+        "current_work_continuity": f"The letter should connect the proposed endeavor directly to {role_line or 'the member’s current professional responsibilities'} and prior evidence-backed achievements.",
+        "future_work_plan": " ".join(planner_focus) or "Explain the specific work the member plans to continue in the United States over the near and medium term, including applied innovation, publications, judging, mentoring, and other lawful field contributions where supported.",
+        "national_importance": f"Explain why this work matters in the United States, focusing on practical impact, innovation, sector value, and downstream benefit rather than generic praise. Relevant domain: {profile.get('industry_domain', '').strip() or field}.",
+        "evidence_emphasis": "; ".join(evidence_titles) or "Use the uploaded evidence set to ground the member's prior achievements, role progression, recognition, and future work trajectory.",
+        "attorney_strategy_notes": f"Emphasize continuity, credibility, and a fact-grounded future plan. Strongest criterion areas currently reflected in the record: {', '.join(strengths[:4]) or 'use the strongest documented criteria first'}.",
+        "tone_guidance": "Write in first person, professional, concrete, and measured. Keep the storyline natural and cohesive. Avoid bullet points, numbered-list phrasing, overclaiming, speculation, and unsupported legal conclusions.",
+        "length_constraints": "Keep the final letter within two pages, roughly 700 to 900 words, and closely follow the attached endeavor-letter template format.",
+    }
+    cleaned = {}
+    raw = raw or {}
+    for key, default in defaults.items():
+        value = str(raw.get(key) or default).strip()
+        cleaned[key] = value or default
+    return cleaned
+
+
+def build_endeavor_letter_prompt(case_payload: dict, prompt_config: dict) -> str:
+    compact_payload = compact_endeavor_payload(case_payload)
+    return (
+        f"{prompt_config.get('who_you_are', '').strip()} "
+        "You are helping an EB1A attorney portal draft a member-specific endeavor letter. "
+        "Use the attached-style format only as a template shell, but do not reuse or echo any original source-letter facts or wording. "
+        "Write a fresh first-person letter grounded only in the provided member profile, structured evidence metadata, parsed document excerpts, planner history, and recent case context. "
+        "The final letter must stay within two pages, be concrete, fact-based, and useful for an EB1A filing record. "
+        "Do not invent employers, metrics, publications, projects, awards, or future plans that are not reasonably supported by the payload or attorney prompt guidance. "
+        "Use a formal letter structure with these elements: title, date line, USCIS reference lines, beneficiary line, subject line, salutation, opening paragraph, four body paragraphs or paragraph groups, closing paragraph, and signature line. "
+        "The body should naturally cover: field and importance, established experience and continuity, proposed future endeavor in the United States, and direct U.S. benefit plus near-term continuation plan. "
+        "Do not write bullet points, numbered sections, list markers, or memo-style outline headings in the final letter. If you use headings in the JSON, keep them short, optional, and non-numbered. "
+        "Favor concise, evidence-backed prose and smooth transitions so the final letter reads as one natural storyline. "
+        "Return JSON only.\n\n"
+        f"Attorney prompt configuration JSON: {json.dumps(prompt_config)}\n\n"
+        f"Case payload JSON: {json.dumps(compact_payload)}"
+    )
+
+
 def normalize_petition_package(raw: dict, case_payload: dict) -> dict:
     fallback = fallback_petition_package(case_payload)
 
@@ -586,6 +856,280 @@ def normalize_petition_package(raw: dict, case_payload: dict) -> dict:
         "external_dependencies": ensure_list("external_dependencies"),
         "clarification_questions": ensure_list("clarification_questions"),
     }
+
+
+def fallback_endeavor_letter(case_payload: dict, prompt_config: dict) -> dict:
+    profile = case_payload.get("profile", {}) or {}
+    member_name = case_payload.get("member_name") or profile.get("preferred_name") or profile.get("first_name") or "Member"
+    role_line = " at ".join(
+        part for part in [
+            profile.get("current_title", "").strip(),
+            profile.get("current_employer", "").strip(),
+        ] if part
+    ) or profile.get("current_title", "").strip() or "the member's current professional role"
+    field = prompt_config.get("field_of_expertise") or profile.get("primary_field") or "the member's field of expertise"
+    strengths = [item.get("criterion_name") or item.get("name") for item in case_payload.get("criteria_summary", []) if int(item.get("evidence_count") or 0) > 0]
+    evidence_refs = [item.get("title") or item.get("file_name") for item in case_payload.get("evidence_files", [])[:4] if item.get("title") or item.get("file_name")]
+    sections = [
+        {
+            "heading": "",
+            "body": f"My field is {field}. I intend to continue applying this expertise in the United States through practical, high-impact work that addresses real needs in my domain. The work reflected in my record shows sustained progression, technical responsibility, and applied contributions rather than isolated activity.",
+        },
+        {
+            "heading": "",
+            "body": f"My proposed endeavor is a direct continuation of the same expertise reflected in my prior record and my current role as {role_line}. The evidence already uploaded in my case file, including {', '.join(evidence_refs[:3]) or 'the current documentary record'}, supports the continuity of my work, my recognition, and the areas in which I have already made meaningful contributions.",
+        },
+        {
+            "heading": "",
+            "body": prompt_config.get("proposed_endeavor") or f"I intend to continue advancing {field} in the United States through ongoing professional work, innovation, and field-level contributions that build naturally on my existing expertise.",
+        },
+        {
+            "heading": "",
+            "body": f"My continued work will benefit the United States because it applies proven expertise to important problems with operational, technical, and broader field value. The record already reflects evidence across {', '.join(strengths[:4]) or 'multiple EB1A criteria'}, and I intend to continue building on that foundation through concrete work, ongoing innovation, and responsible professional contributions in the United States.",
+        },
+    ]
+    return normalize_endeavor_letter(
+        {
+            "title": "Statement of Proposed Endeavor and Intention to Continue Work in the Area of Expertise",
+            "date_line": "Date: __________",
+            "re_line": "Re: Form I-140, EB-1A Extraordinary Ability Petition",
+            "beneficiary_line": f"Petitioner/Beneficiary: {member_name}",
+            "subject_line": f"Subject: Statement of Proposed Endeavor and Continuing Work in {field}",
+            "salutation": "Dear Officer:",
+            "opening_paragraph": f"I respectfully submit this statement to explain the work I have performed, the work I am performing now, and the work I intend to continue performing in the United States. My proposed endeavor remains in the same field of expertise reflected throughout my record, and it builds directly on my demonstrated experience, recognition, and ongoing professional responsibilities.",
+            "sections": sections,
+            "closing_paragraph": "For these reasons, I respectfully affirm my intention to continue working in my area of expertise in the United States and to build on the same field-specific contributions reflected in my petition record.",
+            "signature_line": member_name,
+        },
+        case_payload,
+        prompt_config,
+    )
+
+
+def normalize_endeavor_letter(raw: dict, case_payload: dict, prompt_config: dict) -> dict:
+    profile = case_payload.get("profile", {}) or {}
+    member_name = case_payload.get("member_name") or profile.get("preferred_name") or profile.get("first_name") or "Member"
+    sections = raw.get("sections") if isinstance(raw.get("sections"), list) else []
+    normalized_sections = []
+    fallback_headings = [
+        "",
+        "",
+        "",
+        "",
+    ]
+    for index in range(4):
+        candidate = sections[index] if index < len(sections) and isinstance(sections[index], dict) else {}
+        heading = clip_words(str(candidate.get("heading") or fallback_headings[index]).strip(), 10)
+        body = clip_words(str(candidate.get("body") or "").strip(), 130)
+        if not body:
+            body = clip_words((prompt_config.get("proposed_endeavor") or prompt_config.get("current_work_continuity") or "").strip(), 110)
+        normalized_sections.append({"heading": heading, "body": body})
+
+    letter = {
+        "title": clip_words(str(raw.get("title") or "Statement of Proposed Endeavor and Intention to Continue Work in the Area of Expertise").strip(), 18),
+        "date_line": str(raw.get("date_line") or "Date: __________").strip() or "Date: __________",
+        "re_line": clip_words(str(raw.get("re_line") or "Re: Form I-140, EB-1A Extraordinary Ability Petition").strip(), 14),
+        "beneficiary_line": clip_words(str(raw.get("beneficiary_line") or f"Petitioner/Beneficiary: {member_name}").strip(), 16),
+        "subject_line": clip_words(str(raw.get("subject_line") or f"Subject: Statement of Proposed Endeavor and Continuing Work in {prompt_config.get('field_of_expertise') or 'the area of expertise'}").strip(), 28),
+        "salutation": str(raw.get("salutation") or "Dear Officer:").strip() or "Dear Officer:",
+        "opening_paragraph": clip_words(str(raw.get("opening_paragraph") or "").strip(), 120),
+        "sections": normalized_sections,
+        "closing_paragraph": clip_words(str(raw.get("closing_paragraph") or "").strip(), 90),
+        "signature_line": clip_words(str(raw.get("signature_line") or member_name).strip(), 8),
+    }
+    if not letter["opening_paragraph"]:
+        letter["opening_paragraph"] = clip_words(
+            f"I respectfully submit this statement to describe the work I have performed, the work I am currently performing, and the work I intend to continue performing in the United States in {prompt_config.get('field_of_expertise') or 'my field of expertise'}.",
+            120,
+        )
+    if not letter["closing_paragraph"]:
+        letter["closing_paragraph"] = "I respectfully confirm my intention to continue this work in the United States."
+    letter["plain_text"] = render_endeavor_letter_text(letter)
+    letter["estimated_word_count"] = word_count(letter["plain_text"])
+    letter["estimated_page_count"] = max(1, (letter["estimated_word_count"] + 449) // 450)
+    if letter["estimated_page_count"] > 2:
+        letter["closing_paragraph"] = clip_words(letter["closing_paragraph"], 60)
+        letter["plain_text"] = render_endeavor_letter_text(letter)
+        letter["estimated_word_count"] = word_count(letter["plain_text"])
+        letter["estimated_page_count"] = max(1, (letter["estimated_word_count"] + 449) // 450)
+    return letter
+
+
+def render_endeavor_letter_text(letter: dict) -> str:
+    parts = [
+        letter.get("title", ""),
+        letter.get("date_line", ""),
+        "U.S. Citizenship and Immigration Services",
+        letter.get("re_line", ""),
+        letter.get("beneficiary_line", ""),
+        letter.get("subject_line", ""),
+        letter.get("salutation", ""),
+        letter.get("opening_paragraph", ""),
+    ]
+    for section in letter.get("sections", []):
+        if section.get("heading"):
+            parts.append(section.get("heading", ""))
+        parts.append(section.get("body", ""))
+    parts.extend([letter.get("closing_paragraph", ""), letter.get("signature_line", "")])
+    return "\n\n".join(part.strip() for part in parts if str(part).strip())
+
+
+def normalize_recommendation_prompt_config(raw: dict, case_payload: dict) -> dict:
+    profile = case_payload.get("profile", {}) or {}
+    project = case_payload.get("selected_project", {}) or {}
+    member_name = case_payload.get("member_name") or profile.get("preferred_name") or profile.get("first_name") or "the member"
+    project_title = project.get("title") or project.get("project_name") or project.get("contribution_title") or "the selected project"
+    criterion_name = project.get("criterion_name") or "the selected EB1A criterion"
+    field = " ".join(part for part in [profile.get("primary_field", ""), profile.get("specialization", "")] if str(part).strip()).strip()
+    field = field or profile.get("industry_domain", "") or "the member's field"
+    defaults = {
+        "who_you_are": "You are an expert EB1A attorney drafting a recommendation letter for review and signature by a recommender.",
+        "letter_kind": str(case_payload.get("letter_kind") or "independent").strip() or "independent",
+        "recommender_name": "Recommender Name",
+        "recommender_title": "Recommender Title",
+        "recommender_organization": "Recommender Organization",
+        "recommender_relationship": "Explain how the recommender knows the member and why their view is credible.",
+        "project_focus": f"Focus on {project_title} and connect it to {criterion_name}.",
+        "facts_to_confirm": "Confirm dates, project scope, member's personal contribution, measurable impact, and why the work mattered beyond routine job duties.",
+        "independence_guidance": "For independent letters, explain the recommender's independence and field authority. For dependent/project letters, explain firsthand knowledge and role-specific credibility.",
+        "attorney_strategy_notes": f"Ground every claim in the selected project and the evidence packet for {member_name}; avoid generic praise.",
+        "tone_guidance": "Professional, concrete, fact-based, and suitable for a recommender to review and sign. Do not overclaim or invent facts.",
+        "length_constraints": "Keep the letter around one to two pages with a natural opening, four concise body sections, and a signature block.",
+        "field_of_expertise": field,
+    }
+    cleaned = {}
+    raw = raw or {}
+    for key, default in defaults.items():
+        value = str(raw.get(key) or default).strip()
+        cleaned[key] = value or default
+    return cleaned
+
+
+def build_recommendation_letter_prompt(case_payload: dict, prompt_config: dict) -> str:
+    compact_payload = compact_recommendation_payload(case_payload)
+    return (
+        f"{prompt_config.get('who_you_are', '').strip()} "
+        "Draft a fresh EB1A recommendation/support letter grounded only in the supplied member profile, selected Critical Role or Original Contribution project, evidence metadata, parsed excerpts, and attorney prompt fields. "
+        "The selected project is mandatory context; do not write a generic letter detached from that project. "
+        "The letter should be ready for attorney review and recommender signature, not addressed as a legal memo. "
+        "Do not invent employers, project names, metrics, awards, publications, or external validation not supported by the payload or attorney prompt. "
+        "Use formal letter format with date, USCIS addressee, RE line, salutation, opening paragraph, four body sections, closing paragraph, and signature line. "
+        "Return JSON only.\n\n"
+        f"Attorney prompt configuration JSON: {json.dumps(prompt_config)}\n\n"
+        f"Case payload JSON: {json.dumps(compact_payload)}"
+    )
+
+
+def fallback_recommendation_letter(case_payload: dict, prompt_config: dict) -> dict:
+    profile = case_payload.get("profile", {}) or {}
+    project = case_payload.get("selected_project", {}) or {}
+    member_name = case_payload.get("member_name") or profile.get("preferred_name") or profile.get("first_name") or "Member"
+    field = prompt_config.get("field_of_expertise") or profile.get("primary_field") or "the member's field"
+    project_title = project.get("title") or project.get("project_name") or project.get("contribution_title") or "the selected project"
+    criterion_name = project.get("criterion_name") or "the selected EB1A criterion"
+    recommender_name = prompt_config.get("recommender_name") or "Recommender Name"
+    recommender_title = prompt_config.get("recommender_title") or "Recommender Title"
+    recommender_org = prompt_config.get("recommender_organization") or "Recommender Organization"
+    relationship = prompt_config.get("recommender_relationship") or "I am familiar with the member's work through the selected project."
+    sections = [
+        {
+            "heading": "Basis for this recommendation",
+            "body": f"I am providing this letter based on my knowledge of {member_name}'s work in {field}. {relationship} My comments are focused on {project_title}, which relates to {criterion_name}.",
+        },
+        {
+            "heading": "Project and role",
+            "body": f"In connection with {project_title}, {member_name}'s role should be described through concrete responsibilities, dates, and the specific contribution that distinguished the work from routine participation.",
+        },
+        {
+            "heading": "Impact and significance",
+            "body": prompt_config.get("facts_to_confirm") or "The recommender should confirm measurable results, adoption, business value, field value, or other evidence showing why the contribution mattered.",
+        },
+        {
+            "heading": "Why this supports the petition",
+            "body": f"The facts above can help explain why {member_name}'s work supports {criterion_name}, especially when paired with independent evidence, project records, metrics, and the broader petition record.",
+        },
+    ]
+    return normalize_recommendation_letter(
+        {
+            "title": "Recommendation Letter",
+            "date_line": "Date: __________",
+            "re_line": f"Re: Recommendation for {member_name}",
+            "addressee_line": "U.S. Citizenship and Immigration Services",
+            "salutation": "Dear Officer:",
+            "opening_paragraph": f"I am pleased to provide this recommendation in support of {member_name}. I currently serve as {recommender_title} at {recommender_org}.",
+            "sections": sections,
+            "closing_paragraph": f"For these reasons, I believe {member_name}'s work on {project_title} is meaningful and should be considered as part of the overall EB1A record.",
+            "signature_line": f"{recommender_name}\n{recommender_title}\n{recommender_org}",
+        },
+        case_payload,
+        prompt_config,
+    )
+
+
+def normalize_recommendation_letter(raw: dict, case_payload: dict, prompt_config: dict) -> dict:
+    project = case_payload.get("selected_project", {}) or {}
+    member_name = case_payload.get("member_name") or (case_payload.get("profile", {}) or {}).get("preferred_name") or "Member"
+    project_title = project.get("title") or project.get("project_name") or project.get("contribution_title") or "selected project"
+    sections = raw.get("sections") if isinstance(raw.get("sections"), list) else []
+    normalized_sections = []
+    fallback_headings = ["Basis for recommendation", "Project and personal role", "Impact and corroboration", "Petition relevance"]
+    for index in range(4):
+        candidate = sections[index] if index < len(sections) and isinstance(sections[index], dict) else {}
+        heading = clip_words(str(candidate.get("heading") or fallback_headings[index]).strip(), 8)
+        body = clip_words(str(candidate.get("body") or "").strip(), 150)
+        if not body:
+            body = clip_words((prompt_config.get("facts_to_confirm") or prompt_config.get("project_focus") or project_title).strip(), 120)
+        normalized_sections.append({"heading": heading, "body": body})
+    letter = {
+        "title": clip_words(str(raw.get("title") or "Recommendation Letter").strip(), 12),
+        "date_line": str(raw.get("date_line") or "Date: __________").strip() or "Date: __________",
+        "addressee_line": clip_words(str(raw.get("addressee_line") or "U.S. Citizenship and Immigration Services").strip(), 12),
+        "re_line": clip_words(str(raw.get("re_line") or f"Re: Recommendation for {member_name}").strip(), 18),
+        "salutation": str(raw.get("salutation") or "Dear Officer:").strip() or "Dear Officer:",
+        "opening_paragraph": clip_words(str(raw.get("opening_paragraph") or "").strip(), 120),
+        "sections": normalized_sections,
+        "closing_paragraph": clip_words(str(raw.get("closing_paragraph") or "").strip(), 90),
+        "signature_line": str(raw.get("signature_line") or prompt_config.get("recommender_name") or "Recommender Name").strip(),
+        "selected_project_title": project_title,
+        "letter_kind": prompt_config.get("letter_kind", "independent"),
+    }
+    if not letter["opening_paragraph"]:
+        letter["opening_paragraph"] = clip_words(f"I am pleased to provide this recommendation in support of {member_name}, with specific focus on {project_title}.", 120)
+    if not letter["closing_paragraph"]:
+        letter["closing_paragraph"] = f"I respectfully offer this letter for consideration with {member_name}'s petition record."
+    letter["plain_text"] = render_recommendation_letter_text(letter)
+    letter["estimated_word_count"] = word_count(letter["plain_text"])
+    letter["estimated_page_count"] = max(1, (letter["estimated_word_count"] + 449) // 450)
+    return letter
+
+
+def render_recommendation_letter_text(letter: dict) -> str:
+    parts = [
+        letter.get("title", ""),
+        letter.get("date_line", ""),
+        letter.get("addressee_line", ""),
+        letter.get("re_line", ""),
+        letter.get("salutation", ""),
+        letter.get("opening_paragraph", ""),
+    ]
+    for section in letter.get("sections", []):
+        if section.get("heading"):
+            parts.append(section.get("heading", ""))
+        parts.append(section.get("body", ""))
+    parts.extend([letter.get("closing_paragraph", ""), letter.get("signature_line", "")])
+    return "\n\n".join(part.strip() for part in parts if str(part).strip())
+
+
+def clip_words(text: str, max_words: int) -> str:
+    words = str(text or "").split()
+    if len(words) <= max_words:
+        return " ".join(words).strip()
+    clipped = " ".join(words[:max_words]).rstrip(" ,;:")
+    return f"{clipped}."
+
+
+def word_count(text: str) -> int:
+    return len(str(text or "").split())
 
 
 def fallback_support_ticket(ticket_payload: dict) -> dict:
@@ -831,12 +1375,79 @@ def select_relevant_references(question: str, references: list[dict]) -> list[di
 
 
 def extract_document_excerpt(file_name: str, content_type: str, file_bytes: bytes) -> str:
+    lower_name = file_name.lower()
+    if lower_name.endswith(".docx"):
+        excerpt = extract_docx_text(file_bytes)
+        if excerpt:
+            return excerpt[:18000]
+    if content_type == "application/pdf" or lower_name.endswith(".pdf"):
+        excerpt = extract_pdf_text(file_bytes)
+        if excerpt:
+            return excerpt[:18000]
     if content_type.startswith("text/") or file_name.lower().endswith((".txt", ".md", ".csv", ".json")):
         return file_bytes[:18000].decode("utf-8", errors="replace")
     decoded = file_bytes[:18000].decode("utf-8", errors="ignore")
     if decoded.strip():
         return decoded
     return "Document text could not be extracted automatically. Use filename, content type, and member context."
+
+
+def extract_docx_text(file_bytes: bytes) -> str:
+    try:
+        with zipfile.ZipFile(io_bytes(file_bytes)) as archive:
+            xml_bytes = archive.read("word/document.xml")
+    except (KeyError, OSError, zipfile.BadZipFile):
+        return ""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return ""
+    namespaces = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    paragraphs = []
+    for paragraph in root.findall(".//w:p", namespaces):
+        texts = [node.text or "" for node in paragraph.findall(".//w:t", namespaces)]
+        combined = "".join(texts).strip()
+        if combined:
+            paragraphs.append(combined)
+    return "\n".join(paragraphs)
+
+
+def extract_pdf_text(file_bytes: bytes) -> str:
+    extracted = []
+    for match in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", file_bytes, re.S):
+        stream = match.group(1)
+        for candidate in (stream, try_inflate(stream)):
+            if not candidate:
+                continue
+            text = decode_pdf_text_fragments(candidate)
+            if text:
+                extracted.append(text)
+        if len(" ".join(extracted)) > 18000:
+            break
+    return "\n".join(extracted)[:18000]
+
+
+def try_inflate(stream: bytes) -> bytes:
+    try:
+        return zlib.decompress(stream)
+    except zlib.error:
+        return b""
+
+
+def decode_pdf_text_fragments(stream: bytes) -> str:
+    fragments = []
+    for raw in re.findall(rb"\((.*?)\)", stream, re.S):
+        cleaned = raw.replace(rb"\\(", b"(").replace(rb"\\)", b")").replace(rb"\\n", b" ").replace(rb"\\r", b" ")
+        text = cleaned.decode("latin-1", errors="ignore")
+        text = re.sub(r"\s+", " ", text).strip()
+        if text and any(ch.isalnum() for ch in text):
+            fragments.append(text)
+    return "\n".join(fragments[:120])
+
+
+def io_bytes(file_bytes: bytes):
+    from io import BytesIO
+    return BytesIO(file_bytes)
 
 
 def fallback_analysis(member_context: str, file_name: str, document_excerpt: str, criteria: list[dict]) -> dict:
@@ -881,7 +1492,7 @@ def normalize_analysis(raw: dict, criteria: list[dict], file_name: str, member_c
     if document_type not in DOCUMENT_TYPES:
         document_type = "Other"
     title = str(raw.get("title") or file_name.rsplit(".", 1)[0] or "Uploaded evidence").strip()
-    description = str(raw.get("ai_description") or member_context or "Evidence uploaded for Ascend review.").strip()
+    description = clean_evidence_description(raw.get("ai_description") or member_context or "Evidence uploaded for Ascend review.")
     return {
         "criterion_code": criterion["code"],
         "criterion_name": criterion["name"],
@@ -891,6 +1502,13 @@ def normalize_analysis(raw: dict, criteria: list[dict], file_name: str, member_c
         "quality_score": int(raw.get("quality_score") or 50),
         "confidence": int(raw.get("confidence") or 50),
     }
+
+
+def clean_evidence_description(value: str) -> str:
+    description = str(value or "").strip()
+    description = re.sub(r"^(?:evidence|document|file)\s*[:\-]\s*", "", description, flags=re.IGNORECASE).strip()
+    description = re.sub(r"^evidence\s+", "", description, flags=re.IGNORECASE).strip()
+    return description or "Evidence uploaded for Ascend review."
 
 
 def infer_document_type(combined: str) -> str:

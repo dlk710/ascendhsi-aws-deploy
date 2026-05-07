@@ -1,26 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-const runtimeApiUrl = window.ASCEND_RUNTIME_CONFIG?.apiUrl;
-const API_URL = runtimeApiUrl !== undefined ? runtimeApiUrl : window.ASCEND_API_URL || import.meta.env.VITE_ASCEND_API_URL || "http://127.0.0.1:8000";
+const API_URL = (window.ASCEND_RUNTIME_CONFIG?.apiUrl || window.ASCEND_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 const LOGO_URL = "https://ascendhsi.com/wp-content/uploads/2024/08/Ascend-logo-no-bg.webp";
 const AUTH_TOKEN_KEY = "ascend_member_token";
 const AUTH_MEMBER_KEY = "ascend_member_info";
 const ASSISTANT_SESSION_PREFIX = "ascend_assistant_thread_";
-const DEFAULT_QUICK_LOGIN_PASSWORD = "Ascend123!";
 const PORTAL_OPTIONS = [
-  { value: "member", label: "Member Portal", intro: "Sign in to manage evidence, keep your profile current, and stay aligned with Ascend on what comes next.", username: "vas@ascendhsi.com" },
-  { value: "builder", label: "Profile Builder Portal", intro: "Sign in to manage assigned members, push profile-building opportunities, and keep progress moving across your roster.", username: "builder@ascendhsi.com" },
-  { value: "leader", label: "Leader Portal", intro: "Sign in to review member progress across builders, rebalance assignments, and keep the broader operation moving.", username: "leader@ascendhsi.com" },
-  { value: "attorney", label: "Attorney Portal", intro: "Sign in to review the full client profile, assess gaps and strengths, and prepare petition strategy with complete context.", username: "attorney@ascendhsi.com" },
-  { value: "admin", label: "Admin Portal", intro: "Sign in to monitor system health, operational flow, user activity, and case movement across the platform.", username: "admin@ascendhsi.com" },
+  { value: "member", label: "Member Portal", intro: "Sign in to manage evidence, keep your profile current, and stay aligned with Ascend on what comes next." },
+  { value: "builder", label: "Profile Builder Portal", intro: "Sign in to manage assigned members, push profile-building opportunities, and keep progress moving across your roster." },
+  { value: "leader", label: "Leader Portal", intro: "Sign in to review member progress across builders, rebalance assignments, and keep the broader operation moving." },
+  { value: "attorney", label: "Attorney Portal", intro: "Sign in to review the full client profile, assess gaps and strengths, and prepare petition strategy with complete context." },
+  { value: "admin", label: "Admin Portal", intro: "Sign in to monitor system health, operational flow, user activity, and case movement across the platform." },
 ];
 const PORTAL_ROLE_VALUES = new Set(PORTAL_OPTIONS.map((item) => item.value));
 const STAFF_ROLE_VALUES = new Set(["leader", "attorney", "admin"]);
-const BUILDER_SECTIONS = new Set(["home", "members", "opportunities", "messages"]);
-const ATTORNEY_SECTIONS = new Set(["home", "dossier", "petition", "batch", "evidence", "messages"]);
-const LEADER_EXEC_SECTIONS = new Set(["home", "members", "risks", "capacity", "oversight", "opportunities", "batch", "messages"]);
-const ADMIN_SECTIONS = new Set(["home", "health", "costs", "issues", "support", "debug", "messages"]);
-const LOGIN_HELPERS_ENABLED = window.ASCEND_RUNTIME_CONFIG?.showDemoLogins !== false;
+const LOGIN_HELPERS_ENABLED = Boolean(window.ASCEND_RUNTIME_CONFIG?.showDemoLogins || window.ASCEND_SHOW_DEMO_LOGINS || ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname));
 const PREVIEW_ROLES = [];
 const PREVIEW_ACCOUNTS = {
   leader: [
@@ -36,11 +30,11 @@ const PREVIEW_ACCOUNTS = {
   ],
 };
 const DEV_LOGIN_ACCOUNTS = {
-  member: [{ username: "vas@ascendhsi.com", email: "vas@ascendhsi.com", display_name: "Member", password: DEFAULT_QUICK_LOGIN_PASSWORD }],
-  builder: [{ username: "builder@ascendhsi.com", email: "builder@ascendhsi.com", display_name: "Profile Builder", password: DEFAULT_QUICK_LOGIN_PASSWORD }],
-  leader: PREVIEW_ACCOUNTS.leader.map((account) => ({ ...account, password: DEFAULT_QUICK_LOGIN_PASSWORD })),
-  attorney: PREVIEW_ACCOUNTS.attorney.map((account) => ({ ...account, password: DEFAULT_QUICK_LOGIN_PASSWORD })),
-  admin: PREVIEW_ACCOUNTS.admin.map((account) => ({ ...account, password: DEFAULT_QUICK_LOGIN_PASSWORD })),
+  member: [{ username: "vas@ascendhsi.com", email: "vas@ascendhsi.com", display_name: "Member" }],
+  builder: [{ username: "builder@ascendhsi.com", email: "builder@ascendhsi.com", display_name: "Profile Builder" }],
+  leader: PREVIEW_ACCOUNTS.leader,
+  attorney: PREVIEW_ACCOUNTS.attorney,
+  admin: PREVIEW_ACCOUNTS.admin,
 };
 const PLANNER_STATUS_OPTIONS = [
   { value: "planned", label: "Planned" },
@@ -65,6 +59,19 @@ const DOCUMENT_TYPE_OPTIONS = [
   "Other",
 ];
 const DOMAIN_OPTIONS = ["Healthcare", "Insurance", "Pharma", "Technology", "Other"];
+const EMPLOYMENT_TYPE_OPTIONS = ["W-2 / Full-time", "Contract", "Part-time", "Consulting", "Volunteer", "Founder", "Other"];
+const PROJECT_STATUS_OPTIONS = ["Active", "Completed", "Launched", "In planning", "On hold", "Other"];
+const CONTRIBUTION_CATEGORY_OPTIONS = ["Work-related", "Research", "Grant work", "Entrepreneurship", "External collaboration", "Nonprofit", "Other"];
+const MEMBER_VIEW_TYPES = new Set(["home", "workspace", "profile", "critical_roles", "original_contributions", "planner", "intake", "messages"]);
+const BUILDER_SECTIONS = new Set(["home", "members", "opportunities", "messages"]);
+const ATTORNEY_SECTIONS = new Set(["home", "dossier", "petition", "endeavor", "recommendations", "batch", "evidence", "messages"]);
+const LEADER_EXEC_SECTIONS = new Set(["home", "members", "risks", "capacity", "timeline", "backlog", "oversight", "opportunities", "batch", "messages"]);
+const ADMIN_SECTIONS = new Set(["home", "health", "costs", "support", "issues", "debug", "messages"]);
+const LEADER_PERSPECTIVES = new Set(["leader", "builder", "attorney"]);
+const SIDEBAR_WIDTH_KEY = "ascend_sidebar_width";
+const SIDEBAR_MIN_WIDTH = 220;
+const SIDEBAR_MAX_WIDTH = 420;
+const DESKTOP_SIDEBAR_BREAKPOINT = 1100;
 
 const FOLDER_COLORS = {
   Emerald: "#2f7d67",
@@ -174,12 +181,42 @@ const VISA_COMPASS_QUESTIONS = [
 ];
 
 const VISA_PATH_INFO = {
-  eb1a: { label: "EB-1A", title: "Extraordinary Ability Green Card", summary: "Best when the record shows sustained acclaim, strong third-party recognition, and multiple documented EB-1A criteria.", next: "Map your evidence into awards, judging, original contributions, critical role, media, authorship, high salary, and related categories." },
-  niw: { label: "EB-2 NIW", title: "National Interest Waiver", summary: "Best when your work has national importance, you are well positioned to advance it, and the U.S. benefits from waiving employer sponsorship.", next: "Clarify the proposed endeavor, national importance, credentials, impact proof, and independent recommendation support." },
-  o1: { label: "O-1", title: "Extraordinary Ability Temporary Visa", summary: "Best when strong recognition exists and a petitioner or work arrangement can support a temporary U.S. work path.", next: "Organize acclaim, expert letters, work itinerary, press, judging, awards, and critical project proof." },
-  h1b: { label: "H-1B", title: "Specialty Occupation", summary: "Best when a U.S. employer can sponsor a role that requires specialized education or equivalent experience.", next: "Confirm role requirements, degree fit, employer sponsorship readiness, and timing constraints." },
-  l1: { label: "L-1", title: "Company Transfer", summary: "Best when you have qualifying work for a foreign company and a related U.S. entity can receive you.", next: "Document company relationship, prior employment, executive/manager or specialized knowledge role, and U.S. role plan." },
-  e2: { label: "E-2", title: "Treaty Investor", summary: "Best when nationality, investment, ownership, and active business operation requirements can be satisfied.", next: "Confirm treaty eligibility, investment source, operating plan, ownership/control, and business viability." },
+  eb1a: {
+    label: "EB-1A",
+    title: "Extraordinary Ability Green Card",
+    summary: "Best when the record shows sustained acclaim, strong third-party recognition, and multiple documented EB-1A criteria.",
+    next: "Map your evidence into awards, judging, original contributions, critical role, media, authorship, high salary, and related categories.",
+  },
+  niw: {
+    label: "EB-2 NIW",
+    title: "National Interest Waiver",
+    summary: "Best when your work has national importance, you are well positioned to advance it, and the U.S. benefits from waiving employer sponsorship.",
+    next: "Clarify the proposed endeavor, national importance, credentials, impact proof, and independent recommendation support.",
+  },
+  o1: {
+    label: "O-1",
+    title: "Extraordinary Ability Temporary Visa",
+    summary: "Best when strong recognition exists and a petitioner or work arrangement can support a temporary U.S. work path.",
+    next: "Organize acclaim, expert letters, work itinerary, press, judging, awards, and critical project proof.",
+  },
+  h1b: {
+    label: "H-1B",
+    title: "Specialty Occupation",
+    summary: "Best when a U.S. employer can sponsor a role that requires specialized education or equivalent experience.",
+    next: "Confirm role requirements, degree fit, employer sponsorship readiness, and timing constraints.",
+  },
+  l1: {
+    label: "L-1",
+    title: "Company Transfer",
+    summary: "Best when you have qualifying work for a foreign company and a related U.S. entity can receive you.",
+    next: "Document company relationship, prior employment, executive/manager or specialized knowledge role, and U.S. role plan.",
+  },
+  e2: {
+    label: "E-2",
+    title: "Treaty Investor",
+    summary: "Best when nationality, investment, ownership, and active business operation requirements can be satisfied.",
+    next: "Confirm treaty eligibility, investment source, operating plan, ownership/control, and business viability.",
+  },
 };
 
 function authToken() {
@@ -223,6 +260,12 @@ function normalizePortalRole(role) {
   return PORTAL_ROLE_VALUES.has(cleaned) ? cleaned : "";
 }
 
+function readStoredSidebarWidth() {
+  const parsed = Number(window.localStorage.getItem(SIDEBAR_WIDTH_KEY) || 256);
+  if (!Number.isFinite(parsed)) return 256;
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, parsed));
+}
+
 function roleConfig(role) {
   return role === "builder"
     ? {
@@ -250,70 +293,17 @@ function portalMeta(role) {
   return PORTAL_OPTIONS.find((item) => item.value === role) || PORTAL_OPTIONS[0];
 }
 
-function requestedPortalSection(role, fallback = "home") {
-  const requested = new URLSearchParams(window.location.search).get("section") || fallback;
-  const allowed = {
-    builder: BUILDER_SECTIONS,
-    leader: LEADER_EXEC_SECTIONS,
-    attorney: ATTORNEY_SECTIONS,
-    admin: ADMIN_SECTIONS,
-  };
-  return allowed[role]?.has(requested) ? requested : fallback;
-}
-
-const MEMBER_PAGE_ALIASES = {
-  home: "home",
-  profile: "profile",
-  planner: "planner",
-  events: "planner",
-  event_planner: "planner",
-  "event-planner": "planner",
-  intake: "intake",
-  evidence_intake: "intake",
-  "evidence-intake": "intake",
-  messages: "messages",
-};
-
-function requestedMemberView(criteria = []) {
-  const params = new URLSearchParams(window.location.search);
-  const criterion = params.get("criterion") || "";
-  const folder = params.get("folder") || "";
-  const rawPage = (params.get("page") || "home").trim().toLowerCase();
-  if (criterion) {
-    const knownCriterion = !criteria.length || criteria.some((item) => item.code === criterion);
-    return {
-      view: knownCriterion ? { type: "workspace", criterionCode: criterion } : { type: "home", criterionCode: "" },
-      folderId: knownCriterion ? folder : "",
-      invalidPage: knownCriterion ? "" : criterion,
-      invalidKind: knownCriterion ? "" : "criterion",
-    };
-  }
-  const page = MEMBER_PAGE_ALIASES[rawPage];
-  if (page) return { view: { type: page, criterionCode: "" }, folderId: "", invalidPage: "", invalidKind: "" };
-  return { view: { type: "home", criterionCode: "" }, folderId: "", invalidPage: rawPage, invalidKind: "page" };
-}
-
-function readPortalRoute() {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    portal: normalizePortalRole(params.get("portal") || ""),
-    page: params.get("page") || "",
-    section: params.get("section") || "",
-    memberId: params.get("member") || "",
-  };
-}
-
 function isPreviewRole(role) {
   return PREVIEW_ROLES.includes(role);
 }
 
 function previewIdentity(role, username = "") {
   const account = (PREVIEW_ACCOUNTS[role] || []).find((item) => item.username === username) || (PREVIEW_ACCOUNTS[role] || [])[0];
-  const meta = portalMeta(role);
+  const fallbackAccount = (DEV_LOGIN_ACCOUNTS[role] || [])[0] || {};
   return {
-    account_id: `preview_${role}_${(account?.username || meta.username).replace(/[^a-z0-9]+/gi, "_")}`,
-    username: account?.username || meta.username,
-    email: account?.email || meta.username,
+    account_id: `preview_${role}_${(account?.username || fallbackAccount.username || role).replace(/[^a-z0-9]+/gi, "_")}`,
+    username: account?.username || fallbackAccount.username || "",
+    email: account?.email || fallbackAccount.email || "",
     display_name: account?.display_name || (role === "leader" ? "Ava Morales" : role === "attorney" ? "Sophia Chen" : "Maya Thompson"),
     role,
   };
@@ -735,10 +725,13 @@ function visaCompassResult(answers) {
       if (option.reason) reasons.push(option.reason);
     });
   });
-  const ranked = Object.entries(scores).map(([key, score]) => ({ key, score, ...(VISA_PATH_INFO[key] || {}) })).sort((left, right) => right.score - left.score);
+  const ranked = Object.entries(scores)
+    .map(([key, score]) => ({ key, score, ...(VISA_PATH_INFO[key] || {}) }))
+    .sort((left, right) => right.score - left.score);
   const top = ranked[0] || { key: "eb1a", score: 0, ...VISA_PATH_INFO.eb1a };
   const second = ranked[1] || { key: "niw", score: 0, ...VISA_PATH_INFO.niw };
-  const readinessScore = Math.min(99, Math.max(18, Math.round((top.score / Math.max(1, VISA_COMPASS_QUESTIONS.length * 5)) * 100)));
+  const maxScore = Math.max(1, VISA_COMPASS_QUESTIONS.length * 5);
+  const readinessScore = Math.min(99, Math.max(18, Math.round((top.score / maxScore) * 100)));
   return {
     top_match: top.key,
     match_label: top.label,
@@ -775,7 +768,8 @@ function AscendVisaCompass() {
     setAnswers((current) => {
       if (question.type === "multi") {
         const existing = Array.isArray(current[question.id]) ? current[question.id] : [];
-        return { ...current, [question.id]: existing.includes(value) ? existing.filter((item) => item !== value) : [...existing, value] };
+        const next = existing.includes(value) ? existing.filter((item) => item !== value) : [...existing, value];
+        return { ...current, [question.id]: next };
       }
       return { ...current, [question.id]: value };
     });
@@ -798,7 +792,11 @@ function AscendVisaCompass() {
         source_url: window.location.href,
         answers,
         result,
-        metadata: { answered_count: answeredCount, tool: "Ascend Visa Compass", version: "2026-05-07" },
+        metadata: {
+          answered_count: answeredCount,
+          tool: "Ascend Visa Compass",
+          version: "2026-05-07",
+        },
       });
       if (!response.ok) {
         setLeadError(response.payload?.error || "Please enter a valid email to view your result.");
@@ -831,21 +829,42 @@ function AscendVisaCompass() {
         <span>{progress}%</span>
       </div>
       <div className="visa-progress"><span style={{ width: `${progress}%` }} /></div>
+
       {!isComplete ? (
         <div className="visa-question-panel">
-          <div className="visa-step-row"><span>{currentQuestion.eyebrow} of {VISA_COMPASS_QUESTIONS.length}</span><strong>{currentQuestion.type === "multi" ? "Select all that apply" : "Choose one"}</strong></div>
+          <div className="visa-step-row">
+            <span>{currentQuestion.eyebrow} of {VISA_COMPASS_QUESTIONS.length}</span>
+            <strong>{currentQuestion.type === "multi" ? "Select all that apply" : "Choose one"}</strong>
+          </div>
           <h3>{currentQuestion.question}</h3>
           <p>{currentQuestion.helper}</p>
           <div className="visa-option-grid">
             {currentQuestion.options.map((option) => {
               const value = answers[currentQuestion.id];
               const active = Array.isArray(value) ? value.includes(option.value) : value === option.value;
-              return <button key={option.value} className={`visa-option ${active ? "active" : ""}`} type="button" onClick={() => chooseAnswer(currentQuestion, option.value)}><strong>{option.label}</strong><span>{option.detail}</span></button>;
+              return (
+                <button
+                  key={option.value}
+                  className={`visa-option ${active ? "active" : ""}`}
+                  type="button"
+                  onClick={() => chooseAnswer(currentQuestion, option.value)}
+                >
+                  <strong>{option.label}</strong>
+                  <span>{option.detail}</span>
+                </button>
+              );
             })}
           </div>
           <div className="visa-compass-actions">
             <button className="ghost compact-btn" type="button" disabled={step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>Back</button>
-            <button className="primary compact-btn" type="button" disabled={!questionAnswered(currentQuestion)} onClick={() => setStep((value) => Math.min(VISA_COMPASS_QUESTIONS.length - 1, value + 1))}>{step === VISA_COMPASS_QUESTIONS.length - 1 ? "Continue" : "Next"}</button>
+            <button
+              className="primary compact-btn"
+              type="button"
+              disabled={!questionAnswered(currentQuestion)}
+              onClick={() => setStep((value) => Math.min(VISA_COMPASS_QUESTIONS.length - 1, value + 1))}
+            >
+              {step === VISA_COMPASS_QUESTIONS.length - 1 ? "Continue" : "Next"}
+            </button>
           </div>
         </div>
       ) : !leadCaptured ? (
@@ -865,17 +884,73 @@ function AscendVisaCompass() {
       ) : (
         <div className="visa-result-panel">
           <p className="eyebrow">Your first-pass match</p>
-          <div className="visa-result-hero"><span>{result.match_label}</span><strong>{result.readiness_score}% signal fit</strong></div>
+          <div className="visa-result-hero">
+            <span>{result.match_label}</span>
+            <strong>{result.readiness_score}% signal fit</strong>
+          </div>
           <h3>{result.title}</h3>
           <p>{result.summary}</p>
-          <div className="visa-result-grid"><div><strong>Runner-up path</strong><span>{result.runner_up.label} • {result.runner_up.title}</span></div><div><strong>Recommended next step</strong><span>{result.next}</span></div></div>
-          <div className="visa-reason-list">{result.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div>
+          <div className="visa-result-grid">
+            <div>
+              <strong>Runner-up path</strong>
+              <span>{result.runner_up.label} • {result.runner_up.title}</span>
+            </div>
+            <div>
+              <strong>Recommended next step</strong>
+              <span>{result.next}</span>
+            </div>
+          </div>
+          <div className="visa-reason-list">
+            {result.reasons.map((reason) => <span key={reason}>{reason}</span>)}
+          </div>
           <p className="visa-disclaimer">This is a product intake screen, not legal advice. Ascend and an attorney should review your documents before any filing decision.</p>
-          <div className="visa-compass-actions"><button className="ghost compact-btn" type="button" onClick={resetCompass}>Start over</button><button className="primary compact-btn" type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>Start Ascend Portal</button></div>
+          <div className="visa-compass-actions">
+            <button className="ghost compact-btn" type="button" onClick={resetCompass}>Start over</button>
+            <button className="primary compact-btn" type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>Start Ascend Portal</button>
+          </div>
         </div>
       )}
     </section>
   );
+}
+
+function confirmDeleteAction(primaryMessage, finalMessage = "This will move the item to archive storage. Do you want to continue?") {
+  if (!window.confirm(primaryMessage)) return false;
+  return window.confirm(finalMessage);
+}
+
+function readPortalRoute() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    portal: params.get("portal") || "",
+    page: params.get("page") || "",
+    section: params.get("section") || "",
+    perspective: params.get("perspective") || "",
+    memberId: params.get("member") || "",
+    criterion: params.get("criterion") || "",
+    folderId: params.get("folder") || "",
+  };
+}
+
+function memberViewForCriterion(code) {
+  if (code === "leading_critical_role") return { type: "critical_roles", criterionCode: "" };
+  if (code === "original_contributions") return { type: "original_contributions", criterionCode: "" };
+  return { type: "workspace", criterionCode: code || "" };
+}
+
+function criterionAccent(code) {
+  return {
+    awards: "#c58a2f",
+    memberships: "#7c6db3",
+    published_material: "#4f86c6",
+    judging: "#2d7d68",
+    original_contributions: "#b95c42",
+    scholarly_articles: "#5d7f9a",
+    leading_critical_role: "#1f6b57",
+    high_salary: "#a46a2a",
+    comparable_evidence: "#7a8a45",
+    other: "#7c8792",
+  }[code || "other"] || "#7c8792";
 }
 
 function formatUploadedAt(value) {
@@ -890,6 +965,31 @@ function formatDateTime(value) {
   const date = new Date(String(value).replace(" ", "T"));
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString([], { month: "short", day: "2-digit", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function renderLinkedMessageText(text) {
+  const raw = String(text || "");
+  if (!raw) return null;
+  const parts = raw.split(/(https?:\/\/[^\s]+|\/api\/[^\s]+)/g);
+  return parts.map((part, index) => {
+    if (/^https?:\/\//.test(part)) {
+      return <a key={`msg_link_${index}`} className="message-link" href={part} target="_blank" rel="noreferrer">{part}</a>;
+    }
+    if (/^\/api\//.test(part)) {
+      return <a key={`msg_link_${index}`} className="message-link" href={`${API_URL}${part}`} target="_blank" rel="noreferrer">{part}</a>;
+    }
+    return <React.Fragment key={`msg_text_${index}`}>{part}</React.Fragment>;
+  });
+}
+
+function actorMessageKeys(member) {
+  if (!member) return new Set();
+  return new Set([
+    member.storage_key,
+    member.numeric_identifier ? String(member.numeric_identifier) : "",
+    member.legacy_key,
+    member.role === "member" ? member.client_id : member.email,
+  ].filter(Boolean).map((item) => String(item).trim()));
 }
 
 function formatMoney(value, currency = "USD") {
@@ -913,6 +1013,17 @@ function formatResponseMs(value) {
   if (!amount) return "N/A";
   if (amount >= 1000) return `${(amount / 1000).toFixed(amount >= 2000 ? 1 : 2)}s`;
   return `${Math.round(amount)}ms`;
+}
+
+function browserTimingSnapshot() {
+  const navigation = window.performance?.getEntriesByType?.("navigation")?.[0];
+  if (!navigation) return {};
+  const responseMs = Math.max(0, Math.round((navigation.responseEnd || 0) - (navigation.requestStart || 0)));
+  const interactiveMs = Math.max(0, Math.round((navigation.domInteractive || 0) - (navigation.startTime || 0)));
+  return {
+    navigation_response_ms: responseMs,
+    dom_interactive_ms: interactiveMs,
+  };
 }
 
 function healthStatusClass(status) {
@@ -947,10 +1058,14 @@ function supportCategoryClass(category) {
   const normalized = String(category || "other").toLowerCase();
   if (normalized.includes("login") || normalized.includes("auth")) return "support-category-auth";
   if (normalized.includes("upload") || normalized.includes("evidence") || normalized.includes("storage")) return "support-category-evidence";
-  if (normalized.includes("ai") || normalized.includes("assistant")) return "support-category-ai";
-  if (normalized.includes("message") || normalized.includes("email")) return "support-category-message";
+  if (normalized.includes("ai") || normalized.includes("classification")) return "support-category-ai";
+  if (normalized.includes("message") || normalized.includes("communication")) return "support-category-message";
   if (normalized.includes("bug") || normalized.includes("error")) return "support-category-bug";
   return "support-category-other";
+}
+
+function compareText(left, right) {
+  return String(left || "").localeCompare(String(right || ""), undefined, { sensitivity: "base" });
 }
 
 function cleanSummary(value) {
@@ -1020,6 +1135,42 @@ function emptyPlannerForm() {
   };
 }
 
+function emptyEndeavorPromptForm() {
+  return {
+    who_you_are: "You are an expert EB1A Attorney looking at multiple successful cases. Write down the endeavor letter so that USCIS officer is convinced naturally without RFE.",
+    field_of_expertise: "",
+    proposed_endeavor: "",
+    current_work_continuity: "",
+    future_work_plan: "",
+    national_importance: "",
+    evidence_emphasis: "",
+    attorney_strategy_notes: "",
+    tone_guidance: "Write in first person, professional, concrete, and measured. Keep the storyline natural and cohesive. Avoid bullet points, numbered-list phrasing, overclaiming, speculation, and unsupported legal conclusions.",
+    length_constraints: "Keep the final letter within two pages, roughly 700 to 900 words, and closely follow the endeavor-letter template format.",
+  };
+}
+
+function buildEndeavorPromptDefaults(member, detail, evidenceItems) {
+  const form = emptyEndeavorPromptForm();
+  const profile = detail?.profile || {};
+  const criteria = detail?.criteria || [];
+  const strongCriteria = criteria.filter((item) => item.evidence_count).sort((left, right) => right.evidence_count - left.evidence_count).slice(0, 4);
+  const evidenceTitles = (evidenceItems || []).slice(0, 6).map((item) => item.title || item.file_name).filter(Boolean);
+  const fieldBits = [profile.primary_field, profile.specialization].filter(Boolean);
+  const fieldLabel = fieldBits.join(" • ") || profile.industry_domain || member?.primary_field || "the member's field of expertise";
+  const roleLine = [profile.current_title || member?.current_title, profile.current_employer || member?.current_employer].filter(Boolean).join(" at ");
+  return {
+    ...form,
+    field_of_expertise: fieldLabel,
+    proposed_endeavor: `${member?.display_name || "The member"} should continue advancing ${fieldLabel} in the United States through ongoing professional work, technical leadership, and field-shaping contributions.`,
+    current_work_continuity: `Connect the proposed endeavor directly to ${roleLine || "the member's current professional responsibilities"}, prior evidence-backed achievements, and the same area of recognized expertise already reflected in the record.`,
+    future_work_plan: profile.top_achievements || profile.proposed_final_merits_summary || "Describe the specific work the member plans to continue in the United States over the near and medium term, including applied innovation, publications, judging, mentoring, and other lawful field contributions where supported.",
+    national_importance: `Explain why this work matters in the United States, focusing on practical impact, innovation, sector value, and downstream benefit. Domain context: ${profile.industry_domain || fieldLabel}.`,
+    evidence_emphasis: evidenceTitles.length ? `Ground the letter in these uploaded materials where relevant: ${evidenceTitles.join("; ")}.` : "Use the uploaded evidence set to ground the member's prior achievements, role progression, recognition, and future work trajectory.",
+    attorney_strategy_notes: `Emphasize continuity, credibility, and a fact-grounded future plan. Strongest criterion areas currently reflected in the record: ${strongCriteria.length ? strongCriteria.map((item) => item.name).join(", ") : "use the strongest documented criteria first"}.`,
+  };
+}
+
 function emptyPlannerRow() {
   return {
     id: `draft_${Math.random().toString(36).slice(2, 10)}`,
@@ -1076,6 +1227,127 @@ function emptyProfileForm() {
     target_filing_window: "",
     profile_confirmed: false,
   };
+}
+
+function emptyCriticalRoleProjectForm() {
+  return {
+    id: "",
+    organization_name: "",
+    organization_unit: "",
+    organization_location: "",
+    organization_website: "",
+    employment_type: "",
+    role_title: "",
+    role_start_date: "",
+    role_end_date: "",
+    is_current_role: false,
+    project_name: "",
+    project_start_date: "",
+    project_end_date: "",
+    project_status: "Active",
+    organization_achievements: "",
+    organization_distinctiveness: "",
+    role_summary: "",
+    role_responsibilities: "",
+    role_evolution: "",
+    leadership_scope: "",
+    cross_functional_partners: "",
+    project_summary: "",
+    business_need: "",
+    strategic_importance: "",
+    contributions_summary: "",
+    innovation_originality: "",
+    business_value_summary: "",
+    quantitative_metrics: "",
+    revenue_impact: "",
+    cost_savings: "",
+    efficiency_gain: "",
+    user_or_customer_impact: "",
+    market_or_geographic_impact: "",
+    compliance_or_risk_impact: "",
+    peer_distinction_summary: "",
+    mentorship_leadership: "",
+    executive_visibility: "",
+    evidence_available: "",
+    attorney_friendly_summary: "",
+    workflow_status: "draft",
+  };
+}
+
+function hydrateCriticalRoleProject(project) {
+  return {
+    ...emptyCriticalRoleProjectForm(),
+    ...project,
+    is_current_role: Boolean(project?.is_current_role),
+    workflow_status: project?.workflow_status || "draft",
+  };
+}
+
+function formatCompactDate(value) {
+  if (!value) return "";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString([], { month: "short", year: "numeric" });
+}
+
+function formatProjectDateRange(start, end, isCurrent = false) {
+  const startLabel = formatCompactDate(start);
+  const endLabel = isCurrent ? "Present" : formatCompactDate(end);
+  if (startLabel && endLabel) return `${startLabel} to ${endLabel}`;
+  return startLabel || endLabel || "Dates not added yet";
+}
+
+function criticalRoleProjectCardMetric(project) {
+  return project.quantitative_metrics || project.business_value_summary || project.user_or_customer_impact || "Add measurable outcomes and business value.";
+}
+
+function emptyOriginalContributionForm() {
+  return {
+    id: "",
+    contribution_title: "",
+    contribution_category: "Work-related",
+    field_of_expertise: "",
+    job_title: "",
+    organization_name: "",
+    project_name: "",
+    contribution_start_date: "",
+    contribution_end_date: "",
+    contribution_status: "Completed",
+    originality_summary: "",
+    challenging_paradigms: "",
+    prior_state_of_field: "",
+    work_vs_external_context: "",
+    personal_role: "",
+    distinct_contribution_summary: "",
+    technical_or_business_problem: "",
+    solution_or_innovation: "",
+    unique_features: "",
+    impact_metrics: "",
+    adoption_scale: "",
+    beneficiary_summary: "",
+    time_savings: "",
+    cost_savings: "",
+    revenue_impact: "",
+    quality_or_risk_impact: "",
+    field_wide_impact: "",
+    recognition_and_influence: "",
+    media_or_public_mentions: "",
+    adoption_letters_targets: "",
+    evidence_available: "",
+    attorney_friendly_summary: "",
+    workflow_status: "draft",
+  };
+}
+
+function hydrateOriginalContribution(entry) {
+  return {
+    ...emptyOriginalContributionForm(),
+    ...entry,
+  };
+}
+
+function originalContributionCardMetric(entry) {
+  return entry.impact_metrics || entry.field_wide_impact || entry.adoption_scale || "Add the measurable impact of this contribution.";
 }
 
 function groupBatchItems(session) {
@@ -1173,15 +1445,47 @@ function emptyLeaderInviteForm() {
   };
 }
 
+function emptyFeatureRequestForm() {
+  return {
+    title: "",
+    request_type: "enhancement",
+    target_portals: "Leader Portal",
+    priority: "P1",
+    business_value: "",
+    description: "",
+    acceptance_criteria: "",
+    requested_by: "",
+    screenshots: [],
+  };
+}
+
 function emptyIssueLogForm() {
   return {
     title: "",
     portal: "Admin Portal",
-    section: "Issue Portal",
+    section: "Cost Explorer",
     priority: "P1",
     status: "open",
     description: "",
     reported_by: "",
+  };
+}
+
+function emptyRecommendationPromptForm() {
+  return {
+    letter_kind: "independent",
+    project_type: "",
+    project_id: "",
+    who_you_are: "You are an expert EB1A attorney drafting a recommendation letter for review and signature by a recommender.",
+    recommender_name: "",
+    recommender_title: "",
+    recommender_organization: "",
+    recommender_relationship: "",
+    facts_to_confirm: "Confirm dates, scope, personal contribution, measurable impact, and why this project matters.",
+    independence_guidance: "For independent letters, explain the recommender's independence and field authority. For dependent/project letters, explain firsthand knowledge and project-specific credibility.",
+    attorney_strategy_notes: "Ground the letter in the selected Critical Role or Original Contribution project and avoid generic praise.",
+    tone_guidance: "Professional, factual, concrete, and suitable for recommender signature.",
+    length_constraints: "Keep the letter around one to two pages.",
   };
 }
 
@@ -1251,275 +1555,6 @@ function MetricCard({ label, value }) {
   );
 }
 
-function roadmapStatusClass(status) {
-  const normalized = String(status || "").toLowerCase();
-  if (["complete", "completed", "active", "ready to generate", "available from organized evidence", "rfe-ready baseline", "exceptional", "strong"].includes(normalized)) return "completed";
-  if (["in_progress", "developing", "needs_input", "needs_work", "build more evidence first", "needs packet hardening", "planned", "optional"].includes(normalized)) return "planned";
-  return "blocked";
-}
-
-function RoadmapTimeline({ items = [] }) {
-  if (!items.length) return <p className="empty-state">Timeline will appear once the case record loads.</p>;
-  return (
-    <div className="roadmap-timeline">
-      {items.map((item) => (
-        <article key={item.label} className={`roadmap-timeline-step ${item.optional ? "optional" : ""}`}>
-          <span className={`status-dot ${roadmapStatusClass(item.status)}`} />
-          <strong>{item.label}</strong>
-          <small>{item.target_date}</small>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function MiniChecklist({ rows = [], emptyText = "No checklist rows available yet." }) {
-  if (!rows.length) return <p className="empty-state">{emptyText}</p>;
-  return (
-    <div className="roadmap-row-table">
-      {rows.map((row) => (
-        <article key={row.label || row.area} className="roadmap-row">
-          <div>
-            <strong>{row.label || row.area}</strong>
-            <small>{row.detail || row.next_step}</small>
-          </div>
-          <span className={`status-pill ${roadmapStatusClass(row.status)}`}>{String(row.status || "active").replaceAll("_", " ")}</span>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function CaseCommandCenter({ data, onOpenCriterion }) {
-  if (!data) return null;
-  const summary = data.summary || {};
-  const tracker = data.criterion_tracker || [];
-  return (
-    <section className="panel roadmap-panel">
-      <div className="panel-header">
-        <div>
-          <div className="section-kicker">EB1A Command Center</div>
-          <h3 className="section-title">Criterion readiness, gaps, and next steps</h3>
-          <p className="section-intro">A compact roadmap view that turns member-entered evidence into attorney-ready work queues.</p>
-        </div>
-        <span className="mini-note">{summary.target_state || "Evidence-building in progress"}</span>
-      </div>
-      <div className="roadmap-summary-grid">
-        <MetricCard label="Strong Criteria" value={summary.strong_criteria || 0} />
-        <MetricCard label="Started Criteria" value={summary.criteria_started || 0} />
-        <MetricCard label="Evidence Items" value={summary.evidence_count || 0} />
-        <MetricCard label="Readiness" value={`${summary.readiness_score || 0}%`} />
-      </div>
-      <div className="roadmap-grid">
-        <article className="roadmap-card roadmap-card-wide">
-          <div className="section-kicker">Filing Timeline</div>
-          <RoadmapTimeline items={data.timeline || []} />
-        </article>
-        <article className="roadmap-card">
-          <div className="section-kicker">Onboarding Intake</div>
-          <MiniChecklist rows={data.onboarding || []} />
-        </article>
-        <article className="roadmap-card">
-          <div className="section-kicker">Member Alerts</div>
-          <MiniChecklist rows={(data.notifications || []).map((item) => ({ label: item.title, detail: item.detail, status: item.type === "task" ? "in_progress" : "needs_input" }))} emptyText="No open alerts." />
-        </article>
-      </div>
-      <div className="roadmap-criterion-table">
-        <div className="roadmap-criterion-head"><span>Criterion</span><span>Strength</span><span>Evidence</span><span>Score</span><span>Next action</span></div>
-        {tracker.map((item) => (
-          <button key={item.code} type="button" className="roadmap-criterion-row" onClick={() => onOpenCriterion?.(item.code)}>
-            <strong>{item.name}</strong>
-            <span className={`status-pill ${roadmapStatusClass(item.strength_label)}`}>{item.strength_label}</span>
-            <span>{item.evidence_count}</span>
-            <span>{item.average_score || 0}</span>
-            <small>{item.next_prompt}</small>
-          </button>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function BuilderWorkbenchPanel({ workbench }) {
-  if (!workbench) return null;
-  return (
-    <section className="panel roadmap-panel panel-subsection">
-      <div className="panel-header">
-        <div>
-          <div className="section-kicker">Builder EB1A Workbench</div>
-          <h3 className="section-title">Narratives and evidence requests</h3>
-          <p className="section-intro">Roadmap-aligned queues for AI narrative drafting, member requests, and criterion gap closure.</p>
-        </div>
-      </div>
-      <div className="roadmap-grid">
-        <article className="roadmap-card">
-          <div className="section-kicker">AI Narrative Queue</div>
-          <div className="task-mini-list">
-            {(workbench.narrative_queue || []).map((item) => (
-              <article key={`${item.criterion_code}_${item.criterion_name}`} className="task-mini-item">
-                <strong>{item.criterion_name}</strong>
-                <p>{item.draft_focus}</p>
-                <div className="task-mini-meta"><span>{item.evidence_count} evidence</span><span>{item.strength_label}</span></div>
-              </article>
-            ))}
-          </div>
-        </article>
-        <article className="roadmap-card">
-          <div className="section-kicker">Evidence Request Queue</div>
-          <div className="task-mini-list">
-            {(workbench.evidence_request_queue || []).map((item) => (
-              <article key={`${item.title}_${item.criterion_code}`} className="task-mini-item">
-                <strong>{item.title}</strong>
-                <p>{item.detail}</p>
-                <div className="task-mini-meta"><span>{item.criterion_name}</span><span>{item.priority}</span><span>{item.due_date || "No due date"}</span></div>
-              </article>
-            ))}
-          </div>
-        </article>
-      </div>
-    </section>
-  );
-}
-
-function LegalWorkbenchPanel({ workbench, onGeneratePetition }) {
-  if (!workbench) return null;
-  const caseManagement = workbench.case_management || {};
-  return (
-    <section className="panel roadmap-panel panel-subsection">
-      <div className="panel-header">
-        <div>
-          <div className="section-kicker">Attorney Legal Workbench</div>
-          <h3 className="section-title">Filing audit, RFE readiness, and letters</h3>
-          <p className="section-intro">Keeps P1 legal workflow signals visible before the attorney commits to final petition drafting.</p>
-        </div>
-        {onGeneratePetition ? <button className="ghost compact-btn" type="button" onClick={onGeneratePetition}>Open petition draft</button> : null}
-      </div>
-      <div className="roadmap-summary-grid">
-        <MetricCard label="Legal Stage" value={caseManagement.stage || "Evidence build"} />
-        <MetricCard label="Strong Criteria" value={caseManagement.strong_criteria || 0} />
-        <MetricCard label="Criteria Started" value={caseManagement.criteria_started || 0} />
-        <MetricCard label="Est. Hours" value={workbench.time_tracking_summary?.estimated_review_hours || 0} />
-      </div>
-      <div className="roadmap-grid">
-        <article className="roadmap-card">
-          <div className="section-kicker">Pre-filing Checklist</div>
-          <MiniChecklist rows={workbench.pre_filing_checklist || []} />
-        </article>
-        <article className="roadmap-card">
-          <div className="section-kicker">RFE Contingency</div>
-          <p className="section-intro">{workbench.rfe_response?.detail}</p>
-          <RoadmapTimeline items={(workbench.rfe_response?.dotted_timeline || []).map((item) => ({ label: item.label, target_date: `${item.target_days} days`, status: "optional", optional: true }))} />
-        </article>
-        <article className="roadmap-card roadmap-card-wide">
-          <div className="section-kicker">Dependent Recommendation Letters</div>
-          <div className="roadmap-row-table">
-            {(workbench.recommendation_letters?.project_options || []).map((item) => (
-              <article key={`${item.id}_${item.criterion_code}`} className="roadmap-row">
-                <div>
-                  <strong>{item.title}</strong>
-                  <small>{item.criterion_name}</small>
-                </div>
-                <span className="status-pill planned">project mapped</span>
-              </article>
-            ))}
-          </div>
-        </article>
-      </div>
-    </section>
-  );
-}
-
-function LeaderBusinessPanel({ insights }) {
-  const performance = insights?.attorney_performance || [];
-  const revenueRows = insights?.revenue_analytics?.rows || [];
-  if (!performance.length && !revenueRows.length) return null;
-  return (
-    <section className="panel roadmap-panel" style={{ marginTop: "18px" }}>
-      <div className="panel-header">
-        <div>
-          <div className="section-kicker">Leader Product Intelligence</div>
-          <h3 className="section-title">Attorney capacity and revenue planning</h3>
-          <p className="section-intro">Portfolio-level signals for delivery speed, petition readiness, and operational exposure.</p>
-        </div>
-        <span className="mini-note">{insights?.revenue_analytics?.assumption || "Planning estimates only"}</span>
-      </div>
-      <div className="leader-business-grid">
-        <div className="roadmap-criterion-table">
-          <div className="leader-performance-head"><span>Attorney</span><span>Cases</span><span>Ready</span><span>Risk</span><span>Avg</span><span>Signal</span></div>
-          {performance.map((item) => (
-            <article key={item.id || item.display_name} className="leader-performance-row">
-              <strong>{item.display_name}</strong>
-              <span>{item.assigned_cases}</span>
-              <span>{item.petition_ready_cases}</span>
-              <span>{item.high_risk_cases}</span>
-              <span>{item.avg_readiness}%</span>
-              <span className={`status-pill ${item.capacity_signal === "Healthy" ? "completed" : item.capacity_signal === "Available" ? "planned" : "blocked"}`}>{item.capacity_signal}</span>
-            </article>
-          ))}
-        </div>
-        <div className="roadmap-row-table">
-          {revenueRows.map((row) => (
-            <article key={row.label} className="roadmap-row">
-              <div>
-                <strong>{row.label}</strong>
-                <small>{row.detail}</small>
-              </div>
-              <span>{formatMoney(row.value, insights?.revenue_analytics?.currency || "USD")}</span>
-            </article>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function AdminProductOpsPanel({ dashboard }) {
-  const productOps = dashboard?.product_ops;
-  const userManagement = dashboard?.user_management;
-  if (!productOps && !userManagement) return null;
-  const roleRows = Object.entries(userManagement?.roles || {}).map(([role, count]) => ({
-    label: role.replaceAll("_", " "),
-    detail: `${count} account(s)`,
-    status: count ? "active" : "planned",
-  }));
-  return (
-    <section className="panel roadmap-panel" style={{ marginTop: "18px" }}>
-      <div className="panel-header">
-        <div>
-          <div className="section-kicker">Product Ops Controls</div>
-          <h3 className="section-title">Roadmap P0/P1 admin coverage</h3>
-          <p className="section-intro">Issue Portal, Cost Explorer, System Health, user inventory, and audit logs in one admin control surface.</p>
-        </div>
-        <span className="mini-note">{userManagement?.total_accounts || 0} accounts tracked</span>
-      </div>
-      <div className="roadmap-grid">
-        <article className="roadmap-card">
-          <div className="section-kicker">Admin Readiness Rows</div>
-          <MiniChecklist rows={productOps?.readiness_rows || []} />
-        </article>
-        <article className="roadmap-card">
-          <div className="section-kicker">User Management Inventory</div>
-          <MiniChecklist rows={roleRows} />
-        </article>
-        <article className="roadmap-card roadmap-card-wide">
-          <div className="section-kicker">Recent Login Audit</div>
-          <div className="roadmap-row-table">
-            {(dashboard?.audit_log || []).slice(0, 5).map((item) => (
-              <article key={item.id || `${item.actor_key}_${item.created_at}`} className="roadmap-row">
-                <div>
-                  <strong>{item.actor_key || item.actor_role}</strong>
-                  <small>{item.portal || "system"} • {item.message || item.event_type}</small>
-                </div>
-                <span>{formatDateTime(item.created_at)}</span>
-              </article>
-            ))}
-          </div>
-        </article>
-      </div>
-    </section>
-  );
-}
-
 function ResponseSparkline({ points = [] }) {
   const values = points.map((point) => Number(point.ms) || 0);
   const maxValue = Math.max(...values, 1);
@@ -1539,77 +1574,6 @@ function ResponseSparkline({ points = [] }) {
         return <circle key={`${index}_${value}`} cx={x} cy={Math.max(4, Math.min(32, y))} r="2.2" />;
       })}
     </svg>
-  );
-}
-
-function IssueLogPanel({ backlog, form, busy, onFormChange, onSubmit, onUpdate, onRemove }) {
-  const items = backlog?.items || [];
-  return (
-    <section className="product-backlog-panel admin-ops-compact">
-      <div className="panel admin-table-panel">
-        <div className="panel-header">
-          <div>
-            <div className="section-kicker">Issue Portal</div>
-            <h3 className="section-title">Bug log across the product suite</h3>
-            <p className="section-intro">Add, update, and remove issue rows with priority, status, timestamps, and AWS DynamoDB sync state in one spreadsheet-style registry.</p>
-          </div>
-          <span className="mini-note">AWS mirror: {backlog?.aws_table_name || "ascend_product_issue_logs"} • {backlog?.aws_region || "us-east-2"}</span>
-        </div>
-        <div className="admin-count-strip">
-          {["P0", "P1", "P2", "P3"].map((priority) => (
-            <span key={priority}><strong>{priority}</strong>{backlog?.priority_counts?.[priority] || 0}</span>
-          ))}
-          {["open", "triaged", "in_progress", "blocked", "fixed", "closed"].map((status) => (
-            <span key={status}><strong>{status.replaceAll("_", " ")}</strong>{backlog?.status_counts?.[status] || 0}</span>
-          ))}
-        </div>
-
-        <form className="issue-entry-row" onSubmit={onSubmit}>
-          <input value={form.title} onChange={(event) => onFormChange("title", event.target.value)} placeholder="Issue title" aria-label="Issue title" />
-          <select value={form.portal} onChange={(event) => onFormChange("portal", event.target.value)} aria-label="Portal">
-            {["Member Portal", "Profile Builder Portal", "Leader Portal", "Attorney Portal", "Admin Portal"].map((option) => <option key={option} value={option}>{option}</option>)}
-          </select>
-          <input value={form.section} onChange={(event) => onFormChange("section", event.target.value)} placeholder="Section" aria-label="Section" />
-          <select value={form.priority} onChange={(event) => onFormChange("priority", event.target.value)} aria-label="Priority">
-            <option value="P0">P0</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
-          </select>
-          <select value={form.status} onChange={(event) => onFormChange("status", event.target.value)} aria-label="Status">
-            <option value="open">Open</option><option value="triaged">Triaged</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="fixed">Fixed</option><option value="closed">Closed</option>
-          </select>
-          <input value={form.reported_by} onChange={(event) => onFormChange("reported_by", event.target.value)} placeholder="Reporter" aria-label="Reported by" />
-          <input value={form.description} onChange={(event) => onFormChange("description", event.target.value)} placeholder="Short reproduction notes" aria-label="Description" />
-          <button className="primary compact-btn" type="submit" disabled={busy}>{busy ? "Saving" : "Add row"}</button>
-        </form>
-
-        <div className="issue-log-table">
-          <div className="issue-log-row issue-log-head"><span>Bug ID</span><span>Issue</span><span>Portal / Section</span><span>Priority</span><span>Status</span><span>Reporter</span><span>Updated</span><span>AWS</span><span>Actions</span></div>
-          {items.map((item) => (
-            <article key={item.bug_id} className={`issue-log-row priority-${item.priority?.toLowerCase()}`}>
-              <div>
-                <strong>{item.bug_id}</strong>
-                <small>{item.created_at}</small>
-              </div>
-              <div>
-                <strong>{item.title}</strong>
-                <small>{item.description}</small>
-              </div>
-              <span>{item.portal} / {item.section}</span>
-              <select value={item.priority} onChange={(event) => onUpdate(item, { priority: event.target.value })}>
-                <option value="P0">P0</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
-              </select>
-              <select value={item.status} onChange={(event) => onUpdate(item, { status: event.target.value })}>
-                <option value="open">Open</option><option value="triaged">Triaged</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="fixed">Fixed</option><option value="closed">Closed</option>
-              </select>
-              <span>{item.reported_by || "Admin"}</span>
-              <span>{item.updated_at || item.created_at}</span>
-              <span className={`status-pill ${item.aws_sync_status === "synced" ? "completed" : item.aws_sync_status === "pending" ? "planned" : "blocked"}`}>{item.aws_sync_status || "pending"}</span>
-              <button className="danger compact-btn" type="button" onClick={() => onRemove(item)}>Remove</button>
-            </article>
-          ))}
-          {!items.length ? <p className="empty-state">No bug logs captured yet. Use the add row above to start the registry.</p> : null}
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -1769,8 +1733,6 @@ function NavIcon({ name }) {
       return <svg {...commonProps}><path d="M12 5v10" /><path d="m8 11 4 4 4-4" /><path d="M5 19h14" /></svg>;
     case "health":
       return <svg {...commonProps}><path d="M4 13h3l2-4 3 7 2-5h6" /></svg>;
-    case "issues":
-      return <svg {...commonProps}><path d="M7 4.5h10l2 2v13H5v-13z" /><path d="M9 10h6" /><path d="M9 13h6" /><path d="M9 16h3" /></svg>;
     case "debug":
       return <svg {...commonProps}><circle cx="6" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="18" cy="12" r="1.3" /></svg>;
     default:
@@ -1836,8 +1798,6 @@ function SidebarNav({ items, value, onChange }) {
     if (itemValue === "planner") return "planner";
     if (itemValue === "intake") return "intake";
     if (itemValue === "health") return "health";
-    if (itemValue === "issues") return "issues";
-    if (itemValue === "costs") return "health";
     if (itemValue === "debug") return "debug";
     return "home";
   }
@@ -1950,7 +1910,7 @@ function ThreadedMessageCenter({
         </div>
         {threadExpanded ? (
           <React.Fragment>
-            <p>{item.body}</p>
+            <p>{renderLinkedMessageText(item.body)}</p>
             <div className="message-bubble-actions">
               <button className="ghost compact-btn" type="button" onClick={() => {
                 onComposerChange("reply_to_id", item.id);
@@ -1992,7 +1952,7 @@ function ThreadedMessageCenter({
           </React.Fragment>
         ) : (
           <div className="message-bubble-summary">
-            <span>{item.body}</span>
+            <span>{renderLinkedMessageText(item.body)}</span>
             {childCount ? <span>{childCount} repl{childCount === 1 ? "y" : "ies"}</span> : null}
           </div>
         )}
@@ -2086,7 +2046,7 @@ function ThreadedMessageCenter({
                     <div className="selected-recipient">
                       <span className={`recipient-role recipient-role-${selectedRecipient.role}`}>{selectedRecipient.role}</span>
                       <strong>{selectedRecipient.name}</strong>
-                      <span>{selectedRecipient.email || selectedRecipient.detail}</span>
+                      <span>ID {selectedRecipient.numeric_identifier || selectedRecipient.key} • {selectedRecipient.email || selectedRecipient.detail}</span>
                     </div>
                   ) : null}
                   <div className="recipient-list" role="listbox" aria-label="Message recipients">
@@ -2100,7 +2060,7 @@ function ThreadedMessageCenter({
                         <span className={`recipient-avatar recipient-role-${item.role}`}>{item.name.slice(0, 1).toUpperCase()}</span>
                         <span className="recipient-copy">
                           <strong>{item.name}</strong>
-                          <span>{item.email || item.detail}</span>
+                          <span>ID {item.numeric_identifier || item.key} • {item.email || item.detail}</span>
                         </span>
                         <span className={`recipient-role recipient-role-${item.role}`}>{item.role}</span>
                       </button>
@@ -2246,6 +2206,21 @@ function groupEvidenceByCriterion(evidence = [], criteriaByCode = {}) {
   return Array.from(groups.values()).sort((left, right) => left.label.localeCompare(right.label));
 }
 
+function buildMemberEvidenceRegister(evidence = [], criteriaByCode = {}) {
+  return [...evidence]
+    .map((item) => ({
+      ...item,
+      categoryLabel: criteriaByCode[item.criterion_code]?.name || String(item.criterion_code || "Uncategorized").replaceAll("_", " "),
+      evidenceLabel: item.title || item.file_name || "Uploaded evidence",
+      documentType: item.document_type || "Other",
+    }))
+    .sort((left, right) => {
+      const categoryOrder = compareText(left.categoryLabel, right.categoryLabel);
+      if (categoryOrder !== 0) return categoryOrder;
+      return String(right.created_at || "").localeCompare(String(left.created_at || ""));
+    });
+}
+
 function EvidenceGroupPanel({ evidence = [], criteriaByCode = {}, emptyText = "No evidence files available yet." }) {
   const groups = groupEvidenceByCriterion(evidence, criteriaByCode);
   if (!groups.length) return <p className="empty-state">{emptyText}</p>;
@@ -2273,6 +2248,647 @@ function EvidenceGroupPanel({ evidence = [], criteriaByCode = {}, emptyText = "N
         </section>
       ))}
     </div>
+  );
+}
+
+function MemberEvidenceCoveragePanel({ criteria = [], evidence = [], criteriaByCode = {}, onOpenCriterion }) {
+  const [activeCriterion, setActiveCriterion] = useState("all");
+  const rows = buildMemberEvidenceRegister(evidence, criteriaByCode);
+  const rowsForActiveCriterion = activeCriterion === "all" ? rows : rows.filter((item) => item.criterion_code === activeCriterion);
+  const evidenceCounts = rows.reduce((acc, item) => {
+    const key = item.criterion_code || "other";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const visibleCriteria = criteria.length ? criteria : Object.values(criteriaByCode || {});
+  const knownCriterionCodes = new Set(visibleCriteria.map((criterion) => criterion.code));
+  const extraCriteria = Array.from(new Set(rows.map((item) => item.criterion_code || "other").filter((code) => code && !knownCriterionCodes.has(code))))
+    .map((code) => ({ code, name: criteriaByCode[code]?.name || String(code).replaceAll("_", " ") }));
+  const criterionOptions = [{ code: "all", name: "All Evidence", count: rows.length }, ...visibleCriteria, ...extraCriteria];
+  const activeCriterionLabel = activeCriterion === "all"
+    ? "All Evidence"
+    : (criterionOptions.find((criterion) => criterion.code === activeCriterion)?.name || String(activeCriterion).replaceAll("_", " "));
+  return (
+    <section className="panel evidence-register-panel">
+      <div className="panel-header compact-panel-header">
+        <div>
+          <div className="section-kicker">Evidence By Criterion</div>
+          <h3 className="section-title">Uploaded evidence</h3>
+        </div>
+        <div className="evidence-register-actions">
+          <span>{rowsForActiveCriterion.length}</span>
+          {activeCriterion !== "all" && onOpenCriterion ? (
+            <button className="ghost compact-btn evidence-workspace-btn" type="button" onClick={() => onOpenCriterion(activeCriterion)}>Open workspace</button>
+          ) : null}
+        </div>
+      </div>
+      <div className="evidence-register-layout">
+        <aside className="evidence-criterion-rail" role="tablist" aria-label="Evidence criterion tabs">
+          {criterionOptions.map((criterion) => (
+            <button
+              key={criterion.code}
+              type="button"
+              className={activeCriterion === criterion.code ? "active" : ""}
+              onClick={() => setActiveCriterion(criterion.code)}
+              style={{ "--category-accent": criterion.code === "all" ? "var(--green)" : criterionAccent(criterion.code) }}
+            >
+              <span>{criterion.name || criterion.code}</span>
+              <strong>{criterion.code === "all" ? rows.length : evidenceCounts[criterion.code] || 0}</strong>
+            </button>
+          ))}
+        </aside>
+        <div className="evidence-register-sheet">
+          <div className="evidence-register-subhead">
+            <strong>{activeCriterionLabel}</strong>
+            <span>{rowsForActiveCriterion.length} uploaded</span>
+          </div>
+          <div className="evidence-register-table">
+            <div className="evidence-register-head">
+              <span>Category</span>
+              <span>Evidence</span>
+              <span>Uploaded</span>
+              <span>Type</span>
+            </div>
+            {rowsForActiveCriterion.map((item) => (
+              <article
+                key={item.id || `${item.criterion_code}_${item.file_name}_${item.created_at}`}
+                className="evidence-register-row"
+                style={{ "--category-accent": criterionAccent(item.criterion_code) }}
+              >
+                <div className="evidence-register-cell">
+                  <span className="evidence-register-category">{item.categoryLabel}</span>
+                </div>
+                <div className="evidence-register-cell evidence-register-name">
+                  {item.open_url ? <a href={item.open_url} target="_blank" rel="noreferrer">{item.evidenceLabel}</a> : <span>{item.evidenceLabel}</span>}
+                </div>
+                <div className="evidence-register-cell">
+                  <span>{formatDateTime(item.created_at)}</span>
+                </div>
+                <div className="evidence-register-cell">
+                  <span>{item.documentType}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+          {!rowsForActiveCriterion.length ? <p className="empty-state evidence-register-empty">No uploaded evidence in this criterion yet.</p> : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ExportedNarrativePanel({ title, sectionLabel, items = [], emptyText }) {
+  return (
+    <section className="panel">
+      <div className="section-kicker">{sectionLabel}</div>
+      <h3 className="section-title">{title}</h3>
+      {items.length ? (
+        <div className="task-mini-list">
+          {items.map((item) => (
+            <article key={item.id} className="task-mini-item">
+              <div>
+                <strong>{item.project_name || item.contribution_title || "Untitled entry"}</strong>
+                <p>{item.organization_name || item.summary_line || "Organization not yet added."}</p>
+                <span className="muted-inline">
+                  {(item.project_date_label || item.date_label || item.role_date_label || "Dates not added yet")}
+                  {item.workflow_status ? ` • ${item.workflow_status}` : ""}
+                </span>
+              </div>
+              <div className="task-mini-meta">
+                {item.export_file_name ? <span>{item.export_file_name}</span> : <span>Export pending</span>}
+                {item.export_created_at ? <span>{formatUploadedAt(item.export_created_at)}</span> : null}
+                {item.export_open_url ? <a href={item.export_open_url} target="_blank" rel="noreferrer">Open export</a> : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="empty-state">{emptyText}</p>
+      )}
+    </section>
+  );
+}
+
+function PetitionAccelerationPanel({ data, busy, compact = false }) {
+  if (busy && !data) {
+    return (
+      <section className="panel petition-accelerator">
+        <div className="section-kicker">Petition Accelerator</div>
+        <h3 className="section-title">Loading P0/P1 workspace...</h3>
+        <p className="empty-state">Gathering claim map, gap scoring, playbooks, QA, and filing package signals.</p>
+      </section>
+    );
+  }
+  if (!data) {
+    return (
+      <section className="panel petition-accelerator">
+        <div className="section-kicker">Petition Accelerator</div>
+        <h3 className="section-title">P0/P1 workspace not loaded yet</h3>
+        <p className="empty-state">Select a member to load the petition acceleration workspace.</p>
+      </section>
+    );
+  }
+  const p0 = data.p0 || {};
+  const p1 = data.p1 || {};
+  const claimMap = p0.claim_map || [];
+  const topActions = p0.top_next_actions || [];
+  const highGaps = (p0.gap_detector?.gaps || []).filter((item) => item.severity === "high");
+  const filingChecks = p1.filing_qa_checklist?.checks || [];
+  const requestPacks = p0.criterion_request_packs || [];
+  const qaFlags = p1.document_qa?.flags || [];
+  const reviewCounts = p0.attorney_review_queue?.counts || {};
+  return (
+    <section className="panel petition-accelerator">
+      <div className="panel-header">
+        <div>
+          <div className="section-kicker">Petition Accelerator</div>
+          <h3 className="section-title">P0/P1 petition acceleration workspace</h3>
+          <p className="section-intro">One shared source for claim mapping, member guidance, attorney review, builder playbooks, operations, QA, and filing packaging.</p>
+        </div>
+        <span className={`status-pill ${data.status === "success" ? "completed" : "in_progress"}`}>{data.status}</span>
+      </div>
+      <div className="metrics-grid accelerator-metrics">
+        <MetricCard label="Evidence" value={data.snapshot?.evidence_count || 0} />
+        <MetricCard label="Criteria Started" value={data.snapshot?.criteria_started || 0} />
+        <MetricCard label="High Gaps" value={data.snapshot?.high_severity_gaps || 0} />
+        <MetricCard label="QA Flags" value={data.snapshot?.qa_flags || 0} />
+      </div>
+      <div className="accelerator-grid">
+        <section className="accelerator-card">
+          <div className="section-kicker">Top Next Actions</div>
+          {topActions.length ? topActions.map((item, index) => (
+            <article key={`${item.action}_${index}`} className="accelerator-row">
+              <strong>{item.action}</strong>
+              <p>{item.why_it_matters}</p>
+              <div className="task-mini-meta">
+                <span className={`status-pill ${item.priority === "high" ? "blocked" : "planned"}`}>{item.priority}</span>
+                <span>{item.owner}</span>
+              </div>
+            </article>
+          )) : <p className="empty-state">No urgent next actions detected.</p>}
+        </section>
+        <section className="accelerator-card">
+          <div className="section-kicker">Claim Map</div>
+          <div className="accelerator-table">
+            {claimMap.slice(0, compact ? 5 : 10).map((item) => (
+              <article key={item.criterion_code} className="accelerator-table-row">
+                <strong>{item.criterion_name}</strong>
+                <span>{item.status}</span>
+                <span>{item.evidence_count} src</span>
+              </article>
+            ))}
+          </div>
+        </section>
+        <section className="accelerator-card">
+          <div className="section-kicker">Gap Detector</div>
+          {highGaps.length ? highGaps.slice(0, 5).map((item) => (
+            <article key={item.criterion_code} className="accelerator-row">
+              <strong>{item.criterion_name}</strong>
+              <p>{item.issues?.slice(0, 2).join(" • ")}</p>
+            </article>
+          )) : <p className="empty-state">No high-severity gaps surfaced.</p>}
+        </section>
+        <section className="accelerator-card">
+          <div className="section-kicker">Filing QA</div>
+          {filingChecks.slice(0, 6).map((item) => (
+            <article key={item.item} className="accelerator-table-row">
+              <strong>{item.item}</strong>
+              <span className={`status-pill ${item.status === "pass" ? "completed" : item.status === "fail" ? "blocked" : "planned"}`}>{item.status}</span>
+            </article>
+          ))}
+        </section>
+      </div>
+      {!compact ? (
+        <React.Fragment>
+          <div className="accelerator-grid">
+            <section className="accelerator-card">
+              <div className="section-kicker">Member Request Packs</div>
+              {requestPacks.slice(0, 6).map((item) => (
+                <article key={item.criterion_code} className="accelerator-row">
+                  <strong>{item.criterion_name}</strong>
+                  <p>{item.member_prompt}</p>
+                  <span>{item.upload_checklist?.join(" • ")}</span>
+                </article>
+              ))}
+            </section>
+            <section className="accelerator-card">
+              <div className="section-kicker">Recommendation Workspace</div>
+              {(p0.recommendation_letter_workspace?.recommended_targets || []).slice(0, 5).map((item) => (
+                <article key={item.target_type} className="accelerator-row">
+                  <strong>{item.target_type}</strong>
+                  <p>{item.purpose}</p>
+                  <span>{item.linked_criteria?.join(" • ")}</span>
+                </article>
+              ))}
+              {!(p0.recommendation_letter_workspace?.recommended_targets || []).length ? <p className="empty-state">No recommendation targets needed yet.</p> : null}
+            </section>
+            <section className="accelerator-card">
+              <div className="section-kicker">Review Queue</div>
+              <div className="accelerator-table">
+                {Object.entries(reviewCounts).map(([stage, count]) => (
+                  <article key={stage} className="accelerator-table-row">
+                    <strong>{stage.replaceAll("_", " ")}</strong>
+                    <span>{count}</span>
+                  </article>
+                ))}
+              </div>
+            </section>
+            <section className="accelerator-card">
+              <div className="section-kicker">Document QA</div>
+              {qaFlags.slice(0, 5).map((item, index) => (
+                <article key={`${item.type}_${index}`} className="accelerator-row">
+                  <strong>{item.message}</strong>
+                  <p>{item.recommended_fix}</p>
+                  <span className={`status-pill ${item.severity === "high" ? "blocked" : item.severity === "medium" ? "planned" : "completed"}`}>{item.severity}</span>
+                </article>
+              ))}
+              {!qaFlags.length ? <p className="empty-state">No document QA flags detected.</p> : null}
+            </section>
+          </div>
+          <div className="accelerator-grid">
+            <section className="accelerator-card">
+              <div className="section-kicker">Exhibit Assembly</div>
+              <p>{p1.exhibit_assembly_manager?.exhibits?.length || 0} exhibit(s) indexed for package order.</p>
+              <div className="accelerator-table">
+                {(p1.exhibit_assembly_manager?.exhibits || []).slice(0, 6).map((item) => (
+                  <article key={item.exhibit_number} className="accelerator-table-row">
+                    <strong>{item.exhibit_number}</strong>
+                    <span>{item.criterion_name}</span>
+                    <span>{item.file_name}</span>
+                  </article>
+                ))}
+              </div>
+            </section>
+            <section className="accelerator-card">
+              <div className="section-kicker">USCIS Packager</div>
+              {(p1.uscis_upload_packager?.bundles || []).map((bundle) => (
+                <article key={bundle.bundle_name} className="accelerator-row">
+                  <strong>{bundle.bundle_name}</strong>
+                  <p>{bundle.exhibits?.length || 0} exhibit(s) • limit {p1.uscis_upload_packager?.bundle_size_limit_mb || 24} MB</p>
+                </article>
+              ))}
+            </section>
+          </div>
+        </React.Fragment>
+      ) : null}
+    </section>
+  );
+}
+
+function FilingTimelinePanel({ data, busy = false, compact = false }) {
+  if (busy && !data) {
+    return (
+      <section className="panel filing-timeline-panel">
+        <div className="section-kicker">Petition Timeline</div>
+        <h3 className="section-title">Loading filing timeline...</h3>
+      </section>
+    );
+  }
+  if (!data) {
+    return (
+      <section className="panel filing-timeline-panel">
+        <div className="section-kicker">Petition Timeline</div>
+        <h3 className="section-title">Select a member to view timeline</h3>
+        <p className="empty-state">The timeline appears after member context is available.</p>
+      </section>
+    );
+  }
+  const stages = data.stages || [];
+  const alerts = data.alerts || [];
+  return (
+    <section className="panel filing-timeline-panel">
+      <div className="panel-header">
+        <div>
+          <div className="section-kicker">Petition Timeline</div>
+          <h3 className="section-title">Realistic path to filing</h3>
+          <p className="section-intro">Built from current readiness, evidence depth, open tasks, project intakes, and profile confirmation.</p>
+        </div>
+        <span className={`status-pill ${data.status === "late" ? "blocked" : data.status === "at_risk" ? "planned" : "completed"}`}>{data.status?.replaceAll("_", " ")}</span>
+      </div>
+      <div className="metrics-grid timeline-metrics">
+        <MetricCard label="Target Filing" value={data.summary?.target_filing_date || "TBD"} />
+        <MetricCard label="Days To Target" value={data.summary?.days_to_target ?? 0} />
+        <MetricCard label="Late Stages" value={data.summary?.late_stage_count || 0} />
+        <MetricCard label="Alerts" value={data.summary?.alert_count || 0} />
+      </div>
+      <div className="gantt-chart" style={{ "--stage-count": Math.max(stages.length, 1) }}>
+        {stages.map((stage) => (
+          <article key={stage.key} className={`gantt-stage ${stage.status}`}>
+            <div className="gantt-bar">
+              <span>{stage.label}</span>
+            </div>
+            <small>{stage.start_date} to {stage.end_date}</small>
+          </article>
+        ))}
+        {data.rfe_support ? (
+          <article className="gantt-stage rfe">
+            <div className="gantt-bar dotted"><span>{data.rfe_support.label}</span></div>
+            <small>{data.rfe_support.start_date} to {data.rfe_support.end_date}</small>
+          </article>
+        ) : null}
+      </div>
+      {!compact ? (
+        <div className="timeline-detail-grid">
+          <section className="accelerator-card">
+            <div className="section-kicker">Stage Details</div>
+            {stages.map((stage) => (
+              <article key={`detail_${stage.key}`} className="accelerator-row">
+                <strong>{stage.label}</strong>
+                <p>{stage.description}</p>
+                <div className="task-mini-meta">
+                  <span>{stage.owner}</span>
+                  <span className={`status-pill ${stage.status === "late" ? "blocked" : stage.status === "completed" ? "completed" : "planned"}`}>{stage.status}</span>
+                </div>
+              </article>
+            ))}
+          </section>
+          <section className="accelerator-card">
+            <div className="section-kicker">Alerts</div>
+            {alerts.length ? alerts.map((alert, index) => (
+              <article key={`${alert.message}_${index}`} className="accelerator-row">
+                <strong>{alert.message}</strong>
+                <div className="task-mini-meta">
+                  <span>{alert.owner}</span>
+                  <span className={`status-pill ${alert.severity === "high" ? "blocked" : "planned"}`}>{alert.severity}</span>
+                </div>
+              </article>
+            )) : <p className="empty-state">No active timeline alerts.</p>}
+          </section>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ProductBacklogPanel({ backlog, form, busy, onFormChange, onSubmit, onUpdate }) {
+  const items = backlog?.items || [];
+  return (
+    <section className="panel product-backlog-panel">
+      <div className="panel-header">
+        <div>
+          <div className="section-kicker">Product Backlog</div>
+          <h3 className="section-title">Feature intake and prioritization</h3>
+          <p className="section-intro">Capture enhancements, style changes, new workflows, and supporting screenshots in a format ready for development, testing, and deployment.</p>
+        </div>
+      </div>
+      <div className="metrics-grid">
+        {["P0", "P1", "P2", "P3"].map((priority) => <MetricCard key={priority} label={priority} value={backlog?.priority_counts?.[priority] || 0} />)}
+      </div>
+      <div className="builder-layout" style={{ marginTop: "18px" }}>
+        <form className="panel stacked-form" onSubmit={onSubmit}>
+          <div className="section-kicker">New Feature Request</div>
+          <label>Title<input value={form.title} onChange={(event) => onFormChange("title", event.target.value)} placeholder="Add AI letter approval queue" /></label>
+          <div className="form-grid two">
+            <label>
+              Type
+              <select value={form.request_type} onChange={(event) => onFormChange("request_type", event.target.value)}>
+                <option value="enhancement">Enhancement</option>
+                <option value="new_feature">New feature</option>
+                <option value="style">Style/UI</option>
+                <option value="workflow">Workflow</option>
+                <option value="bug_fix">Bug fix</option>
+              </select>
+            </label>
+            <label>
+              Priority
+              <select value={form.priority} onChange={(event) => onFormChange("priority", event.target.value)}>
+                <option value="P0">P0 - critical</option>
+                <option value="P1">P1 - high</option>
+                <option value="P2">P2 - normal</option>
+                <option value="P3">P3 - later</option>
+              </select>
+            </label>
+          </div>
+          <label>Target portals<input value={form.target_portals} onChange={(event) => onFormChange("target_portals", event.target.value)} placeholder="Leader, Attorney, Member" /></label>
+          <label>Business value<textarea value={form.business_value} onChange={(event) => onFormChange("business_value", event.target.value)} placeholder="Explain how this speeds petitions, improves quality, or reduces rework." /></label>
+          <label>Description<textarea value={form.description} onChange={(event) => onFormChange("description", event.target.value)} placeholder="What should the product do and where should it live?" /></label>
+          <label>Acceptance criteria<textarea value={form.acceptance_criteria} onChange={(event) => onFormChange("acceptance_criteria", event.target.value)} placeholder="How will we know this is ready to test and deploy?" /></label>
+          <label>Supporting screenshots<input type="file" accept="image/*" multiple onChange={(event) => onFormChange("screenshots", Array.from(event.target.files || []))} /></label>
+          <div className="form-actions"><button className="primary compact-btn" type="submit" disabled={busy}>{busy ? "Saving..." : "Add To Backlog"}</button></div>
+        </form>
+        <section className="panel">
+          <div className="section-kicker">Prioritized Backlog</div>
+          <div className="backlog-table">
+            <div className="backlog-row backlog-head"><span>Priority</span><span>Feature</span><span>Status</span><span>Evidence</span></div>
+            {items.map((item) => (
+              <article key={item.id} className={`backlog-row priority-${item.priority?.toLowerCase()}`}>
+                <select value={item.priority} onChange={(event) => onUpdate(item, { priority: event.target.value })}>
+                  <option value="P0">P0</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
+                </select>
+                <div><strong>{item.title}</strong><p>{item.description}</p><small>{item.target_portals} • {item.business_value}</small></div>
+                <select value={item.status} onChange={(event) => onUpdate(item, { status: event.target.value })}>
+                  <option value="backlog">Backlog</option><option value="ready">Ready</option><option value="in_progress">In progress</option><option value="testing">Testing</option><option value="deployed">Deployed</option><option value="blocked">Blocked</option>
+                </select>
+                <span>{item.attachment_count || 0} screenshot(s)</span>
+              </article>
+            ))}
+            {!items.length ? <p className="empty-state">No feature requests captured yet.</p> : null}
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function IssueLogPanel({ backlog, form, busy, onFormChange, onSubmit, onUpdate, onRemove }) {
+  const items = backlog?.items || [];
+  return (
+    <section className="product-backlog-panel admin-ops-compact">
+      <div className="panel admin-table-panel">
+        <div className="panel-header">
+          <div>
+            <div className="section-kicker">Issue Portal</div>
+            <h3 className="section-title">Bug log across the product suite</h3>
+            <p className="section-intro">Add, update, and remove issue rows with priority, status, owner, timestamps, and AWS DynamoDB sync state in one spreadsheet-style registry.</p>
+          </div>
+          <span className="mini-note">AWS mirror: {backlog?.aws_table_name || "ascend_product_issue_logs"} • {backlog?.aws_region || "us-east-2"}</span>
+        </div>
+        <div className="admin-count-strip">
+          {["P0", "P1", "P2", "P3"].map((priority) => (
+            <span key={priority}><strong>{priority}</strong>{backlog?.priority_counts?.[priority] || 0}</span>
+          ))}
+          {["open", "triaged", "in_progress", "blocked", "fixed", "closed"].map((status) => (
+            <span key={status}><strong>{status.replaceAll("_", " ")}</strong>{backlog?.status_counts?.[status] || 0}</span>
+          ))}
+        </div>
+
+        <form className="issue-entry-row" onSubmit={onSubmit}>
+          <input value={form.title} onChange={(event) => onFormChange("title", event.target.value)} placeholder="Issue title" aria-label="Issue title" />
+          <select value={form.portal} onChange={(event) => onFormChange("portal", event.target.value)} aria-label="Portal">
+            {["Member Portal", "Profile Builder Portal", "Leader Portal", "Attorney Portal", "Admin Portal"].map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+          <input value={form.section} onChange={(event) => onFormChange("section", event.target.value)} placeholder="Section" aria-label="Section" />
+          <select value={form.priority} onChange={(event) => onFormChange("priority", event.target.value)} aria-label="Priority">
+            <option value="P0">P0</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
+          </select>
+          <select value={form.status} onChange={(event) => onFormChange("status", event.target.value)} aria-label="Status">
+            <option value="open">Open</option><option value="triaged">Triaged</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="fixed">Fixed</option><option value="closed">Closed</option>
+          </select>
+          <input value={form.reported_by} onChange={(event) => onFormChange("reported_by", event.target.value)} placeholder="Reporter" aria-label="Reported by" />
+          <input value={form.description} onChange={(event) => onFormChange("description", event.target.value)} placeholder="Short description / reproduction notes" aria-label="Description" />
+          <button className="primary compact-btn" type="submit" disabled={busy}>{busy ? "Saving" : "Add row"}</button>
+        </form>
+
+        <div className="issue-log-table">
+          <div className="issue-log-row issue-log-head"><span>Bug ID</span><span>Issue</span><span>Portal / Section</span><span>Priority</span><span>Status</span><span>Reporter</span><span>Updated</span><span>AWS</span><span>Actions</span></div>
+          {items.map((item) => (
+            <article key={item.bug_id} className={`issue-log-row priority-${item.priority?.toLowerCase()}`}>
+              <div>
+                <strong>{item.bug_id}</strong>
+                <small>{item.created_at}</small>
+              </div>
+              <div>
+                <strong>{item.title}</strong>
+                <small>{item.description}</small>
+              </div>
+              <span>{item.portal} / {item.section}</span>
+              <select value={item.priority} onChange={(event) => onUpdate(item, { priority: event.target.value })}>
+                <option value="P0">P0</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
+              </select>
+              <select value={item.status} onChange={(event) => onUpdate(item, { status: event.target.value })}>
+                <option value="open">Open</option><option value="triaged">Triaged</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="fixed">Fixed</option><option value="closed">Closed</option>
+              </select>
+              <span>{item.reported_by || "Admin"}</span>
+              <span>{item.updated_at || item.created_at}</span>
+              <span className={`status-pill ${item.aws_sync_status === "synced" ? "completed" : item.aws_sync_status === "pending" ? "planned" : "blocked"}`}>{item.aws_sync_status || "pending"}</span>
+              <button className="danger compact-btn" type="button" onClick={() => onRemove(item)}>Remove</button>
+            </article>
+          ))}
+          {!items.length ? <p className="empty-state">No bug logs captured yet. Use the add row above to start the registry.</p> : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RecommendationLetterPanel({
+  workspace,
+  form,
+  busy,
+  activeLetterId,
+  onFieldChange,
+  onSubmit,
+  onSelectLetter,
+  onApprove,
+  onSend,
+}) {
+  const projects = workspace?.projects || [];
+  const letters = workspace?.letters || [];
+  const selectedLetter = letters.find((item) => item.id === activeLetterId) || letters[0] || null;
+  const letter = selectedLetter?.letter || null;
+  return (
+    <React.Fragment>
+      <header className="hero endeavor-hero recommendation-hero">
+        <p className="eyebrow">Recommendation Letters</p>
+        <div className="endeavor-hero-row">
+          <div>
+            <h1>{workspace?.member?.display_name || "Selected member"} project-specific letters</h1>
+            <p>Generate, review, approve, and push independent or dependent letters tied to Critical Role or Original Contribution projects.</p>
+          </div>
+          <div className="endeavor-stat-strip" aria-label="Recommendation letter summary">
+            <span><strong>{projects.length}</strong> projects</span>
+            <span><strong>{letters.length}</strong> drafts</span>
+            <span><strong>{letters.filter((item) => item.status === "sent_to_member").length}</strong> sent</span>
+          </div>
+        </div>
+      </header>
+
+      <section className="panel recommendation-panel">
+        <div className="panel-header">
+          <div>
+            <div className="section-kicker">Attorney Workspace</div>
+            <h3 className="section-title">Prompt, generated drafts, and review</h3>
+            <p className="section-intro">Keep inputs factual and project-specific. Approve only after attorney review, then push the final draft to the member.</p>
+          </div>
+          {selectedLetter ? <span className={`status-pill ${selectedLetter.status === "sent_to_member" ? "completed" : selectedLetter.status === "approved" ? "planned" : "in_progress"}`}>{selectedLetter.status?.replaceAll("_", " ")}</span> : null}
+        </div>
+
+        <div className="recommendation-workspace">
+          <form className="stacked-form recommendation-form" onSubmit={onSubmit}>
+            <div className="recommendation-form-head">
+              <div>
+                <div className="section-kicker">Prompt</div>
+                <h4>Select project and confirm facts</h4>
+              </div>
+              <button className="primary compact-btn" type="submit" disabled={busy || !projects.length}>{busy ? "Generating..." : "Generate Letter"}</button>
+            </div>
+            <div className="recommendation-field-grid">
+              <label>
+                Letter type
+                <select value={form.letter_kind} onChange={(event) => onFieldChange("letter_kind", event.target.value)}>
+                  <option value="independent">Independent recommendation</option>
+                  <option value="dependent">Dependent/project recommendation</option>
+                </select>
+              </label>
+              <label>
+                Project
+                <select value={`${form.project_type}|${form.project_id}`} onChange={(event) => {
+                  const [projectType, projectId] = event.target.value.split("|");
+                  onFieldChange("project_type", projectType || "");
+                  onFieldChange("project_id", projectId || "");
+                }}>
+                  <option value="|">Select Critical Role or Original Contribution project</option>
+                  {projects.map((project) => (
+                    <option key={`${project.project_type}_${project.id}`} value={`${project.project_type}|${project.id}`}>
+                      {project.criterion_name}: {project.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>Recommender name<input value={form.recommender_name} onChange={(event) => onFieldChange("recommender_name", event.target.value)} /></label>
+              <label>Recommender title<input value={form.recommender_title} onChange={(event) => onFieldChange("recommender_title", event.target.value)} /></label>
+              <label className="wide">Recommender organization<input value={form.recommender_organization} onChange={(event) => onFieldChange("recommender_organization", event.target.value)} /></label>
+              <label>Relationship / credibility<textarea value={form.recommender_relationship} onChange={(event) => onFieldChange("recommender_relationship", event.target.value)} /></label>
+              <label>Facts to confirm<textarea value={form.facts_to_confirm} onChange={(event) => onFieldChange("facts_to_confirm", event.target.value)} /></label>
+              <label>Independence guidance<textarea value={form.independence_guidance} onChange={(event) => onFieldChange("independence_guidance", event.target.value)} /></label>
+              <label>Attorney strategy notes<textarea value={form.attorney_strategy_notes} onChange={(event) => onFieldChange("attorney_strategy_notes", event.target.value)} /></label>
+            </div>
+            {!projects.length ? <p className="empty-state">No submitted Critical Role or Original Contribution projects are available yet. Ask the member to submit one first.</p> : null}
+          </form>
+
+          <section className="recommendation-review-column">
+          <div className="panel-header">
+            <div><div className="section-kicker">Generated</div><h3 className="section-title">Review and route</h3></div>
+          </div>
+          <div className="recommendation-letter-list">
+            {letters.map((item) => (
+              <button key={item.id} type="button" className={`thread-card recommendation-letter-row ${selectedLetter?.id === item.id ? "active" : ""}`} onClick={() => onSelectLetter(item.id)}>
+                <strong>{item.letter?.title || "Recommendation letter"}</strong>
+                <p>{item.project_type?.replaceAll("_", " ")} • {item.letter_kind}</p>
+                <div className="task-mini-meta"><span>{formatUploadedAt(item.created_at)}</span><span>{item.status}</span></div>
+              </button>
+            ))}
+            {!letters.length ? <p className="empty-state">Generate a recommendation letter to begin attorney review.</p> : null}
+          </div>
+          {letter ? (
+            <section className="letter-preview">
+              <div className="letter-actions">
+                <a className="ghost compact-btn" href={`${API_URL}${selectedLetter.download_url}`} target="_blank" rel="noreferrer">Download</a>
+                <button className="ghost compact-btn" type="button" onClick={() => onApprove(selectedLetter.id)} disabled={selectedLetter.status === "approved" || selectedLetter.status === "sent_to_member"}>Approve</button>
+                <button className="primary compact-btn" type="button" onClick={() => onSend(selectedLetter.id)} disabled={selectedLetter.status !== "approved"}>Push To Member</button>
+              </div>
+              <div className="letter-paper">
+                <p className="letter-title">{letter.title}</p>
+                <p>{letter.date_line}</p>
+                <p>{letter.addressee_line}</p>
+                <p>{letter.re_line}</p>
+                <p>{letter.salutation}</p>
+                <p>{letter.opening_paragraph}</p>
+                {(letter.sections || []).map((section, index) => (
+                  <div key={`rec_section_${index}`}>
+                    {section.heading ? <p className="letter-heading">{section.heading}</p> : null}
+                    <p>{section.body}</p>
+                  </div>
+                ))}
+                <p>{letter.closing_paragraph}</p>
+                <p className="letter-signature">{letter.signature_line}</p>
+              </div>
+            </section>
+          ) : null}
+        </section>
+        </div>
+      </section>
+    </React.Fragment>
   );
 }
 
@@ -2560,47 +3176,17 @@ function SupportPanel({
   );
 }
 
-function PortalHydrationNotice({ title = "Loading latest portal data", detail = "The workspace is available while Ascend refreshes the live case data." }) {
-  return (
-    <section className="panel portal-hydration-panel" aria-live="polite">
-      <div>
-        <div className="section-kicker">Loading</div>
-        <h3 className="section-title">{title}</h3>
-        <p className="section-intro">{detail}</p>
-      </div>
-      <div className="portal-skeleton-lines" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
-    </section>
-  );
-}
-
-function emptyMemberDashboard(member, criteria = []) {
-  return {
-    client: { display_name: member?.display_name || "Member" },
-    metrics: {
-      readiness_score: 0,
-      evidence_count: 0,
-      open_tasks: 0,
-      criteria_started: 0,
-    },
-    criteria,
-  };
-}
-
 function App() {
-  const initialStoredMember = readStoredMember();
   const initialRoute = readPortalRoute();
-  const [authMode, setAuthMode] = useState(initialRoute.portal || normalizePortalRole(initialStoredMember?.role) || "member");
+  const initialStoredMember = readStoredMember();
+  const initialPortalRole = normalizePortalRole(initialRoute.portal);
+  const [authMode, setAuthMode] = useState(initialPortalRole || normalizePortalRole(initialStoredMember?.role) || "member");
   const [authReady, setAuthReady] = useState(false);
   const [authMember, setAuthMember] = useState(initialStoredMember);
   const [builderDashboard, setBuilderDashboard] = useState(null);
   const [builderMembers, setBuilderMembers] = useState([]);
   const [memberSearchQuery, setMemberSearchQuery] = useState("");
   const [builderMemberDetail, setBuilderMemberDetail] = useState(null);
-  const [memberDetailLoading, setMemberDetailLoading] = useState(false);
   const [builderOpportunities, setBuilderOpportunities] = useState([]);
   const [selectedBuilderMemberId, setSelectedBuilderMemberId] = useState("");
   const [builderTaskForm, setBuilderTaskForm] = useState({ opportunity_id: "", title: "", description: "", criterion_code: "", due_date: "" });
@@ -2613,6 +3199,7 @@ function App() {
   const [helpManualQuery, setHelpManualQuery] = useState("");
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current_password: "", new_password: "", confirm_password: "" });
+  const [passwordMessage, setPasswordMessage] = useState(null);
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [profileTab, setProfileTab] = useState("identity");
   const [dashboard, setDashboard] = useState(null);
@@ -2622,6 +3209,14 @@ function App() {
   const [plannerRows, setPlannerRows] = useState([]);
   const [profile, setProfile] = useState(null);
   const [profileForm, setProfileForm] = useState(emptyProfileForm());
+  const [criticalRoleProjects, setCriticalRoleProjects] = useState([]);
+  const [criticalRoleForm, setCriticalRoleForm] = useState(emptyCriticalRoleProjectForm());
+  const [activeCriticalRoleId, setActiveCriticalRoleId] = useState("");
+  const [criticalRoleBusy, setCriticalRoleBusy] = useState(false);
+  const [originalContributions, setOriginalContributions] = useState([]);
+  const [originalContributionForm, setOriginalContributionForm] = useState(emptyOriginalContributionForm());
+  const [activeOriginalContributionId, setActiveOriginalContributionId] = useState("");
+  const [originalContributionBusy, setOriginalContributionBusy] = useState(false);
   const [profileBusy, setProfileBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState(null);
@@ -2641,9 +3236,9 @@ function App() {
   const [overrideCategory, setOverrideCategory] = useState("");
   const [overrideDocumentType, setOverrideDocumentType] = useState("Other");
   const [consent, setConsent] = useState(false);
-  const [draftApprovalError, setDraftApprovalError] = useState("");
   const [uploadBusy, setUploadBusy] = useState(false);
   const [duplicateState, setDuplicateState] = useState(null);
+  const [intakeSort, setIntakeSort] = useState({ key: "uploaded", direction: "desc" });
 
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderParent, setNewFolderParent] = useState("");
@@ -2663,6 +3258,9 @@ function App() {
   const [leaderInsights, setLeaderInsights] = useState(null);
   const [leaderPerspective, setLeaderPerspective] = useState("leader");
   const [leaderInviteForm, setLeaderInviteForm] = useState(emptyLeaderInviteForm());
+  const [productBacklog, setProductBacklog] = useState({ items: [], priority_counts: {}, status_counts: {} });
+  const [featureRequestForm, setFeatureRequestForm] = useState(emptyFeatureRequestForm());
+  const [featureRequestBusy, setFeatureRequestBusy] = useState(false);
   const [messageCenter, setMessageCenter] = useState({ threads: [], recipient_options: [], unread_count: 0, actor: null });
   const [selectedThreadId, setSelectedThreadId] = useState("");
   const [messageComposer, setMessageComposer] = useState({ recipient_role: "", recipient_key: "", subject: "", body: "", urgent: false, reply_to_id: "" });
@@ -2675,6 +3273,18 @@ function App() {
   const [adminCostBusy, setAdminCostBusy] = useState(false);
   const [petitionDraft, setPetitionDraft] = useState(null);
   const [petitionBusy, setPetitionBusy] = useState(false);
+  const [petitionAcceleration, setPetitionAcceleration] = useState(null);
+  const [petitionAccelerationBusy, setPetitionAccelerationBusy] = useState(false);
+  const [endeavorPromptForm, setEndeavorPromptForm] = useState(emptyEndeavorPromptForm());
+  const [endeavorDraft, setEndeavorDraft] = useState(null);
+  const [endeavorBusy, setEndeavorBusy] = useState(false);
+  const [endeavorLetterView, setEndeavorLetterView] = useState(false);
+  const [filingTimeline, setFilingTimeline] = useState(null);
+  const [filingTimelineBusy, setFilingTimelineBusy] = useState(false);
+  const [recommendationWorkspace, setRecommendationWorkspace] = useState(null);
+  const [recommendationPromptForm, setRecommendationPromptForm] = useState(emptyRecommendationPromptForm());
+  const [recommendationBusy, setRecommendationBusy] = useState(false);
+  const [activeRecommendationLetterId, setActiveRecommendationLetterId] = useState("");
   const [batchZipFile, setBatchZipFile] = useState(null);
   const [batchContext, setBatchContext] = useState("");
   const [batchSession, setBatchSession] = useState(null);
@@ -2689,10 +3299,96 @@ function App() {
   const [supportBusy, setSupportBusy] = useState(false);
   const [supportForm, setSupportForm] = useState(emptySupportForm());
   const [supportSubmission, setSupportSubmission] = useState(null);
-  const routeHistoryRef = useRef({ lastUrl: window.location.href, fromPopState: false });
+  const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  const lastActivitySignatureRef = useRef("");
+  const routeSyncRef = useRef({ initialized: false, applying: false, lastUrl: "" });
+  const routeNoticeRef = useRef(null);
+  const sidebarWidthRef = useRef(sidebarWidth);
+
+  useEffect(() => {
+    sidebarWidthRef.current = sidebarWidth;
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    function handleResize() {
+      setViewportWidth(window.innerWidth);
+    }
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (!sidebarResizing) return undefined;
+    function handlePointerMove(event) {
+      const nextWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, event.clientX));
+      if (nextWidth !== sidebarWidthRef.current) {
+        setSidebarWidth(nextWidth);
+      }
+    }
+    function handlePointerUp() {
+      setSidebarResizing(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", handlePointerMove);
+    window.addEventListener("mouseup", handlePointerUp);
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", handlePointerMove);
+      window.removeEventListener("mouseup", handlePointerUp);
+    };
+  }, [sidebarResizing]);
+
+  function startSidebarResize(event) {
+    if (viewportWidth <= DESKTOP_SIDEBAR_BREAKPOINT) return;
+    event.preventDefault();
+    setSidebarResizing(true);
+  }
+
+  const sidebarResizeEnabled = viewportWidth > DESKTOP_SIDEBAR_BREAKPOINT;
+  const shellStyle = sidebarResizeEnabled ? { "--sidebar-width": `${sidebarWidth}px` } : undefined;
+  const sidebarResizer = sidebarResizeEnabled ? (
+    <div
+      className={`sidebar-resizer${sidebarResizing ? " active" : ""}`}
+      onMouseDown={startSidebarResize}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+    />
+  ) : null;
 
   const criteriaByCode = useMemo(() => Object.fromEntries((criteriaList || dashboard?.criteria || []).map((item) => [item.code, item])), [criteriaList, dashboard]);
   const actionItems = useMemo(() => buildActionItems(dashboard?.criteria || [], evidenceItems), [dashboard, evidenceItems]);
+  const memberIntakeHistory = useMemo(() => {
+    const items = [...(evidenceItems || [])];
+    const directionFactor = intakeSort.direction === "asc" ? 1 : -1;
+    items.sort((left, right) => {
+      let result = 0;
+      if (intakeSort.key === "evidence") {
+        result = compareText(left.title || left.file_name, right.title || right.file_name);
+      } else if (intakeSort.key === "category") {
+        result = compareText(criteriaByCode[left.criterion_code]?.name || left.criterion_code, criteriaByCode[right.criterion_code]?.name || right.criterion_code);
+      } else if (intakeSort.key === "type") {
+        result = compareText(left.document_type || "Other", right.document_type || "Other");
+      } else {
+        result = compareText(left.created_at || "", right.created_at || "");
+      }
+      if (result === 0) {
+        result = compareText(left.title || left.file_name, right.title || right.file_name);
+      }
+      return result * directionFactor;
+    });
+    return items;
+  }, [criteriaByCode, evidenceItems, intakeSort]);
   const folderOptions = useMemo(() => [{ value: "", label: "Root" }, ...((workspace?.folders || []).map((folder) => ({ value: folder.id, label: folder.path })))], [workspace]);
   const board = useMemo(() => buildBoard(workspace), [workspace]);
   const plannerFolderOptions = useMemo(
@@ -2759,6 +3455,8 @@ function App() {
       if (leaderPerspective === "attorney") {
         if (portalSection === "dossier") return "Member Dossier";
         if (portalSection === "petition") return "Petition Generator";
+        if (portalSection === "endeavor") return "Endeavor Letter Generator";
+        if (portalSection === "recommendations") return "Recommendation Letters";
         if (portalSection === "batch") return "Batch Intake";
         if (portalSection === "evidence") return "Evidence Review";
         if (portalSection === "messages") return "Messages";
@@ -2773,6 +3471,8 @@ function App() {
       if (portalSection === "members") return "Member Review";
       if (portalSection === "risks") return "Risk & Bottlenecks";
       if (portalSection === "capacity") return "Team Capacity";
+      if (portalSection === "timeline") return "Delivery Timeline";
+      if (portalSection === "backlog") return "Product Backlog";
       if (portalSection === "oversight") return "Assignment Oversight";
       if (portalSection === "opportunities") return "Opportunities";
       if (portalSection === "batch") return "Batch Intake";
@@ -2788,6 +3488,8 @@ function App() {
     if (authMember?.role === "attorney") {
       if (portalSection === "dossier") return "Dossier";
       if (portalSection === "petition") return "Petition Generator";
+      if (portalSection === "endeavor") return "Endeavor Letter Generator";
+      if (portalSection === "recommendations") return "Recommendation Letters";
       if (portalSection === "batch") return "Batch Intake";
       if (portalSection === "evidence") return "Evidence Review";
       if (portalSection === "messages") return "Messages";
@@ -2815,6 +3517,17 @@ function App() {
       : ""
   ), [authMember?.role, authMember?.client_id, builderMemberDetail, selectedBuilderMemberId]);
 
+  function toggleIntakeSort(key) {
+    setIntakeSort((current) => current.key === key
+      ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
+      : { key, direction: key === "uploaded" ? "desc" : "asc" });
+  }
+
+  function intakeSortLabel(key) {
+    if (intakeSort.key !== key) return "↕";
+    return intakeSort.direction === "asc" ? "↑" : "↓";
+  }
+
   function actorParams(member = authMember) {
     if (!member) return {};
     return {
@@ -2823,6 +3536,49 @@ function App() {
       actor_client_id: member.role === "member" ? (member.client_id || "") : "",
     };
   }
+
+  async function logPortalActivity(eventType, messageText, metadata = {}) {
+    if (!authMember) return;
+    try {
+      await sendJson("/api/activity-events", {
+        ...actorParams(authMember),
+        event_type: eventType,
+        message: messageText,
+        endpoint: window.location.pathname || "/",
+        related_client_id: supportRelatedClientId || "",
+        metadata: {
+          section: supportSectionLabel,
+          portal_section: portalSection,
+          view_type: view.type,
+          leader_perspective: leaderPerspective,
+          selected_member_id: selectedBuilderMemberId || "",
+          current_url: window.location.href,
+          ...browserTimingSnapshot(),
+          ...metadata,
+        },
+      });
+    } catch (_error) {
+      // Activity logging should never block the portal workflow.
+    }
+  }
+
+  useEffect(() => {
+    if (!authMember) return;
+    const signature = JSON.stringify({
+      role: authMember.role,
+      section: supportSectionLabel,
+      portalSection: portalSection,
+      viewType: view.type,
+      criterionCode: view.criterionCode,
+      leaderPerspective,
+      selectedMemberId: selectedBuilderMemberId || "",
+    });
+    if (lastActivitySignatureRef.current === signature) return;
+    lastActivitySignatureRef.current = signature;
+    logPortalActivity("page_view", `Viewed ${supportSectionLabel}.`, {
+      criterion_code: view.criterionCode || "",
+    });
+  }, [authMember, supportSectionLabel, portalSection, view.type, view.criterionCode, leaderPerspective, selectedBuilderMemberId]);
 
   function supportDefaults() {
     return emptySupportForm(supportIssueLocation);
@@ -2877,77 +3633,118 @@ function App() {
     });
   }
 
-  function writePortalUrl(nextUrl, replace = false) {
-    if (routeHistoryRef.current.lastUrl === nextUrl) return;
-    if (replace) {
-      window.history.replaceState({}, "", nextUrl);
-    } else {
-      window.history.pushState({}, "", nextUrl);
-    }
-    routeHistoryRef.current.lastUrl = nextUrl;
-  }
-
-  function syncMemberUrl(nextView) {
+  function syncCriterionUrl(code) {
     const url = new URL(window.location.href);
-    url.searchParams.set("portal", "member");
-    if (nextView?.type === "workspace" && nextView.criterionCode) {
-      url.searchParams.set("page", "workspace");
-      url.searchParams.set("criterion", nextView.criterionCode);
+    if (code) {
+      url.searchParams.set("criterion", code);
     } else {
-      url.searchParams.set("page", nextView?.type || "home");
       url.searchParams.delete("criterion");
       url.searchParams.delete("folder");
     }
-    writePortalUrl(url.toString(), routeHistoryRef.current.fromPopState);
-    routeHistoryRef.current.fromPopState = false;
+    window.history.replaceState({}, "", url.toString());
   }
 
-  function syncStaffUrl() {
-    if (!authMember || authMember.role === "member") return;
+  function buildRouteUrl(snapshot) {
     const url = new URL(window.location.href);
-    ["portal", "page", "section", "member", "criterion", "folder"].forEach((key) => url.searchParams.delete(key));
-    url.searchParams.set("portal", authMember.role);
-    url.searchParams.set("section", portalSection || "home");
-    if (["builder", "leader", "attorney", "admin"].includes(authMember.role) && selectedBuilderMemberId) {
-      url.searchParams.set("member", selectedBuilderMemberId);
-    }
-    writePortalUrl(url.toString(), routeHistoryRef.current.fromPopState);
-    routeHistoryRef.current.fromPopState = false;
+    ["portal", "page", "section", "perspective", "member", "criterion", "folder"].forEach((key) => url.searchParams.delete(key));
+    if (snapshot.portal) url.searchParams.set("portal", snapshot.portal);
+    if (snapshot.page) url.searchParams.set("page", snapshot.page);
+    if (snapshot.section) url.searchParams.set("section", snapshot.section);
+    if (snapshot.perspective) url.searchParams.set("perspective", snapshot.perspective);
+    if (snapshot.memberId) url.searchParams.set("member", snapshot.memberId);
+    if (snapshot.criterion) url.searchParams.set("criterion", snapshot.criterion);
+    if (snapshot.folderId) url.searchParams.set("folder", snapshot.folderId);
+    return url.toString();
   }
 
-  function applyRouteFromBrowser() {
-    const route = readPortalRoute();
+  function currentRouteSnapshot() {
+    const portal = normalizePortalRole(authMember?.role) || normalizePortalRole(authMode) || "member";
+    if (!authMember) {
+      return { portal };
+    }
+    if (portal === "member") {
+      return {
+        portal,
+        page: MEMBER_VIEW_TYPES.has(view.type) ? view.type : "home",
+        criterion: view.type === "workspace" ? view.criterionCode || "" : "",
+        folderId: view.type === "workspace" ? selectedFolderId || "" : "",
+      };
+    }
+    if (portal === "leader") {
+      return {
+        portal,
+        perspective: leaderPerspective,
+        page: portalSection || "home",
+        memberId: selectedBuilderMemberId || "",
+      };
+    }
+    return {
+      portal,
+      page: portalSection || "home",
+      memberId: ["builder", "attorney", "admin"].includes(portal) ? (selectedBuilderMemberId || "") : "",
+    };
+  }
+
+  function applyRouteSnapshot(snapshot, options = {}) {
+    const requestedPortal = normalizePortalRole(snapshot.portal);
     const authenticatedRole = normalizePortalRole(authMember?.role);
-    routeHistoryRef.current.fromPopState = true;
-    routeHistoryRef.current.lastUrl = window.location.href;
-    if (authMember && route.portal && route.portal !== authenticatedRole) {
+    if (authMember && requestedPortal && requestedPortal !== authenticatedRole) {
       clearAuth();
       clearAssistantSessions();
       setAuthMember(null);
-      setAuthMode(route.portal);
+      setAuthMode(requestedPortal);
       setLoading(false);
-      setMessage({ type: "error", text: `Please sign in with ${portalMeta(route.portal).label} credentials to open that portal.` });
+      routeNoticeRef.current = {
+        type: "error",
+        text: `Please sign in with ${portalMeta(requestedPortal).label} credentials to open that portal.`,
+      };
+      setMessage(routeNoticeRef.current);
       return;
     }
-    if (!authMember) {
-      if (route.portal) setAuthMode(route.portal);
+    const role = options.role || authenticatedRole || requestedPortal || normalizePortalRole(authMode) || "member";
+    if (!authMember && requestedPortal) {
+      setAuthMode(requestedPortal);
+    }
+    if (role === "member") {
+      const requestedPage = String(snapshot.page || "").trim();
+      const hasKnownPage = MEMBER_VIEW_TYPES.has(requestedPage);
+      const nextPage = hasKnownPage ? requestedPage : (snapshot.criterion ? "workspace" : "home");
+      if (requestedPage && !hasKnownPage) {
+        routeNoticeRef.current = {
+          type: "error",
+          text: `Page "${requestedPage}" was not found. Opened ${snapshot.criterion ? "the requested evidence workspace" : "Member Home"} instead.`,
+        };
+      }
+      setView({ type: nextPage, criterionCode: nextPage === "workspace" ? snapshot.criterion || "" : "" });
+      setSelectedFolderId(nextPage === "workspace" ? snapshot.folderId || "" : "");
       return;
     }
-    if (authenticatedRole === "member") {
-      const memberRoute = requestedMemberView(criteriaList);
-      setSelectedFolderId(memberRoute.folderId || "");
-      setView(memberRoute.view);
+    if (role === "leader") {
+      const nextPerspective = LEADER_PERSPECTIVES.has(snapshot.perspective) ? snapshot.perspective : "leader";
+      setLeaderPerspective(nextPerspective);
+      const validLeaderSections = nextPerspective === "attorney" ? ATTORNEY_SECTIONS : nextPerspective === "builder" ? BUILDER_SECTIONS : LEADER_EXEC_SECTIONS;
+      const requestedSection = snapshot.section || snapshot.page;
+      setPortalSection(validLeaderSections.has(requestedSection) ? requestedSection : "home");
+      setSelectedBuilderMemberId(snapshot.memberId || "");
       return;
     }
-    const allowed = authenticatedRole === "builder"
-      ? BUILDER_SECTIONS
-      : authenticatedRole === "leader"
-      ? LEADER_EXEC_SECTIONS
-      : authenticatedRole === "attorney"
-      ? ATTORNEY_SECTIONS
-      : ADMIN_SECTIONS;
-    setPortalSection(allowed.has(route.section) ? route.section : "home");
-    setSelectedBuilderMemberId(route.memberId || "");
+    if (role === "builder") {
+      const requestedSection = snapshot.section || snapshot.page;
+      setPortalSection(BUILDER_SECTIONS.has(requestedSection) ? requestedSection : "home");
+      setSelectedBuilderMemberId(snapshot.memberId || "");
+      return;
+    }
+    if (role === "attorney") {
+      const requestedSection = snapshot.section || snapshot.page;
+      setPortalSection(ATTORNEY_SECTIONS.has(requestedSection) ? requestedSection : "home");
+      setSelectedBuilderMemberId(snapshot.memberId || "");
+      return;
+    }
+    if (role === "admin") {
+      const requestedSection = snapshot.section || snapshot.page;
+      setPortalSection(ADMIN_SECTIONS.has(requestedSection) ? requestedSection : "home");
+      setSelectedBuilderMemberId(snapshot.memberId || "");
+    }
   }
 
   async function loadHome() {
@@ -2971,15 +3768,28 @@ function App() {
         ...profileData,
         profile_confirmed: Boolean(profileData.profile_confirmed),
       });
+      const nextCriticalProjects = profileData.critical_role_projects || [];
+      setCriticalRoleProjects(nextCriticalProjects);
+      if (nextCriticalProjects.length) {
+        const initialProject = nextCriticalProjects.find((item) => item.id === activeCriticalRoleId) || nextCriticalProjects[0];
+        setActiveCriticalRoleId(initialProject.id);
+        setCriticalRoleForm(hydrateCriticalRoleProject(initialProject));
+      } else {
+        setActiveCriticalRoleId("");
+        setCriticalRoleForm(emptyCriticalRoleProjectForm());
+      }
+      const nextOriginalContributions = profileData.original_contribution_entries || [];
+      setOriginalContributions(nextOriginalContributions);
+      if (nextOriginalContributions.length) {
+        const initialEntry = nextOriginalContributions.find((item) => item.id === activeOriginalContributionId) || nextOriginalContributions[0];
+        setActiveOriginalContributionId(initialEntry.id);
+        setOriginalContributionForm(hydrateOriginalContribution(initialEntry));
+      } else {
+        setActiveOriginalContributionId("");
+        setOriginalContributionForm(emptyOriginalContributionForm());
+      }
       if (!manualCategory && dashboardData.criteria.length) setManualCategory(dashboardData.criteria[0].code);
       if (!manualDocumentType) setManualDocumentType("Other");
-      const route = requestedMemberView(dashboardData.criteria);
-      setSelectedFolderId(route.folderId || "");
-      setView(route.view);
-      if (route.invalidPage) {
-        const label = route.invalidKind === "criterion" ? "criterion" : "page";
-        setMessage({ type: "error", text: `${label.charAt(0).toUpperCase()} "${route.invalidPage}" was not found, so we returned you to Member Home.` });
-      }
     } catch (_error) {
       setMessage({ type: "error", text: "Could not load member portal." });
     } finally {
@@ -3142,7 +3952,9 @@ function App() {
       setBuilderDashboard({ metrics: { member_count: roster.length, active_tasks: roster.reduce((sum, item) => sum + (item.open_task_count || 0), 0) } });
       setBuilderMembers(roster);
       setCriteriaList(criteriaData);
-      const activeMemberId = memberId || roster[0]?.client_id || "";
+      const requestedMemberId = memberId || "";
+      const rosterMemberIds = new Set(roster.map((item) => item.client_id));
+      const activeMemberId = requestedMemberId && rosterMemberIds.has(requestedMemberId) ? requestedMemberId : roster[0]?.client_id || "";
       setSelectedBuilderMemberId(activeMemberId);
       if (activeMemberId) {
         const detail = await getJson(`/api/attorney/members/${activeMemberId}`, { attorney_email: actorEmail });
@@ -3188,10 +4000,10 @@ function App() {
       setLeaderAssignments(
         (leaderData.members || []).map((item) => ({
           client_id: item.client_id,
-          builder_id: item.builder_id || leaderData.builders?.find((builder) => builder.display_name === item.builder_name)?.id || "",
+          builder_id: item.builder_id || "",
           builder_name: item.builder_name || "",
           builder_email: item.builder_email || "",
-          attorney_id: item.attorney_id || leaderData.attorneys?.find((attorney) => attorney.display_name === item.attorney_name)?.id || "",
+          attorney_id: item.attorney_id || "",
           attorney_name: item.attorney_name || "",
           attorney_email: item.attorney_email || "",
         })),
@@ -3253,7 +4065,6 @@ function App() {
       setBuilderDashboard(builderData);
       setBuilderMembers(roster);
       setCriteriaList(criteriaData);
-      setPortalSection(requestedPortalSection("admin", portalSection || "home"));
       const activeMemberId = memberId || roster[0]?.client_id || "";
       setSelectedBuilderMemberId(activeMemberId);
       if (activeMemberId) {
@@ -3341,14 +4152,12 @@ function App() {
   }
 
   async function bootstrapAuth() {
-    const route = readPortalRoute();
+    const routeSnapshot = readPortalRoute();
+    const requestedPortal = normalizePortalRole(routeSnapshot.portal);
+    const routeMemberId = routeSnapshot.memberId || "";
+    const routePerspective = LEADER_PERSPECTIVES.has(routeSnapshot.perspective) ? routeSnapshot.perspective : "leader";
     const token = authToken();
     if (!token) {
-      if (route.portal) setAuthMode(route.portal);
-      if (route.portal && route.portal !== "member") {
-        setPortalSection(requestedPortalSection(route.portal, "home"));
-        setSelectedBuilderMemberId(route.memberId || "");
-      }
       setAuthReady(true);
       setLoading(false);
       return;
@@ -3356,26 +4165,25 @@ function App() {
     try {
       const stored = readStoredMember();
       const role = normalizePortalRole(stored?.role) || "member";
-      if (route.portal && route.portal !== role) {
+      if (requestedPortal && requestedPortal !== role) {
         clearAuth();
         clearAssistantSessions();
         setAuthMember(null);
-        setAuthMode(route.portal);
-        setMessage({ type: "error", text: `Please sign in with ${portalMeta(route.portal).label} credentials to open that portal.` });
+        setAuthMode(requestedPortal);
         setLoading(false);
+        setMessage({ type: "error", text: `Please sign in with ${portalMeta(requestedPortal).label} credentials to open that portal.` });
         return;
       }
       if (isPreviewRole(role)) {
         setAuthMember(stored);
         setAuthMode(role);
         if (role === "admin") {
-          await loadAdminPortal(route.memberId);
+          await loadAdminPortal(routeMemberId);
         } else if (role === "leader") {
-          setLeaderPerspective("leader");
-          setPortalSection(requestedPortalSection("leader", "home"));
-          await loadLeaderPortal(route.memberId);
+          setLeaderPerspective(routePerspective);
+          await loadLeaderPortal(routeMemberId);
         } else {
-          await loadReviewPortals(route.memberId || selectedBuilderMemberId, stored?.email || "");
+          await loadReviewPortals(routeMemberId, stored?.email || "");
         }
         setAuthReady(true);
         return;
@@ -3385,17 +4193,14 @@ function App() {
       setAuthMode(role);
       persistAuth(token, identity);
       if (role === "builder") {
-        setPortalSection(requestedPortalSection("builder", "home"));
-        await loadBuilderDashboard(route.memberId);
+        await loadBuilderDashboard(routeMemberId);
       } else if (role === "leader") {
-        setLeaderPerspective("leader");
-        setPortalSection(requestedPortalSection("leader", "home"));
-        await loadLeaderPortal(route.memberId);
+        setLeaderPerspective(routePerspective);
+        await loadLeaderPortal(routeMemberId);
       } else if (role === "attorney") {
-        setPortalSection(requestedPortalSection("attorney", "home"));
-        await loadReviewPortals(route.memberId || selectedBuilderMemberId, identity.email || "");
+        await loadReviewPortals(routeMemberId, identity.email || "");
       } else if (role === "admin") {
-        await loadAdminPortal(route.memberId);
+        await loadAdminPortal(routeMemberId);
       } else {
         await loadHome();
       }
@@ -3405,7 +4210,7 @@ function App() {
         setAuthMember(identity);
         setAuthMode("builder");
         persistAuth(token, identity);
-        await loadBuilderDashboard();
+        await loadBuilderDashboard(routeMemberId);
       } catch (_secondary) {
         clearAuth();
         setAuthMember(null);
@@ -3454,6 +4259,150 @@ function App() {
     }
   }
 
+  async function loadProductBacklog() {
+    try {
+      const data = await getJson("/api/leader/product-backlog");
+      setProductBacklog(data);
+    } catch (_error) {
+      setProductBacklog({ items: [], priority_counts: {}, status_counts: {} });
+    }
+  }
+
+  async function submitFeatureRequest(event) {
+    event.preventDefault();
+    setFeatureRequestBusy(true);
+    setMessage(null);
+    try {
+      const formData = new FormData();
+      Object.entries(featureRequestForm).forEach(([key, value]) => {
+        if (key !== "screenshots") formData.set(key, value || "");
+      });
+      formData.set("actor_email", authMember?.email || "");
+      (featureRequestForm.screenshots || []).forEach((file) => formData.append("screenshots", file, file.name));
+      const result = await sendForm("/api/leader/product-backlog", formData);
+      if (result.ok) {
+        setFeatureRequestForm(emptyFeatureRequestForm());
+        await loadProductBacklog();
+        setMessage({ type: "success", text: "Feature request added to the product backlog." });
+      } else {
+        setMessage({ type: "error", text: result.payload.error || "Could not add feature request." });
+      }
+    } finally {
+      setFeatureRequestBusy(false);
+    }
+  }
+
+  async function updateFeatureRequest(item, updates) {
+    const formData = new FormData();
+    formData.set("actor_email", authMember?.email || "");
+    if (updates.priority) formData.set("priority", updates.priority);
+    if (updates.status) formData.set("status", updates.status);
+    const result = await sendForm(`/api/leader/product-backlog/${item.id}`, formData, "PATCH");
+    if (result.ok) {
+      await loadProductBacklog();
+    } else {
+      setMessage({ type: "error", text: result.payload.error || "Could not update backlog item." });
+    }
+  }
+
+  async function loadFilingTimeline(clientId = selectedBuilderMemberId) {
+    const resolvedClientId = clientId || authMember?.client_id || "";
+    if (!resolvedClientId || !authMember?.role) return;
+    setFilingTimelineBusy(true);
+    try {
+      const data = await getJson(`/api/members/${resolvedClientId}/filing-timeline`, actorParams(authMember));
+      setFilingTimeline(data);
+    } catch (_error) {
+      setFilingTimeline(null);
+    } finally {
+      setFilingTimelineBusy(false);
+    }
+  }
+
+  async function loadRecommendationWorkspace(clientId = selectedBuilderMemberId) {
+    if (!clientId || !["attorney", "leader"].includes(authMember?.role)) return;
+    try {
+      const data = await getJson(`/api/attorney/members/${clientId}/recommendation-letter-workspace`, {
+        actor_role: authMember.role === "leader" ? "leader" : "attorney",
+        actor_email: authMember.role === "leader" ? "" : (authMember.email || ""),
+      });
+      setRecommendationWorkspace(data);
+      const firstProject = data.projects?.[0];
+      setRecommendationPromptForm((current) => ({
+        ...emptyRecommendationPromptForm(),
+        ...data.default_prompt,
+        letter_kind: current.letter_kind || "independent",
+        project_type: current.project_type || firstProject?.project_type || "",
+        project_id: current.project_id || firstProject?.id || "",
+      }));
+      setActiveRecommendationLetterId((current) => current || data.letters?.[0]?.id || "");
+    } catch (_error) {
+      setRecommendationWorkspace(null);
+    }
+  }
+
+  function updateRecommendationPrompt(field, value) {
+    setRecommendationPromptForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function generateRecommendationLetter(event) {
+    event.preventDefault();
+    if (!selectedBuilderMemberId || !recommendationPromptForm.project_id || !recommendationPromptForm.project_type) {
+      setMessage({ type: "error", text: "Choose a Critical Role or Original Contribution project first." });
+      return;
+    }
+    setRecommendationBusy(true);
+    setMessage(null);
+    try {
+      const result = await sendJson("/api/attorney/recommendation-letter-generator", {
+        client_id: selectedBuilderMemberId,
+        actor_role: authMember.role === "leader" ? "leader" : "attorney",
+        actor_email: authMember.role === "leader" ? "" : (authMember.email || ""),
+        letter_kind: recommendationPromptForm.letter_kind,
+        project_type: recommendationPromptForm.project_type,
+        project_id: recommendationPromptForm.project_id,
+        prompt_config: recommendationPromptForm,
+      });
+      if (result.ok) {
+        await loadRecommendationWorkspace(selectedBuilderMemberId);
+        setActiveRecommendationLetterId(result.payload.letter_record?.id || "");
+        setMessage({ type: "success", text: "Recommendation letter generated for attorney review." });
+      } else {
+        setMessage({ type: "error", text: result.payload.error || "Could not generate recommendation letter." });
+      }
+    } finally {
+      setRecommendationBusy(false);
+    }
+  }
+
+  async function approveRecommendationLetter(letterId) {
+    const result = await sendJson(`/api/attorney/recommendation-letters/${letterId}`, {
+      status: "approved",
+      actor_role: authMember.role === "leader" ? "leader" : "attorney",
+      actor_email: authMember.role === "leader" ? "" : (authMember.email || ""),
+    }, "PATCH");
+    if (result.ok) {
+      await loadRecommendationWorkspace(selectedBuilderMemberId);
+      setMessage({ type: "success", text: "Recommendation letter approved." });
+    } else {
+      setMessage({ type: "error", text: result.payload.error || "Could not approve recommendation letter." });
+    }
+  }
+
+  async function sendRecommendationLetter(letterId) {
+    const result = await sendJson(`/api/attorney/recommendation-letters/${letterId}/send-to-member`, {
+      actor_role: authMember.role === "leader" ? "leader" : "attorney",
+      actor_email: authMember.role === "leader" ? "" : (authMember.email || ""),
+    });
+    if (result.ok) {
+      await loadRecommendationWorkspace(selectedBuilderMemberId);
+      await loadMessageCenterData(authMember);
+      setMessage({ type: "success", text: "Recommendation letter sent to member messages." });
+    } else {
+      setMessage({ type: "error", text: result.payload.error || "Could not send recommendation letter." });
+    }
+  }
+
 
   async function loadAttorneyPetition(clientId = selectedBuilderMemberId) {
     if (!clientId) return;
@@ -3465,6 +4414,56 @@ function App() {
       setMessage({ type: "error", text: "Could not generate attorney petition draft." });
     } finally {
       setPetitionBusy(false);
+    }
+  }
+
+  async function loadPetitionAcceleration(clientId = selectedBuilderMemberId) {
+    if (!clientId) return;
+    setPetitionAccelerationBusy(true);
+    try {
+      let data;
+      if (authMember?.role === "member") {
+        data = await getJson("/api/member/petition-acceleration");
+      } else if (authMember?.role === "attorney") {
+        data = await getJson(`/api/attorney/members/${clientId}/petition-acceleration`, { attorney_email: authMember.email || "" });
+      } else if (authMember?.role === "leader") {
+        data = await getJson(`/api/leader/members/${clientId}/petition-acceleration`);
+      } else if (authMember?.role === "admin") {
+        data = await getJson("/api/admin/petition-acceleration", { client_id: clientId });
+      } else {
+        data = await getJson(`/api/builder/members/${clientId}/petition-acceleration`, { actor_email: authMember?.email || "" });
+      }
+      setPetitionAcceleration(data);
+    } catch (_error) {
+      setPetitionAcceleration(null);
+    } finally {
+      setPetitionAccelerationBusy(false);
+    }
+  }
+
+  function setEndeavorPromptField(field, value) {
+    setEndeavorPromptForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function generateEndeavorLetter(clientId = selectedBuilderMemberId) {
+    if (!clientId || !["attorney", "leader"].includes(authMember?.role)) return;
+    setEndeavorBusy(true);
+    try {
+      const result = await sendJson("/api/attorney/endeavor-letter-generator", {
+        client_id: clientId,
+        actor_role: authMember.role === "leader" ? "leader" : "attorney",
+        actor_email: authMember.role === "leader" ? "" : (authMember.email || ""),
+        prompt_config: endeavorPromptForm,
+      });
+      if (result.ok) {
+        setEndeavorDraft(result.payload);
+        if (result.payload.prompt_config) setEndeavorPromptForm(result.payload.prompt_config);
+        setEndeavorLetterView(true);
+      } else {
+        setMessage({ type: "error", text: result.payload.error || "Could not generate endeavor letter." });
+      }
+    } finally {
+      setEndeavorBusy(false);
     }
   }
 
@@ -3512,8 +4511,12 @@ function App() {
 
   async function handleBatchAnalyze(event) {
     event.preventDefault();
-    if (!selectedBuilderMemberId || !batchZipFile) {
-      setMessage({ type: "error", text: "Choose a member and a ZIP file first." });
+    if (!selectedBuilderMemberId) {
+      setMessage({ type: "error", text: "Please select a member before uploading a ZIP." });
+      return;
+    }
+    if (!batchZipFile) {
+      setMessage({ type: "error", text: "Please select a ZIP file before submitting." });
       return;
     }
     setBatchBusy(true);
@@ -3540,6 +4543,13 @@ function App() {
 
   async function saveBatchItem(item) {
     if (!batchSession) return;
+    if (item.commit_evidence_id || batchSession.status === "committed" || item.review_status === "committed") {
+      setMessage({
+        type: "warning",
+        text: "This file has already been committed to the evidence folder. Start a new batch or upload a replacement if the destination needs to change.",
+      });
+      return;
+    }
     const formData = new FormData();
     formData.set("criterion_code", item.criterion_code || "other");
     formData.set("document_type", item.document_type || "Other");
@@ -3616,30 +4626,65 @@ function App() {
     }
   }
 
-  useEffect(() => { bootstrapAuth(); }, []);
   useEffect(() => {
-    const handlePopState = () => applyRouteFromBrowser();
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, [authMember, criteriaList]);
+    const snapshot = readPortalRoute();
+    routeSyncRef.current.initialized = true;
+    routeSyncRef.current.lastUrl = window.location.href;
+    routeSyncRef.current.applying = true;
+    applyRouteSnapshot(snapshot, { allowPortalMode: true });
+    bootstrapAuth();
+  }, []);
   useEffect(() => {
     if (!authMember) return;
     loadMessageCenterData(authMember);
   }, [authMember]);
   useEffect(() => {
+    if (authMember?.role === "leader") loadProductBacklog();
+  }, [authMember?.role]);
+  useEffect(() => {
+    if (portalSection !== "batch" && message?.type === "error") {
+      setMessage(null);
+    }
+  }, [portalSection]);
+  useEffect(() => {
     if (["builder", "leader", "attorney", "admin"].includes(authMember?.role)) return;
     if (!authMember) return;
     if (view.type === "workspace" && view.criterionCode) {
-      syncMemberUrl(view);
       loadWorkspace(view.criterionCode, workspaceQuery);
-    } else {
-      syncMemberUrl(view);
     }
   }, [view, workspaceQuery]);
   useEffect(() => {
-    if (!["builder", "leader", "attorney", "admin"].includes(authMember?.role)) return;
-    syncStaffUrl();
-  }, [authMember?.role, portalSection, selectedBuilderMemberId]);
+    const handlePopState = () => {
+      routeSyncRef.current.applying = true;
+      routeSyncRef.current.lastUrl = window.location.href;
+      applyRouteSnapshot(readPortalRoute(), { allowPortalMode: true });
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [authMember, authMode, leaderPerspective]);
+  useEffect(() => {
+    if (!authReady) return;
+    const nextUrl = buildRouteUrl(currentRouteSnapshot());
+    if (routeSyncRef.current.applying) {
+      routeSyncRef.current.applying = false;
+      routeSyncRef.current.lastUrl = nextUrl;
+      window.history.replaceState({}, "", nextUrl);
+      return;
+    }
+    if (routeSyncRef.current.lastUrl === nextUrl) return;
+    if (!routeSyncRef.current.initialized) {
+      window.history.replaceState({}, "", nextUrl);
+      routeSyncRef.current.initialized = true;
+    } else {
+      window.history.pushState({}, "", nextUrl);
+    }
+    routeSyncRef.current.lastUrl = nextUrl;
+  }, [authReady, authMode, authMember?.role, view.type, view.criterionCode, selectedFolderId, portalSection, leaderPerspective, selectedBuilderMemberId]);
+  useEffect(() => {
+    if (!authReady || loading || !routeNoticeRef.current) return;
+    setMessage(routeNoticeRef.current);
+    routeNoticeRef.current = null;
+  }, [authReady, loading, view.type, portalSection]);
   useEffect(() => {
     if (!workspace || !selectedFolderId) return;
     const folder = workspace.folders.find((item) => item.id === selectedFolderId);
@@ -3653,32 +4698,61 @@ function App() {
   }, [plannerItems]);
   useEffect(() => {
     if (!["builder", "leader", "attorney", "admin"].includes(authMember?.role) || !selectedBuilderMemberId) return;
-    if (loading || builderMemberDetail?.member?.client_id === selectedBuilderMemberId) return;
-    let active = true;
     const path = authMember?.role === "attorney" ? `/api/attorney/members/${selectedBuilderMemberId}` : `/api/builder/members/${selectedBuilderMemberId}`;
     const params = authMember?.role === "attorney" ? { attorney_email: authMember?.email || "" } : undefined;
-    setMemberDetailLoading(true);
     getJson(path, params).then((detail) => {
-      if (!active) return;
       setBuilderMemberDetail(detail);
       if (authMember?.role === "attorney") setProfile(detail.profile || null);
       if (["attorney", "leader"].includes(authMember?.role)) loadAttorneyEvidence(selectedBuilderMemberId);
-    }).catch(() => {}).finally(() => {
-      if (active) setMemberDetailLoading(false);
-    });
-    return () => { active = false; };
-  }, [selectedBuilderMemberId, authMember?.role, authMember?.email, loading, builderMemberDetail?.member?.client_id]);
+    }).catch(() => {});
+  }, [selectedBuilderMemberId, authMember?.role]);
   useEffect(() => {
-    if (authMember?.role !== "attorney" || portalSection !== "petition" || !selectedBuilderMemberId) return;
+    if (!authMember?.role) return;
+    if (authMember.role === "member") {
+      loadFilingTimeline(authMember.client_id || "");
+      return;
+    }
+    if (["builder", "leader", "attorney", "admin"].includes(authMember.role) && selectedBuilderMemberId) {
+      loadFilingTimeline(selectedBuilderMemberId);
+    }
+  }, [authMember?.role, authMember?.client_id, selectedBuilderMemberId]);
+  useEffect(() => {
+    if (!["attorney", "leader"].includes(authMember?.role) || portalSection !== "petition" || !selectedBuilderMemberId) return;
+    if (authMember?.role === "leader" && leaderPerspective !== "attorney") return;
     loadAttorneyPetition(selectedBuilderMemberId);
-  }, [authMember?.role, portalSection, selectedBuilderMemberId]);
+  }, [authMember?.role, portalSection, leaderPerspective, selectedBuilderMemberId]);
+  useEffect(() => {
+    if (!selectedBuilderMemberId || !authMember?.role) return;
+    const shouldLoad =
+      (authMember.role === "attorney" && portalSection === "petition") ||
+      (authMember.role === "builder" && portalSection === "members") ||
+      (authMember.role === "leader" && ((leaderPerspective === "attorney" && portalSection === "petition") || (leaderPerspective !== "attorney" && portalSection === "members"))) ||
+      (authMember.role === "admin" && portalSection === "debug");
+    if (!shouldLoad) return;
+    loadPetitionAcceleration(selectedBuilderMemberId);
+  }, [authMember?.role, portalSection, leaderPerspective, selectedBuilderMemberId]);
+  useEffect(() => {
+    if (!["attorney", "leader"].includes(authMember?.role) || !selectedBuilderMemberId) return;
+    setEndeavorPromptForm(buildEndeavorPromptDefaults(selectedAttorneyMember, builderMemberDetail, evidenceItems));
+    setEndeavorDraft(null);
+    setEndeavorLetterView(false);
+  }, [authMember?.role, selectedBuilderMemberId, selectedAttorneyMember, builderMemberDetail, evidenceItems]);
   useEffect(() => {
     if (!["attorney", "leader"].includes(authMember?.role)) return;
     setBatchSession(null);
     setBatchSessions([]);
     setBatchZipFile(null);
     setBatchContext("");
+    setRecommendationWorkspace(null);
+    setActiveRecommendationLetterId("");
+    setRecommendationPromptForm(emptyRecommendationPromptForm());
   }, [selectedBuilderMemberId, authMember?.role]);
+  useEffect(() => {
+    if (!["attorney", "leader"].includes(authMember?.role) || !selectedBuilderMemberId) return;
+    if (authMember.role === "leader" && leaderPerspective !== "attorney") return;
+    if (portalSection !== "recommendations") return;
+    loadRecommendationWorkspace(selectedBuilderMemberId);
+  }, [authMember?.role, portalSection, leaderPerspective, selectedBuilderMemberId]);
   useEffect(() => {
     if (!["attorney", "leader"].includes(authMember?.role) || portalSection !== "batch" || !selectedBuilderMemberId) return;
     loadBatchSessions(selectedBuilderMemberId);
@@ -3695,89 +4769,19 @@ function App() {
     window.sessionStorage.setItem(assistantSessionStorageKey, JSON.stringify(assistantThread));
   }, [assistantSessionStorageKey, assistantThread]);
 
-  async function handleLogin(event) {
-    event.preventDefault();
+  async function submitLogin(username, password) {
     setLoginBusy(true);
     setMessage(null);
     try {
       if (isPreviewRole(authMode)) {
         const options = PREVIEW_ACCOUNTS[authMode] || [];
-        const match = options.find((item) => item.username === loginForm.username.trim().toLowerCase());
+        const match = options.find((item) => item.username === username.trim().toLowerCase());
         if (!match) {
           const examples = options.map((item) => item.username).join(" or ");
-          setMessage({ type: "error", text: `Use an authorized ${portalMeta(authMode).label} account${examples ? ` such as ${examples}` : ""}.` });
+          setMessage({ type: "error", text: `Use ${examples || "a configured preview account"} for the ${portalMeta(authMode).label}.` });
           return;
         }
         const identity = previewIdentity(authMode, match.username);
-        persistAuth(`preview:${authMode}`, identity);
-        setAuthMember(identity);
-        setLoginForm({ username: "", password: "" });
-        setAuthReady(true);
-        if (authMode === "admin") {
-          await loadAdminPortal();
-        } else if (authMode === "leader") {
-          setLeaderPerspective("leader");
-          await loadLeaderPortal();
-        } else {
-          await loadReviewPortals();
-        }
-        return;
-      }
-      const formData = new FormData();
-      formData.set("username", loginForm.username);
-      formData.set("password", loginForm.password);
-      if (STAFF_ROLE_VALUES.has(authMode)) {
-        formData.set("portal_role", authMode);
-      }
-      const result = await sendForm(roleConfig(authMode).loginPath, formData);
-      if (result.ok) {
-        const payloadUser = result.payload.member || result.payload.builder || result.payload.user;
-        const expectedRole = normalizePortalRole(authMode) || "member";
-        const actualRole = normalizePortalRole(payloadUser?.role);
-        if (!actualRole || actualRole !== expectedRole) {
-          clearAuth();
-          setAuthMember(null);
-          setMessage({ type: "error", text: `These credentials belong to ${actualRole ? portalMeta(actualRole).label : "another portal"}, not ${portalMeta(expectedRole).label}.` });
-          return;
-        }
-        persistAuth(result.payload.token, payloadUser);
-        setAuthMember(payloadUser);
-        setLoginForm({ username: "", password: "" });
-        setAuthReady(true);
-        const route = readPortalRoute();
-        if (expectedRole !== "member") {
-          setPortalSection(requestedPortalSection(expectedRole, portalSection || "home"));
-          if (route.memberId) setSelectedBuilderMemberId(route.memberId);
-        }
-        if (authMode === "builder") {
-          await loadBuilderDashboard(route.memberId || selectedBuilderMemberId);
-        } else if (authMode === "leader") {
-          setLeaderPerspective("leader");
-          await loadLeaderPortal(route.memberId || selectedBuilderMemberId);
-        } else if (authMode === "attorney") {
-          await loadReviewPortals(route.memberId || selectedBuilderMemberId, payloadUser.email || "");
-        } else if (authMode === "admin") {
-          await loadAdminPortal(route.memberId || selectedBuilderMemberId);
-        } else {
-          await loadHome();
-        }
-      } else {
-        setMessage({ type: "error", text: result.payload.error || "Login failed." });
-      }
-    } finally {
-      setLoginBusy(false);
-    }
-  }
-
-  async function handleDevLogin(account) {
-    const username = account.username || "";
-    const password = account.password || DEFAULT_QUICK_LOGIN_PASSWORD;
-    setLoginForm({ username, password });
-    setLoginBusy(true);
-    setMessage(null);
-    try {
-      if (isPreviewRole(authMode)) {
-        const identity = previewIdentity(authMode, username);
         persistAuth(`preview:${authMode}`, identity);
         setAuthMember(identity);
         setLoginForm({ username: "", password: "" });
@@ -3806,36 +4810,41 @@ function App() {
         if (!actualRole || actualRole !== expectedRole) {
           clearAuth();
           setAuthMember(null);
-          setMessage({ type: "error", text: `These saved credentials belong to ${actualRole ? portalMeta(actualRole).label : "another portal"}, not ${portalMeta(expectedRole).label}.` });
+          setMessage({ type: "error", text: `These credentials belong to ${actualRole ? portalMeta(actualRole).label : "another portal"}, not ${portalMeta(expectedRole).label}.` });
           return;
         }
         persistAuth(result.payload.token, payloadUser);
         setAuthMember(payloadUser);
         setLoginForm({ username: "", password: "" });
         setAuthReady(true);
-        const route = readPortalRoute();
-        if (expectedRole !== "member") {
-          setPortalSection(requestedPortalSection(expectedRole, portalSection || "home"));
-          if (route.memberId) setSelectedBuilderMemberId(route.memberId);
-        }
         if (authMode === "builder") {
-          await loadBuilderDashboard(route.memberId || selectedBuilderMemberId);
+          await loadBuilderDashboard();
         } else if (authMode === "leader") {
           setLeaderPerspective("leader");
-          await loadLeaderPortal(route.memberId || selectedBuilderMemberId);
+          await loadLeaderPortal();
         } else if (authMode === "attorney") {
-          await loadReviewPortals(route.memberId || selectedBuilderMemberId, payloadUser.email || "");
+          await loadReviewPortals(selectedBuilderMemberId, payloadUser.email || "");
         } else if (authMode === "admin") {
-          await loadAdminPortal(route.memberId || selectedBuilderMemberId);
+          await loadAdminPortal();
         } else {
           await loadHome();
         }
       } else {
-        setMessage({ type: "error", text: result.payload.error || "Saved credential login failed." });
+        setMessage({ type: "error", text: result.payload.error || "Login failed." });
       }
     } finally {
       setLoginBusy(false);
     }
+  }
+
+  async function handleLogin(event) {
+    event.preventDefault();
+    await submitLogin(loginForm.username, loginForm.password);
+  }
+
+  async function handleDevLogin(account) {
+    setLoginForm({ username: account.username, password: "" });
+    setMessage({ type: "success", text: "Username filled. Enter the password to sign in." });
   }
 
   async function handleLogout() {
@@ -3930,20 +4939,32 @@ function App() {
     setMemberMenuOpen(false);
   }
 
+  function openPasswordDialog() {
+    setPasswordMessage(null);
+    setPasswordDialogOpen(true);
+    setMemberMenuOpen(false);
+  }
+
+  function closePasswordDialog() {
+    setPasswordDialogOpen(false);
+    setPasswordMessage(null);
+  }
+
   async function handlePasswordChange(event) {
     event.preventDefault();
+    setPasswordMessage(null);
     if (passwordForm.new_password !== passwordForm.confirm_password) {
-      setMessage({ type: "error", text: "New password and confirmation do not match." });
+      setPasswordMessage({ type: "error", text: "New password and confirmation do not match." });
       return;
     }
     if (isPreviewRole(authMember?.role)) {
       setMessage({ type: "success", text: "Password updated for preview mode." });
       setPasswordDialogOpen(false);
       setPasswordForm({ current_password: "", new_password: "", confirm_password: "" });
+      setPasswordMessage(null);
       return;
     }
     setPasswordBusy(true);
-    setMessage(null);
     try {
       const formData = new FormData();
       formData.set("current_password", passwordForm.current_password);
@@ -3953,8 +4974,9 @@ function App() {
         setMessage({ type: "success", text: "Password updated." });
         setPasswordDialogOpen(false);
         setPasswordForm({ current_password: "", new_password: "", confirm_password: "" });
+        setPasswordMessage(null);
       } else {
-        setMessage({ type: "error", text: result.payload.error || "Could not change password." });
+        setPasswordMessage({ type: "error", text: result.payload.error || "Could not change password." });
       }
     } finally {
       setPasswordBusy(false);
@@ -3970,7 +4992,6 @@ function App() {
     setOverrideDocumentType("Other");
     setManualDocumentType("Other");
     setConsent(false);
-    setDraftApprovalError("");
     setDuplicateState(null);
     const picker = document.getElementById("member-file");
     if (picker) picker.value = "";
@@ -4125,7 +5146,8 @@ function App() {
     }
     const thread = messageCenter.threads?.find((item) => item.thread_id === threadId);
     if (!thread || !authMember) return;
-    const unreadItems = thread.messages.filter((item) => item.recipient_role === authMember.role && !item.is_read && item.recipient_key === (authMember.role === "member" ? authMember.client_id : authMember.email));
+    const actorKeys = actorMessageKeys(authMember);
+    const unreadItems = thread.messages.filter((item) => item.recipient_role === authMember.role && !item.is_read && actorKeys.has(String(item.recipient_key || "").trim()));
     for (const item of unreadItems) {
       const formData = new FormData();
       formData.set("actor_role", authMember.role);
@@ -4141,6 +5163,18 @@ function App() {
     event.preventDefault();
     if (!authMember) return;
     const activeThread = selectedThread();
+    if (!messageComposer.body.trim()) {
+      setMessage({ type: "error", text: "Message body is required." });
+      return;
+    }
+    if (!activeThread && !messageComposer.subject.trim()) {
+      setMessage({ type: "error", text: "Subject is required." });
+      return;
+    }
+    if (!activeThread && (!messageComposer.recipient_role || !messageComposer.recipient_key)) {
+      setMessage({ type: "error", text: "Select a recipient before sending." });
+      return;
+    }
     setMessageBusy(true);
     setMessage(null);
     try {
@@ -4173,6 +5207,7 @@ function App() {
 
   async function handleDeleteMessage(messageId) {
     if (!authMember) return;
+    if (!confirmDeleteAction("Delete this message?", "This action cannot be undone from the portal. Continue?")) return;
     const response = await fetch(
       `${API_URL}/api/messages/${messageId}?${new URLSearchParams(actorParams(authMember)).toString()}`,
       { method: "DELETE", headers: { ...authHeaders() } },
@@ -4203,6 +5238,8 @@ function App() {
   }
 
   async function resetMemberIssueSession(clientId) {
+    const memberName = debugMember?.member?.display_name || clientId;
+    if (!window.confirm(`Reset active sessions for ${memberName}? This will require the member to sign in again.`)) return;
     setMessage(null);
     const response = await fetch(`${API_URL}/api/admin/members/${clientId}/reset-session`, { method: "POST", headers: { ...authHeaders() } });
     const body = await response.json();
@@ -4248,6 +5285,38 @@ function App() {
     setProfileForm((current) => ({ ...current, [field]: value }));
   }
 
+  function setCriticalRoleField(field, value) {
+    setCriticalRoleForm((current) => {
+      const next = { ...current, [field]: value };
+      if (field === "is_current_role" && value) next.role_end_date = "";
+      return next;
+    });
+  }
+
+  function openCriticalRoleProject(project) {
+    setActiveCriticalRoleId(project.id || "");
+    setCriticalRoleForm(hydrateCriticalRoleProject(project));
+  }
+
+  function startNewCriticalRoleProject() {
+    setActiveCriticalRoleId("");
+    setCriticalRoleForm(emptyCriticalRoleProjectForm());
+  }
+
+  function setOriginalContributionField(field, value) {
+    setOriginalContributionForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function openOriginalContribution(entry) {
+    setActiveOriginalContributionId(entry.id || "");
+    setOriginalContributionForm(hydrateOriginalContribution(entry));
+  }
+
+  function startNewOriginalContribution() {
+    setActiveOriginalContributionId("");
+    setOriginalContributionForm(emptyOriginalContributionForm());
+  }
+
   async function handleProfileSubmit(event) {
     event.preventDefault();
     setProfileBusy(true);
@@ -4267,6 +5336,138 @@ function App() {
       }
     } finally {
       setProfileBusy(false);
+    }
+  }
+
+  async function persistCriticalRoleProject(mode = "draft") {
+    setCriticalRoleBusy(true);
+    setMessage(null);
+    try {
+      const formData = new FormData();
+      Object.entries(criticalRoleForm).forEach(([key, value]) => {
+        if (key === "id") return;
+        formData.set(key, typeof value === "boolean" ? String(value) : value);
+      });
+      formData.set("workflow_status", mode);
+      const path = activeCriticalRoleId ? `/api/member/critical-role-projects/${activeCriticalRoleId}` : "/api/member/critical-role-projects";
+      const method = activeCriticalRoleId ? "PATCH" : "POST";
+      const result = await sendForm(path, formData, method);
+      if (result.ok) {
+        const saved = hydrateCriticalRoleProject(result.payload);
+        setCriticalRoleForm(saved);
+        setActiveCriticalRoleId(saved.id);
+        await loadHome();
+        await logPortalActivity(mode === "submitted" ? "critical_role_submit" : "critical_role_draft_save", mode === "submitted" ? "Submitted a critical role project." : "Saved a critical role draft.", {
+          project_id: saved.id || "",
+          workflow_status: mode,
+          project_name: saved.project_name || "",
+          organization_name: saved.organization_name || "",
+        });
+        setMessage({ type: "success", text: mode === "submitted" ? "Critical role project submitted." : "Critical role project saved as draft." });
+      } else {
+        setMessage({ type: "error", text: result.payload.error || "Could not save critical role project." });
+      }
+    } finally {
+      setCriticalRoleBusy(false);
+    }
+  }
+
+  async function saveCriticalRoleProjectDraft() {
+    await persistCriticalRoleProject("draft");
+  }
+
+  async function submitCriticalRoleProject() {
+    await persistCriticalRoleProject("submitted");
+  }
+
+  async function deleteCriticalRoleProject() {
+    if (!activeCriticalRoleId) return;
+    if (!confirmDeleteAction("Delete this critical role project?", "This will remove the project from the portal and archive any generated evidence. Continue?")) return;
+    setCriticalRoleBusy(true);
+    setMessage(null);
+    try {
+      const response = await fetch(`${API_URL}/api/member/critical-role-projects/${activeCriticalRoleId}`, {
+        method: "DELETE",
+        headers: { ...authHeaders() },
+      });
+      const payload = await response.json();
+      if (response.ok) {
+        await logPortalActivity("critical_role_delete", "Deleted a critical role project.", { project_id: activeCriticalRoleId });
+        setMessage({ type: "success", text: "Critical role project removed." });
+        setActiveCriticalRoleId("");
+        setCriticalRoleForm(emptyCriticalRoleProjectForm());
+        await loadHome();
+      } else {
+        setMessage({ type: "error", text: (payload.detail || payload).error || "Could not delete critical role project." });
+      }
+    } finally {
+      setCriticalRoleBusy(false);
+    }
+  }
+
+  async function persistOriginalContribution(mode = "draft") {
+    setOriginalContributionBusy(true);
+    setMessage(null);
+    try {
+      const formData = new FormData();
+      Object.entries(originalContributionForm).forEach(([key, value]) => {
+        if (key === "id") return;
+        formData.set(key, value);
+      });
+      formData.set("workflow_status", mode);
+      const path = activeOriginalContributionId ? `/api/member/original-contributions/${activeOriginalContributionId}` : "/api/member/original-contributions";
+      const method = activeOriginalContributionId ? "PATCH" : "POST";
+      const result = await sendForm(path, formData, method);
+      if (result.ok) {
+        const saved = hydrateOriginalContribution(result.payload);
+        setOriginalContributionForm(saved);
+        setActiveOriginalContributionId(saved.id);
+        await loadHome();
+        await logPortalActivity(mode === "submitted" ? "original_contribution_submit" : "original_contribution_draft_save", mode === "submitted" ? "Submitted an original contribution." : "Saved an original contribution draft.", {
+          entry_id: saved.id || "",
+          workflow_status: mode,
+          contribution_title: saved.contribution_title || "",
+          organization_name: saved.organization_name || "",
+        });
+        setMessage({ type: "success", text: mode === "submitted" ? "Original contribution submitted." : "Original contribution saved as draft." });
+      } else {
+        setMessage({ type: "error", text: result.payload.error || "Could not save original contribution." });
+      }
+    } finally {
+      setOriginalContributionBusy(false);
+    }
+  }
+
+  async function saveOriginalContributionDraft() {
+    await persistOriginalContribution("draft");
+  }
+
+  async function submitOriginalContribution() {
+    await persistOriginalContribution("submitted");
+  }
+
+  async function deleteOriginalContribution() {
+    if (!activeOriginalContributionId) return;
+    if (!confirmDeleteAction("Delete this original contribution entry?", "This will remove the entry from the portal and archive any generated evidence. Continue?")) return;
+    setOriginalContributionBusy(true);
+    setMessage(null);
+    try {
+      const response = await fetch(`${API_URL}/api/member/original-contributions/${activeOriginalContributionId}`, {
+        method: "DELETE",
+        headers: { ...authHeaders() },
+      });
+      const payload = await response.json();
+      if (response.ok) {
+        await logPortalActivity("original_contribution_delete", "Deleted an original contribution.", { entry_id: activeOriginalContributionId });
+        setMessage({ type: "success", text: "Original contribution removed." });
+        setActiveOriginalContributionId("");
+        setOriginalContributionForm(emptyOriginalContributionForm());
+        await loadHome();
+      } else {
+        setMessage({ type: "error", text: (payload.detail || payload).error || "Could not delete original contribution." });
+      }
+    } finally {
+      setOriginalContributionBusy(false);
     }
   }
 
@@ -4297,7 +5498,7 @@ function App() {
       setPlannerRows((current) => current.filter((row) => row.id !== itemId));
       return;
     }
-    if (!window.confirm("Delete this planner item?")) return;
+    if (!confirmDeleteAction("Delete this planner item?")) return;
     const response = await fetch(`${API_URL}/api/member/planner/${itemId}`, { method: "DELETE", headers: { ...authHeaders() } });
     const payload = await response.json();
     const body = payload.detail || payload;
@@ -4363,7 +5564,6 @@ function App() {
           setOverrideCategory(result.payload.criterion_code);
           setOverrideDocumentType(result.payload.document_type || inferDocumentType(`${selectedFile?.name || ""} ${memberContext}`));
           setConsent(false);
-          setDraftApprovalError("");
         } else {
           setMessage({ type: "error", text: "Evidence review failed. Please try again or contact Ascend support." });
         }
@@ -4374,7 +5574,10 @@ function App() {
   }
 
   async function handleSaveDraft(duplicateAction = "") {
-    if (!selectedFile) return;
+    if (!selectedFile) {
+      setMessage({ type: "error", text: "Please choose a file before saving evidence." });
+      return;
+    }
     let formData;
     if (routeMode === "manual") {
       const title = selectedFile.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ").trim() || "Uploaded evidence";
@@ -4389,12 +5592,9 @@ function App() {
       });
     } else {
       if (!draft || !consent) {
-        const approvalMessage = "Please approve the evidence draft before saving.";
-        setDraftApprovalError(approvalMessage);
-        setMessage({ type: "error", text: approvalMessage });
+        setMessage({ type: "error", text: "Please approve the AI draft before saving." });
         return;
       }
-      setDraftApprovalError("");
       formData = buildUploadForm({
         criterionCode: aiFeedback === "accept" ? draft.criterion_code : overrideCategory,
         documentType: aiFeedback === "accept" ? (draft.document_type || "Other") : overrideDocumentType,
@@ -4430,7 +5630,14 @@ function App() {
 
   async function createFolder(event) {
     event.preventDefault();
-    if (!view.criterionCode || !newFolderName.trim()) return;
+    if (!view.criterionCode) {
+      setMessage({ type: "error", text: "Open an evidence criterion before creating a folder." });
+      return;
+    }
+    if (!newFolderName.trim()) {
+      setMessage({ type: "error", text: "Folder name is required before creating a folder." });
+      return;
+    }
     const formData = new FormData();
     formData.set("name", newFolderName.trim());
     formData.set("parent_id", newFolderParent);
@@ -4465,7 +5672,7 @@ function App() {
 
   async function deleteFolder() {
     if (!selectedFolderId) return;
-    if (!window.confirm("Delete this folder? Files and subfolders will stay available.")) return;
+    if (!confirmDeleteAction("Delete this folder? Files and subfolders will stay available.", "This folder will be removed, but the evidence will remain available. Continue?")) return;
     const response = await fetch(`${API_URL}/api/folders/${selectedFolderId}`, { method: "DELETE", headers: { ...authHeaders() } });
     const payload = await response.json();
     const body = payload.detail || payload;
@@ -4479,7 +5686,7 @@ function App() {
   }
 
   async function deleteFile(item) {
-    if (!window.confirm(`Remove ${item.label} from your active evidence list?`)) return;
+    if (!confirmDeleteAction(`Remove ${item.label} from your active evidence list?`, "This will archive the evidence from the active workspace. Continue?")) return;
     const response = await fetch(`${API_URL}/api/evidence/${item.entityId}`, { method: "DELETE", headers: { ...authHeaders() } });
     const payload = await response.json();
     const body = payload.detail || payload;
@@ -4523,7 +5730,10 @@ function App() {
 
   async function assignBuilderTask(event) {
     event.preventDefault();
-    if (!selectedBuilderMemberId) return;
+    if (!selectedBuilderMemberId) {
+      setMessage({ type: "error", text: "Please select a member before assigning a task." });
+      return;
+    }
     setBuilderBusy(true);
     setMessage(null);
     try {
@@ -4536,7 +5746,8 @@ function App() {
       formData.set("opportunity_id", builderTaskForm.opportunity_id);
       const result = await sendForm("/api/builder/tasks", formData);
       if (result.ok) {
-        setMessage({ type: "success", text: "Task assigned to member." });
+        const selectedMember = builderMembers.find((member) => member.client_id === selectedBuilderMemberId);
+        setMessage({ type: "success", text: `Task assigned to ${selectedMember?.display_name || "selected member"}.` });
         setBuilderTaskForm({ opportunity_id: "", title: "", description: "", criterion_code: "", due_date: "" });
         await reloadOperationalWorkspace(selectedBuilderMemberId);
       } else {
@@ -4581,7 +5792,13 @@ function App() {
     }
   }
 
-  if (!authReady) {
+  const waitingForBuilderPortal = authMember?.role === "builder" && (loading || !builderDashboard);
+  const waitingForLeaderPortal = authMember?.role === "leader" && (loading || !builderDashboard);
+  const waitingForAttorneyPortal = authMember?.role === "attorney" && (loading || !dashboard);
+  const waitingForAdminPortal = authMember?.role === "admin" && (loading || !adminDashboard);
+  const waitingForMemberPortal = authMember?.role === "member" && (loading || !dashboard);
+
+  if (!authReady || loading || waitingForBuilderPortal || waitingForLeaderPortal || waitingForAttorneyPortal || waitingForAdminPortal || waitingForMemberPortal) {
     return <main className="shell auth-shell"><div className="loading">Loading Ascend portal...</div></main>;
   }
 
@@ -4617,7 +5834,7 @@ function App() {
             </form>
             {loginChoices.length ? (
               <div className="dev-login-panel">
-                <div className="section-kicker">Quick Login Shortcuts</div>
+                <div className="section-kicker">Development Login Shortcuts</div>
                 <div className="dev-login-grid">
                   {loginChoices.map((account) => (
                     <button
@@ -4642,9 +5859,6 @@ function App() {
   }
 
   const selectedCriterion = dashboard?.criteria?.find((item) => item.code === view.criterionCode);
-  const memberDashboard = dashboard || emptyMemberDashboard(authMember, criteriaList);
-  const portalHydrating = Boolean(authMember && loading);
-  const selectedMemberHydrating = memberDetailLoading && Boolean(selectedBuilderMemberId);
   const memberInitials = `${(authMember.display_name || "M").slice(0, 1)}${(profile?.last_name || "").slice(0, 1)}`.toUpperCase();
   const portalTitle = authMember.role === "leader" ? "Leader Portal" : authMember.role === "attorney" ? "Attorney Portal" : authMember.role === "admin" ? "Admin Portal" : authMember.role === "builder" ? "Profile Builder Portal" : "Member Portal";
   const isLeaderExecutiveView = authMember.role === "leader" && leaderPerspective === "leader";
@@ -4652,7 +5866,7 @@ function App() {
   const isLeaderAttorneyView = authMember.role === "leader" && leaderPerspective === "attorney";
   const showingBuilderWorkspace = authMember.role === "builder" || isLeaderBuilderView;
   const builderLabel = showingBuilderWorkspace ? "Profile Builder" : "Leader";
-  const memberSection = view.type === "messages" ? "messages" : view.type === "profile" ? "profile" : view.type === "planner" ? "planner" : view.type === "intake" ? "intake" : "home";
+  const memberSection = view.type === "messages" ? "messages" : view.type === "profile" ? "profile" : view.type === "critical_roles" ? "critical_roles" : view.type === "original_contributions" ? "original_contributions" : view.type === "planner" ? "planner" : view.type === "intake" ? "intake" : "home";
   function goToPortalHome() {
     setMessage(null);
     setMemberMenuOpen(false);
@@ -4725,7 +5939,7 @@ function App() {
             <input type="file" accept=".zip,application/zip" onChange={(event) => setBatchZipFile(event.target.files?.[0] || null)} />
           </label>
           <div className="form-actions">
-            <button className="primary compact-btn" type="submit" disabled={batchBusy || !selectedBuilderMemberId}>
+            <button className="primary compact-btn" type="submit" disabled={batchBusy}>
               {batchBusy ? "Preparing Queue..." : "Build Review Queue"}
             </button>
           </div>
@@ -4760,6 +5974,12 @@ function App() {
               <MetricCard label="Needs Review" value={batchSession.counts?.pending || 0} />
               <MetricCard label="Committed" value={batchSession.counts?.committed || 0} />
             </section>
+
+            {(batchSession.items || []).some((item) => item.analysis_source && item.analysis_source !== "openai") ? (
+              <div className="banner warning" style={{ marginTop: "18px" }}>
+                AI classification was unavailable or used fallback routing for one or more files. Please manually confirm category, document type, and folder before committing.
+              </div>
+            ) : null}
 
             {batchSession.skipped_files?.length ? (
               <section className="panel" style={{ marginTop: "18px" }}>
@@ -4950,6 +6170,8 @@ function App() {
       { value: "members", label: "Member Review" },
       { value: "risks", label: "Risk & Bottlenecks" },
       { value: "capacity", label: "Team Capacity" },
+      { value: "timeline", label: "Delivery Timeline" },
+      { value: "backlog", label: "Product Backlog" },
       { value: "batch", label: "Batch Intake" },
       { value: "opportunities", label: "Opportunities" },
       { value: "oversight", label: "Assignment Oversight" },
@@ -4957,9 +6179,9 @@ function App() {
     ];
     return (
       <React.Fragment>
-        <main className="shell attorney-shell">
+        <main className="shell attorney-shell" style={shellStyle}>
           <aside className="sidebar attorney-sidebar">
-          <PortalBrand onHome={goToPortalHome} label={isLeaderExecutiveView ? "Go to leader home" : "Go to builder home"} />
+          <PortalBrand onHome={goToPortalHome} label={`Go to ${isLeaderExecutiveView ? "leader" : isLeaderBuilderView ? "builder" : "profile builder"} home`} />
           <div className="brand-sub">{isLeaderExecutiveView ? "Leader Workspace" : isLeaderBuilderView ? "Leader Acting As Builder" : "Profile Builder Workspace"}</div>
           {authMember.role === "leader" ? (
             <div className="side-card perspective-side-card">
@@ -4985,6 +6207,7 @@ function App() {
           </div>
           <span className="side-note">{authMember.role === "leader" ? (isLeaderExecutiveView ? "Leader portal only" : "Leader operating in builder visibility mode") : "Profile builder portal only"}</span>
         </aside>
+        {sidebarResizer}
         <section className="main attorney-main">
           <div className="topbar">
             <div className="topbar-copy">
@@ -5003,7 +6226,7 @@ function App() {
               </button>
               {memberMenuOpen ? (
                 <div className="member-menu">
-                  <button type="button" onClick={() => { setPasswordDialogOpen(true); setMemberMenuOpen(false); }}>Change Password</button>
+                  <button type="button" onClick={openPasswordDialog}>Change Password</button>
                   <button type="button" onClick={openHelpManual}>Help Manual</button>
                   <button type="button" onClick={handleLogout}>Logout</button>
                 </div>
@@ -5013,13 +6236,14 @@ function App() {
 
           {message ? <div className={`banner ${message.type}`}>{message.text}</div> : null}
           {passwordDialogOpen ? (
-            <div className="modal-backdrop" onClick={() => setPasswordDialogOpen(false)}>
+            <div className="modal-backdrop" onClick={closePasswordDialog}>
               <section className="modal-card" onClick={(event) => event.stopPropagation()}>
                 <div className="panel-header">
                   <div><div className="section-kicker">Account</div><h3 className="section-title">Change Password</h3></div>
-                  <button className="ghost compact-btn" type="button" onClick={() => setPasswordDialogOpen(false)}>Close</button>
+                  <button className="ghost compact-btn" type="button" onClick={closePasswordDialog}>Close</button>
                 </div>
                 <form className="stacked-form" onSubmit={handlePasswordChange}>
+                  {passwordMessage ? <div className={`banner ${passwordMessage.type}`}>{passwordMessage.text}</div> : null}
                   <label>Current Password<input type="password" value={passwordForm.current_password} onChange={(event) => setPasswordForm((current) => ({ ...current, current_password: event.target.value }))} /></label>
                   <label>New Password<input type="password" value={passwordForm.new_password} onChange={(event) => setPasswordForm((current) => ({ ...current, new_password: event.target.value }))} /></label>
                   <label>Confirm New Password<input type="password" value={passwordForm.confirm_password} onChange={(event) => setPasswordForm((current) => ({ ...current, confirm_password: event.target.value }))} /></label>
@@ -5027,18 +6251,6 @@ function App() {
                 </form>
               </section>
             </div>
-          ) : null}
-
-          {portalHydrating ? (
-            <PortalHydrationNotice
-              title={isLeaderExecutiveView ? "Loading leader workspace" : "Loading profile builder workspace"}
-              detail="The portal shell is ready while roster, opportunity, criteria, and selected member data refresh."
-            />
-          ) : selectedMemberHydrating ? (
-            <PortalHydrationNotice
-              title="Refreshing selected member"
-              detail="The current workspace stays available while Ascend loads the selected member detail."
-            />
           ) : null}
 
           {portalSection === "messages" ? (
@@ -5140,6 +6352,52 @@ function App() {
                   />
                 </section>
               </section>
+            </React.Fragment>
+          ) : isLeaderExecutiveView && portalSection === "timeline" ? (
+            <React.Fragment>
+              <header className="hero">
+                <p className="eyebrow">Delivery Timeline</p>
+                <h1>Portfolio timing to petition filing.</h1>
+                <p>Use the member selector to inspect a realistic filing path, then watch the table for late cases that need intervention.</p>
+              </header>
+              <section className="metrics-grid">
+                <MetricCard label="Late Cases" value={leaderMetrics.late_timeline_cases || 0} />
+                <MetricCard label="At Risk Cases" value={leaderMetrics.at_risk_cases || 0} />
+                <MetricCard label="Active Tasks" value={leaderMetrics.active_tasks || 0} />
+                <MetricCard label="Avg Readiness" value={`${leaderMetrics.avg_readiness || 0}%`} />
+              </section>
+              <FilingTimelinePanel data={filingTimeline} busy={filingTimelineBusy} />
+              <section className="panel" style={{ marginTop: "18px" }}>
+                <div className="section-kicker">Timeline Alerts</div>
+                <h3 className="section-title">Members running late or at risk</h3>
+                <div className="backlog-table">
+                  <div className="backlog-row backlog-head"><span>Status</span><span>Member</span><span>Target</span><span>Action</span></div>
+                  {builderMembers.map((item) => (
+                    <article key={`timeline_${item.client_id}`} className={`backlog-row ${item.timeline_summary?.late ? "priority-p0" : "priority-p2"}`}>
+                      <span className={`status-pill ${item.timeline_summary?.late ? "blocked" : item.timeline_summary?.status === "at_risk" ? "planned" : "completed"}`}>{item.timeline_summary?.status || "unknown"}</span>
+                      <div><strong>{item.display_name}</strong><p>{item.stage_label || caseStatusLabel(item.status)} • {item.readiness_score || 0}% readiness</p></div>
+                      <span>{item.timeline_summary?.target_filing_date || "TBD"}</span>
+                      <button className="ghost compact-btn" type="button" onClick={() => { setSelectedBuilderMemberId(item.client_id); loadFilingTimeline(item.client_id); }}>Review</button>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            </React.Fragment>
+          ) : isLeaderExecutiveView && portalSection === "backlog" ? (
+            <React.Fragment>
+              <header className="hero">
+                <p className="eyebrow">Product Backlog</p>
+                <h1>Convert field feedback into shippable work.</h1>
+                <p>Leaders can capture product suite improvements with screenshots, priority, value, and acceptance criteria so development, testing, and deployment have one source of truth.</p>
+              </header>
+              <ProductBacklogPanel
+                backlog={productBacklog}
+                form={featureRequestForm}
+                busy={featureRequestBusy}
+                onFormChange={(field, value) => setFeatureRequestForm((current) => ({ ...current, [field]: value }))}
+                onSubmit={submitFeatureRequest}
+                onUpdate={updateFeatureRequest}
+              />
             </React.Fragment>
           ) : isLeaderExecutiveView && portalSection === "oversight" ? (
             <React.Fragment>
@@ -5253,6 +6511,7 @@ function App() {
                         <strong>{item.display_name}</strong>
                         <span>{item.current_title || "Profile in progress"}{item.current_employer ? ` • ${item.current_employer}` : ""}</span>
                         <span>Readiness {item.readiness_score}% • {item.evidence_count} evidence • {item.open_task_count} open tasks</span>
+                        {item.timeline_summary ? <span>Target filing {item.timeline_summary.target_filing_date} • {item.timeline_summary.status?.replaceAll("_", " ")}</span> : null}
                         <span className={`status-pill ${item.momentum === "Strong" ? "completed" : item.momentum === "Needs focus" ? "blocked" : "in_progress"}`}>{item.momentum}</span>
                       </button>
                     ))}
@@ -5283,7 +6542,7 @@ function App() {
                           <span>{builderMemberDetail.tasks.filter((item) => item.status === "open").length} open</span>
                         </article>
                       </div>
-                      <BuilderWorkbenchPanel workbench={builderMemberDetail.builder_workbench} />
+                      <FilingTimelinePanel data={filingTimeline} busy={filingTimelineBusy} compact />
                       <div className="task-mini-list">
                         <div className="section-kicker">Tasks In Flight</div>
                         {builderMemberDetail.tasks.length ? (
@@ -5314,6 +6573,26 @@ function App() {
                           emptyText="No evidence files available for this member yet."
                         />
                       </section>
+                      <section className="panel panel-subsection">
+                        <div className="section-kicker">Member Narrative Exports</div>
+                        <h3 className="section-title">Critical role and original contribution exports</h3>
+                        <p className="section-intro">These generated PDF exports are built from the member’s structured intake and stored back into the secure evidence path for review.</p>
+                        <div className="builder-layout">
+                          <ExportedNarrativePanel
+                            title="Critical Role Exports"
+                            sectionLabel="Leading Or Critical Role"
+                            items={builderMemberDetail.critical_role_projects || []}
+                            emptyText="No critical role exports generated yet."
+                          />
+                          <ExportedNarrativePanel
+                            title="Original Contribution Exports"
+                            sectionLabel="Original Contributions"
+                            items={builderMemberDetail.original_contribution_entries || []}
+                            emptyText="No original contribution exports generated yet."
+                          />
+                        </div>
+                      </section>
+                      <PetitionAccelerationPanel data={petitionAcceleration} busy={petitionAccelerationBusy} compact />
                     </React.Fragment>
                   ) : <p className="empty-state">Choose a member to review their progress and assign work.</p>}
                 </section>
@@ -5358,7 +6637,7 @@ function App() {
                     <label>Guidance for member<textarea value={builderTaskForm.description} onChange={(event) => setBuilderTaskField("description", event.target.value)} /></label>
                     <label>Evidence category<select value={builderTaskForm.criterion_code} onChange={(event) => setBuilderTaskField("criterion_code", event.target.value)}><option value="">Choose category</option>{criteriaList.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}</select></label>
                     <label>Due date<input type="date" value={builderTaskForm.due_date} onChange={(event) => setBuilderTaskField("due_date", event.target.value)} /></label>
-                    <div className="form-actions"><button className="primary compact-btn" type="submit" disabled={builderBusy || !selectedBuilderMemberId}>{builderBusy ? "Assigning..." : "Assign To Member"}</button></div>
+                    <div className="form-actions"><button className="primary compact-btn" type="submit" disabled={builderBusy}>{builderBusy ? "Assigning..." : "Assign To Member"}</button></div>
                   </form>
 
                   <div className="panel-divider" />
@@ -5393,7 +6672,7 @@ function App() {
                 <MetricCard label={isLeaderExecutiveView ? "Active Cases" : "Assigned Members"} value={builderDashboard?.metrics.member_count || 0} />
                 <MetricCard label={isLeaderExecutiveView ? "Petition Ready" : "Active Tasks"} value={isLeaderExecutiveView ? (leaderMetrics.petition_ready_cases || 0) : (builderDashboard?.metrics.active_tasks || 0)} />
                 <MetricCard label={isLeaderExecutiveView ? "High Risk" : "Average Readiness"} value={isLeaderExecutiveView ? (leaderMetrics.at_risk_cases || 0) : `${builderDashboard?.metrics.avg_readiness || 0}%`} />
-                <MetricCard label={isLeaderExecutiveView ? "Weekly Execution" : "Opportunities"} value={isLeaderExecutiveView ? (leaderMetrics.weekly_execution_events || 0) : (builderDashboard?.metrics.opportunity_count || 0)} />
+                <MetricCard label={isLeaderExecutiveView ? "Late Cases" : "Opportunities"} value={isLeaderExecutiveView ? (leaderMetrics.late_timeline_cases || 0) : (builderDashboard?.metrics.opportunity_count || 0)} />
               </section>
 
           {isLeaderExecutiveView ? (
@@ -5443,8 +6722,6 @@ function App() {
                   />
                 </section>
               </section>
-
-              <LeaderBusinessPanel insights={leaderInsights} />
 
               <section className="panel" style={{ marginTop: "18px" }}>
                 <div className="section-kicker">Intervention Watchlist</div>
@@ -5544,7 +6821,6 @@ function App() {
                           <span>{builderMemberDetail.tasks.length ? (builderMemberDetail.tasks[0].due_date ? `Due ${builderMemberDetail.tasks[0].due_date}` : "No due date") : "Use Opportunities to issue the next step."}</span>
                         </article>
                       </div>
-                      <BuilderWorkbenchPanel workbench={builderMemberDetail.builder_workbench} />
                     </React.Fragment>
                   ) : <p className="empty-state">Choose a member to review their current builder view.</p>}
                 </section>
@@ -5566,13 +6842,19 @@ function App() {
   if (authMember.role === "attorney" || isLeaderAttorneyView) {
     const strengths = (builderMemberDetail?.criteria || []).filter((item) => item.evidence_count > 0);
     const gaps = (builderMemberDetail?.criteria || []).filter((item) => !item.evidence_count);
-    const selectedMemberRequired = ["dossier", "petition", "batch", "evidence"].includes(portalSection) && !selectedBuilderMemberId;
+    const selectedMemberRequired = ["dossier", "petition", "endeavor", "recommendations", "batch", "evidence"].includes(portalSection) && !selectedBuilderMemberId;
     const statusEntries = Object.entries(attorneyCaseStatusSummary);
+    const attorneyTotalOpenTasks = builderMembers.reduce((sum, item) => sum + (item.open_task_count || 0), 0);
+    const attorneyTotalEvidence = builderMembers.reduce((sum, item) => sum + (item.evidence_count || 0), 0);
+    const attorneyAverageReadiness = builderMembers.length ? Math.round(builderMembers.reduce((sum, item) => sum + (item.readiness_score || 0), 0) / builderMembers.length) : 0;
+    const attorneyCriteriaStarted = builderMembers.reduce((sum, item) => sum + (item.criteria_started || 0), 0);
+    const attorneyAttentionCases = builderMembers.filter((item) => (item.open_task_count || 0) > 0 || (item.readiness_score || 0) < 60).length;
+    const attorneyDeeperReviewCases = builderMembers.filter((item) => caseStatusLabel(item.status) === "legal review").length;
     return (
       <React.Fragment>
-        <main className="shell attorney-shell">
+        <main className="shell attorney-shell" style={shellStyle}>
           <aside className="sidebar attorney-sidebar">
-          <PortalBrand onHome={goToPortalHome} label="Go to attorney home" />
+          <PortalBrand onHome={goToPortalHome} label={`Go to ${isLeaderAttorneyView ? "leader attorney view" : "attorney"} home`} />
           <div className="brand-sub">{isLeaderAttorneyView ? "Leader Acting As Attorney" : "Attorney Workspace"}</div>
           {isLeaderAttorneyView ? (
             <div className="side-card perspective-side-card">
@@ -5586,6 +6868,8 @@ function App() {
               { value: "home", label: "Attorney Home" },
               { value: "dossier", label: "Member Dossier" },
               { value: "petition", label: "Petition Generator" },
+              { value: "endeavor", label: "Endeavor Letter Generator" },
+              { value: "recommendations", label: "Recommendation Letters" },
               { value: "batch", label: "Batch Intake" },
               { value: "evidence", label: "Evidence Review" },
               { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}` },
@@ -5600,17 +6884,38 @@ function App() {
           <div className="side-card">
             <strong>At a glance</strong>
             <p>Total cases: {builderMembers.length}</p>
-            <p>Selected member: {selectedAttorneyMember?.display_name || "Choose from caseboard"}</p>
-            <p>Open attorney work: {builderMembers.reduce((sum, item) => sum + (item.open_task_count || 0), 0)}</p>
+            <p>Open attorney work: {attorneyTotalOpenTasks}</p>
+            <p>Cases in deeper review: {attorneyDeeperReviewCases}</p>
           </div>
           <span className="side-note">{isLeaderAttorneyView ? "Leader operating in attorney visibility mode" : "Attorney portal only"}</span>
         </aside>
+        {sidebarResizer}
         <section className="main attorney-main">
           <div className="topbar">
             <div className="topbar-copy">
               <span className="topbar-label">{isLeaderAttorneyView ? "Leader Portal • Attorney View" : "Attorney Portal"}</span>
               <div className="topbar-welcome">Welcome {authMember.display_name}.</div>
               <strong>Petition strategy with the full member picture in view.</strong>
+            </div>
+            <div className="panel" style={{ minWidth: "280px", margin: 0 }}>
+              <div className="section-kicker">Selected Member</div>
+              <MemberSearchBox
+                value={memberSearchQuery}
+                onChange={setMemberSearchQuery}
+                total={builderMembers.length}
+                visible={filteredBuilderMembers.length}
+                label="Search cases"
+              />
+              <label style={{ display: "block", marginTop: "8px" }}>
+                <select value={selectedBuilderMemberId || ""} onChange={(event) => setSelectedBuilderMemberId(event.target.value)}>
+                  <option value="">{portalSection === "home" ? "Choose a member for case-specific work" : "Select member"}</option>
+                  {memberSelectorOptions.map((member) => (
+                    <option key={member.client_id} value={member.client_id}>
+                      {member.display_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             <div className="member-menu-wrap">
               <button className="member-menu-trigger" type="button" onClick={() => setMemberMenuOpen((current) => !current)}>
@@ -5623,7 +6928,7 @@ function App() {
               </button>
               {memberMenuOpen ? (
                 <div className="member-menu">
-                  <button type="button" onClick={() => { setPasswordDialogOpen(true); setMemberMenuOpen(false); }}>Change Password</button>
+                  <button type="button" onClick={openPasswordDialog}>Change Password</button>
                   <button type="button" onClick={openHelpManual}>Help Manual</button>
                   <button type="button" onClick={handleLogout}>Logout</button>
                 </div>
@@ -5633,13 +6938,14 @@ function App() {
 
           {message ? <div className={`banner ${message.type}`}>{message.text}</div> : null}
           {passwordDialogOpen ? (
-            <div className="modal-backdrop" onClick={() => setPasswordDialogOpen(false)}>
+            <div className="modal-backdrop" onClick={closePasswordDialog}>
               <section className="modal-card" onClick={(event) => event.stopPropagation()}>
                 <div className="panel-header">
                   <div><div className="section-kicker">Account</div><h3 className="section-title">Change Password</h3></div>
-                  <button className="ghost compact-btn" type="button" onClick={() => setPasswordDialogOpen(false)}>Close</button>
+                  <button className="ghost compact-btn" type="button" onClick={closePasswordDialog}>Close</button>
                 </div>
                 <form className="stacked-form" onSubmit={handlePasswordChange}>
+                  {passwordMessage ? <div className={`banner ${passwordMessage.type}`}>{passwordMessage.text}</div> : null}
                   <label>Current Password<input type="password" value={passwordForm.current_password} onChange={(event) => setPasswordForm((current) => ({ ...current, current_password: event.target.value }))} /></label>
                   <label>New Password<input type="password" value={passwordForm.new_password} onChange={(event) => setPasswordForm((current) => ({ ...current, new_password: event.target.value }))} /></label>
                   <label>Confirm New Password<input type="password" value={passwordForm.confirm_password} onChange={(event) => setPasswordForm((current) => ({ ...current, confirm_password: event.target.value }))} /></label>
@@ -5647,18 +6953,6 @@ function App() {
                 </form>
               </section>
             </div>
-          ) : null}
-
-          {portalHydrating ? (
-            <PortalHydrationNotice
-              title="Loading attorney workspace"
-              detail="Caseboard, criteria, selected member detail, and evidence are refreshing while the attorney shell stays usable."
-            />
-          ) : selectedMemberHydrating ? (
-            <PortalHydrationNotice
-              title="Refreshing selected case"
-              detail="The member-specific legal workspace will update as soon as the selected case data returns."
-            />
           ) : null}
 
           {portalSection === "messages" ? (
@@ -5675,87 +6969,56 @@ function App() {
               <header className="hero">
                 <p className="eyebrow">Attorney Caseboard</p>
                 <h1>Portfolio first, casework second.</h1>
-                <p>Start with the full docket, spot which cases are in intake, active build, or deeper review, then open one member and move straight into petition, evidence, or batch intake work.</p>
+                <p>Use Attorney Home as the portfolio dashboard for assigned matters only. Review workload, case-stage distribution, evidence depth, and readiness signals here before moving into member-specific legal work elsewhere.</p>
                 <div className="hero-chips">
                   <span className="hero-chip">Assigned case portfolio</span>
                   <span className="hero-chip">Status-based triage</span>
-                  <span className="hero-chip">One-click deep dives</span>
+                  <span className="hero-chip">Attorney workload signals</span>
                 </div>
               </header>
 
               <section className="metrics-grid">
                 <MetricCard label="Total Cases" value={builderMembers.length} />
-                <MetricCard label="Open Tasks" value={builderMembers.reduce((sum, item) => sum + (item.open_task_count || 0), 0)} />
-                <MetricCard label="Evidence Items" value={builderMembers.reduce((sum, item) => sum + (item.evidence_count || 0), 0)} />
-                <MetricCard label="Avg Readiness" value={`${builderMembers.length ? Math.round(builderMembers.reduce((sum, item) => sum + (item.readiness_score || 0), 0) / builderMembers.length) : 0}%`} />
+                <MetricCard label="Open Tasks" value={attorneyTotalOpenTasks} />
+                <MetricCard label="Evidence Items" value={attorneyTotalEvidence} />
+                <MetricCard label="Avg Readiness" value={`${attorneyAverageReadiness}%`} />
+                <MetricCard label="Criteria Started" value={attorneyCriteriaStarted} />
+                <MetricCard label="Needs Attention" value={attorneyAttentionCases} />
               </section>
-
-              <section className="panel" style={{ marginTop: "18px" }}>
-                <div className="panel-header">
-                  <div>
-                    <div className="section-kicker">Start Here</div>
-                    <h3 className="section-title">Select a member to work</h3>
-                    <p className="section-intro">Pick the member first, then move into dossier review, petition drafting, evidence review, or batch intake with the right case in focus.</p>
-                  </div>
-                </div>
-                <MemberSearchBox
-                  value={memberSearchQuery}
-                  onChange={setMemberSearchQuery}
-                  total={builderMembers.length}
-                  visible={filteredBuilderMembers.length}
-                  label="Search cases"
-                />
-                <div className="builder-member-list attorney-member-list">
-                  {filteredBuilderMembers.map((item) => (
-                    <button
-                      key={item.client_id}
-                      type="button"
-                      className={`builder-member-card attorney-member-card ${selectedBuilderMemberId === item.client_id ? "active" : ""}`}
-                      onClick={() => setSelectedBuilderMemberId(item.client_id)}
-                    >
-                      <strong>{item.display_name}</strong>
-                      <span>{caseStatusLabel(item.status)} • {item.primary_field || "Profile in progress"}</span>
-                      <span>{item.current_title || "Title pending"}{item.current_employer ? ` • ${item.current_employer}` : ""}</span>
-                      <span>Readiness {item.readiness_score}% • {item.evidence_count} evidence • {item.open_task_count} open tasks</span>
-                      <span className={`status-pill ${item.momentum === "Strong" ? "completed" : item.momentum === "Needs focus" ? "blocked" : "in_progress"}`}>{item.momentum}</span>
-                    </button>
-                  ))}
-                  {filteredBuilderMembers.length ? null : <p className="empty-state">No members match that search.</p>}
-                </div>
-              </section>
+              {selectedBuilderMemberId ? <FilingTimelinePanel data={filingTimeline} busy={filingTimelineBusy} compact /> : null}
 
               <section className="builder-layout" style={{ marginTop: "18px" }}>
                 <section className="panel">
-                  <div className="section-kicker">Selected Case</div>
-                  <h3 className="section-title">{selectedAttorneyMember?.display_name || "Select a member to begin"}</h3>
-                  <p className="section-intro">This summary is your jump point into dossier, evidence review, petition drafting, and batch intake.</p>
-                  {selectedAttorneyMember ? (
-                    <div className="builder-detail-grid">
-                      <article className="action-row">
-                        <strong>Case stage</strong>
-                        <p>{caseStatusLabel(selectedAttorneyMember.status)}</p>
-                        <span>Readiness {selectedAttorneyMember.readiness_score}%</span>
+                  <div className="section-kicker">Assigned Matters</div>
+                  <h3 className="section-title">Case roster snapshot</h3>
+                  <p className="section-intro">Keep this view portfolio-level: who is assigned, which stage each case is in, and where attorney attention is likely needed. Use the member selector in the header when you want to move into dossier, petition, endeavor, evidence, or batch work.</p>
+                  <MemberSearchBox
+                    value={memberSearchQuery}
+                    onChange={setMemberSearchQuery}
+                    total={builderMembers.length}
+                    visible={filteredBuilderMembers.length}
+                    label="Search cases"
+                  />
+                  <div className="task-mini-list">
+                    {filteredBuilderMembers.map((item) => (
+                      <article key={item.client_id} className="task-mini-item">
+                        <strong>{item.display_name}</strong>
+                        <p>{caseStatusLabel(item.status)} • Readiness {item.readiness_score || 0}%</p>
+                        <div className="task-mini-meta">
+                          <span>{item.evidence_count || 0} evidence items</span>
+                          <span>{item.criteria_started || 0} criteria started</span>
+                          <span>{item.open_task_count || 0} open tasks</span>
+                        </div>
                       </article>
-                      <article className="action-row">
-                        <strong>Current profile</strong>
-                        <p>{selectedAttorneyMember.primary_field || "Field not yet captured"}{selectedAttorneyMember.current_title ? ` • ${selectedAttorneyMember.current_title}` : ""}</p>
-                        <span>{selectedAttorneyMember.current_employer || "Employer not yet captured"}</span>
-                      </article>
-                      <article className="action-row">
-                        <strong>Case volume</strong>
-                        <p>{selectedAttorneyMember.evidence_count} evidence items • {selectedAttorneyMember.open_task_count} open tasks</p>
-                        <span>{selectedAttorneyMember.criteria_started || 0} criteria started</span>
-                      </article>
-                    </div>
-                  ) : (
-                    <p className="empty-state">Select a member above to open their active legal workspace.</p>
-                  )}
+                    ))}
+                    {filteredBuilderMembers.length ? null : <p className="empty-state">No members match that search.</p>}
+                  </div>
                 </section>
 
                 <section className="panel">
-                  <div className="section-kicker">Case Statuses</div>
-                  <h3 className="section-title">Portfolio by case stage</h3>
-                  <p className="section-intro">Use case stage to decide where legal attention is needed today.</p>
+                  <div className="section-kicker">Portfolio Signals</div>
+                  <h3 className="section-title">Case-stage and workload summary</h3>
+                  <p className="section-intro">Use these counts to decide where legal attention is needed first, without dropping into one member’s detailed record from the dashboard itself.</p>
                   <div className="task-mini-list">
                     {statusEntries.map(([status, count]) => (
                       <article key={status} className="task-mini-item">
@@ -5763,24 +7026,28 @@ function App() {
                         <p>{count} case(s)</p>
                       </article>
                     ))}
+                    <article className="task-mini-item">
+                      <strong>Needs attention</strong>
+                      <p>{attorneyAttentionCases} case(s) currently have open work or lower readiness.</p>
+                    </article>
+                    <article className="task-mini-item">
+                      <strong>Evidence depth</strong>
+                      <p>{builderMembers.filter((item) => (item.evidence_count || 0) >= 5).length} case(s) have at least five evidence items already on file.</p>
+                    </article>
                   </div>
                 </section>
               </section>
-              {builderMemberDetail ? (
-                <LegalWorkbenchPanel
-                  workbench={builderMemberDetail.legal_workbench}
-                  onGeneratePetition={() => setPortalSection("petition")}
-                />
-              ) : null}
             </React.Fragment>
           ) : selectedMemberRequired ? (
             <React.Fragment>
               <header className="hero">
                 <p className="eyebrow">Select A Member</p>
                 <h1>Choose the case before opening the workspace.</h1>
-                <p>Petition drafting, evidence review, dossier analysis, and batch intake are all member-specific. Pick a member from Attorney Home to continue.</p>
+                <p>Petition drafting, endeavor-letter drafting, evidence review, dossier analysis, and batch intake are all member-specific. Choose the member once, then the rest of the attorney sections work against that member record.</p>
               </header>
               <section className="panel" style={{ marginTop: "18px" }}>
+                <div className="section-kicker">Member Selector</div>
+                <h3 className="section-title">Select member</h3>
                 <MemberSearchBox
                   value={memberSearchQuery}
                   onChange={setMemberSearchQuery}
@@ -5788,21 +7055,21 @@ function App() {
                   visible={filteredBuilderMembers.length}
                   label="Search cases"
                 />
-                <div className="builder-member-list attorney-member-list">
-                  {filteredBuilderMembers.map((item) => (
-                    <button
-                      key={item.client_id}
-                      type="button"
-                      className={`builder-member-card attorney-member-card ${selectedBuilderMemberId === item.client_id ? "active" : ""}`}
-                      onClick={() => { setSelectedBuilderMemberId(item.client_id); setPortalSection("home"); }}
-                    >
-                      <strong>{item.display_name}</strong>
-                      <span>{caseStatusLabel(item.status)} • {item.primary_field || "Profile in progress"}</span>
-                      <span>Readiness {item.readiness_score}% • {item.evidence_count} evidence • {item.open_task_count} open tasks</span>
-                    </button>
-                  ))}
-                  {filteredBuilderMembers.length ? null : <p className="empty-state">No members match that search.</p>}
-                </div>
+                <label style={{ display: "block", marginTop: "10px" }}>
+                  <select value={selectedBuilderMemberId || ""} onChange={(event) => { setSelectedBuilderMemberId(event.target.value); }}>
+                    <option value="">Select member</option>
+                    {memberSelectorOptions.map((item) => (
+                      <option key={item.client_id} value={item.client_id}>
+                        {item.display_name} • {caseStatusLabel(item.status)} • {item.readiness_score}% readiness
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {selectedBuilderMemberId ? (
+                  <div className="form-actions" style={{ marginTop: "14px" }}>
+                    <button className="primary compact-btn" type="button" onClick={() => setPortalSection("dossier")}>Open Member Workspace</button>
+                  </div>
+                ) : null}
               </section>
             </React.Fragment>
           ) : portalSection === "dossier" ? (
@@ -5812,6 +7079,7 @@ function App() {
                 <h1>{builderMemberDetail?.member?.display_name || "Member"} summary.</h1>
                 <p>Review identity, professional positioning, and criterion-level strengths and gaps in one dedicated dossier page.</p>
               </header>
+              <FilingTimelinePanel data={filingTimeline} busy={filingTimelineBusy} compact />
 
               <section className="builder-layout">
                 <section className="panel">
@@ -5854,6 +7122,25 @@ function App() {
                     </article>
                   </div>
                 </section>
+                <section className="panel">
+                  <div className="section-kicker">Member Narrative Exports</div>
+                  <h3 className="section-title">Template-style member submissions</h3>
+                  <p className="section-intro">Review the member-submitted Critical Role and Original Contribution narratives as exported evidence artifacts before drafting or legal follow-up.</p>
+                  <div className="builder-layout">
+                    <ExportedNarrativePanel
+                      title="Critical Role Exports"
+                      sectionLabel="Leading Or Critical Role"
+                      items={builderMemberDetail?.critical_role_projects || []}
+                      emptyText="No critical role exports generated yet."
+                    />
+                    <ExportedNarrativePanel
+                      title="Original Contribution Exports"
+                      sectionLabel="Original Contributions"
+                      items={builderMemberDetail?.original_contribution_entries || []}
+                      emptyText="No original contribution exports generated yet."
+                    />
+                  </div>
+                </section>
               </section>
             </React.Fragment>
           ) : portalSection === "petition" ? (
@@ -5884,14 +7171,17 @@ function App() {
                 </div>
                 {petitionDraft ? (
                   <React.Fragment>
+                    {petitionDraft.source && petitionDraft.source !== "openai" ? (
+                      <div className="banner warning">
+                        AI petition generation is unavailable or returned fallback output. Treat this as a structured review template and validate every fact before using it.
+                      </div>
+                    ) : null}
                     <div className="metrics-grid">
                       <MetricCard label="Readiness" value={`${petitionDraft.member?.readiness_score || 0}%`} />
                       <MetricCard label="Evidence Items" value={petitionDraft.snapshot?.evidence_count || 0} />
                       <MetricCard label="Criteria Started" value={petitionDraft.snapshot?.criteria_started || 0} />
                       <MetricCard label="Open Tasks" value={petitionDraft.snapshot?.open_tasks || 0} />
                     </div>
-
-                    <LegalWorkbenchPanel workbench={petitionDraft.legal_workbench} />
 
                     <section className="petition-grid">
                       <article className="panel petition-panel">
@@ -5991,7 +7281,147 @@ function App() {
                   <p className="empty-state">Generate the petition draft to see AI-backed strengths, gaps, risks, dependencies, and attorney follow-up questions.</p>
                 )}
               </section>
+              <FilingTimelinePanel data={filingTimeline} busy={filingTimelineBusy} compact />
+              <PetitionAccelerationPanel data={petitionAcceleration} busy={petitionAccelerationBusy} />
             </React.Fragment>
+          ) : portalSection === "endeavor" ? (
+            <React.Fragment>
+              <header className="hero endeavor-hero">
+                <p className="eyebrow">Endeavor Letter Generator</p>
+                <div className="endeavor-hero-row">
+                  <div>
+                    <h1>{selectedAttorneyMember?.display_name || "Selected member"} proposed endeavor letter</h1>
+                    <p>Confirm the theory, continuity, U.S. benefit, and evidence emphasis in one compact attorney workspace.</p>
+                  </div>
+                  <div className="endeavor-stat-strip" aria-label="Endeavor case summary">
+                    <span><strong>{evidenceItems.length}</strong> evidence</span>
+                    <span><strong>{builderMemberDetail?.criteria?.filter((item) => item.evidence_count).length || 0}</strong> criteria</span>
+                    <span><strong>{builderMemberDetail?.tasks?.filter((item) => item.status === "open").length || 0}</strong> open tasks</span>
+                  </div>
+                </div>
+              </header>
+
+              <section className="panel endeavor-panel">
+                <div className="panel-header">
+                  <div>
+                    <div className="section-kicker">Attorney Input</div>
+                    <h3 className="section-title">Direction, facts, and generated letter</h3>
+                    <p className="section-intro">Smaller prompts, same output: use these notes as the instruction set for the endeavor letter.</p>
+                  </div>
+                  <div className="form-actions">
+                    {endeavorDraft ? (
+                      <button className="ghost compact-btn" type="button" onClick={() => setEndeavorLetterView((current) => !current)}>
+                        {endeavorLetterView ? "Edit Inputs" : "Review Letter"}
+                      </button>
+                    ) : null}
+                    <button className="primary compact-btn" type="button" onClick={() => generateEndeavorLetter(selectedBuilderMemberId)} disabled={endeavorBusy}>
+                      {endeavorBusy ? "Generating..." : endeavorDraft ? "Regenerate Letter" : "Generate Letter"}
+                    </button>
+                  </div>
+                </div>
+
+                {!endeavorLetterView ? (
+                  <React.Fragment>
+                    {endeavorDraft ? (
+                      <div className="endeavor-ready-strip">
+                        <strong>Latest draft ready.</strong>
+                        <span>{endeavorDraft.letter?.estimated_word_count || 0} words • {endeavorDraft.snapshot?.parsed_documents || 0} documents parsed</span>
+                        <button className="ghost compact-btn" type="button" onClick={() => setEndeavorLetterView(true)}>Review Letter</button>
+                      </div>
+                    ) : null}
+
+                    <form className="stacked-form endeavor-form" onSubmit={(event) => { event.preventDefault(); generateEndeavorLetter(selectedBuilderMemberId); }}>
+                      <label className="endeavor-field">
+                        Who you are
+                        <textarea value={endeavorPromptForm.who_you_are} onChange={(event) => setEndeavorPromptField("who_you_are", event.target.value)} />
+                      </label>
+                      <label className="endeavor-field">
+                        Field of expertise
+                        <textarea value={endeavorPromptForm.field_of_expertise} onChange={(event) => setEndeavorPromptField("field_of_expertise", event.target.value)} />
+                      </label>
+                      <label className="endeavor-field wide">
+                        Proposed endeavor
+                        <textarea value={endeavorPromptForm.proposed_endeavor} onChange={(event) => setEndeavorPromptField("proposed_endeavor", event.target.value)} />
+                      </label>
+                      <label className="endeavor-field">
+                        Current work continuity
+                        <textarea value={endeavorPromptForm.current_work_continuity} onChange={(event) => setEndeavorPromptField("current_work_continuity", event.target.value)} />
+                      </label>
+                      <label className="endeavor-field">
+                        Future work plan
+                        <textarea value={endeavorPromptForm.future_work_plan} onChange={(event) => setEndeavorPromptField("future_work_plan", event.target.value)} />
+                      </label>
+                      <label className="endeavor-field">
+                        National importance
+                        <textarea value={endeavorPromptForm.national_importance} onChange={(event) => setEndeavorPromptField("national_importance", event.target.value)} />
+                      </label>
+                      <label className="endeavor-field">
+                        Evidence emphasis
+                        <textarea value={endeavorPromptForm.evidence_emphasis} onChange={(event) => setEndeavorPromptField("evidence_emphasis", event.target.value)} />
+                      </label>
+                      <label className="endeavor-field">
+                        Attorney strategy notes
+                        <textarea value={endeavorPromptForm.attorney_strategy_notes} onChange={(event) => setEndeavorPromptField("attorney_strategy_notes", event.target.value)} />
+                      </label>
+                      <label className="endeavor-field">
+                        Tone guidance
+                        <textarea value={endeavorPromptForm.tone_guidance} onChange={(event) => setEndeavorPromptField("tone_guidance", event.target.value)} />
+                      </label>
+                      <label className="endeavor-field wide compact">
+                        Length constraints
+                        <textarea value={endeavorPromptForm.length_constraints} onChange={(event) => setEndeavorPromptField("length_constraints", event.target.value)} />
+                      </label>
+                      <div className="form-actions endeavor-submit-row">
+                        <button className="primary compact-btn" type="submit" disabled={endeavorBusy}>
+                          {endeavorBusy ? "Generating..." : "Generate Endeavor Letter"}
+                        </button>
+                      </div>
+                    </form>
+                  </React.Fragment>
+                ) : endeavorDraft ? (
+                  <React.Fragment>
+                    <div className="endeavor-ready-strip review">
+                      <strong>Letter review</strong>
+                      <span>{endeavorDraft.letter?.estimated_word_count || 0} words • {endeavorDraft.letter?.estimated_page_count || 0} pages • {endeavorDraft.snapshot?.parsed_documents || 0} docs parsed • {endeavorDraft.snapshot?.parsed_with_text || 0} with text</span>
+                      <button className="ghost compact-btn" type="button" onClick={() => setEndeavorLetterView(false)}>Edit Inputs</button>
+                    </div>
+
+                    <section className="endeavor-review">
+                      <div className="letter-paper endeavor-letter-paper">
+                        <p className="letter-title">{endeavorDraft.letter?.title}</p>
+                        <p>{endeavorDraft.letter?.date_line}</p>
+                        <p>U.S. Citizenship and Immigration Services</p>
+                        <p>{endeavorDraft.letter?.re_line}</p>
+                        <p>{endeavorDraft.letter?.beneficiary_line}</p>
+                        <p>{endeavorDraft.letter?.subject_line}</p>
+                        <p>{endeavorDraft.letter?.salutation}</p>
+                        <p>{endeavorDraft.letter?.opening_paragraph}</p>
+                        {(endeavorDraft.letter?.sections || []).map((section, index) => (
+                          <div key={`endeavor_letter_${index}`}>
+                            {section.heading ? <p className="letter-heading">{section.heading}</p> : null}
+                            <p>{section.body}</p>
+                          </div>
+                        ))}
+                        <p>{endeavorDraft.letter?.closing_paragraph}</p>
+                        <p className="letter-signature">{endeavorDraft.letter?.signature_line}</p>
+                      </div>
+                    </section>
+                  </React.Fragment>
+                ) : null}
+              </section>
+            </React.Fragment>
+          ) : portalSection === "recommendations" ? (
+            <RecommendationLetterPanel
+              workspace={recommendationWorkspace}
+              form={recommendationPromptForm}
+              busy={recommendationBusy}
+              activeLetterId={activeRecommendationLetterId}
+              onFieldChange={updateRecommendationPrompt}
+              onSubmit={generateRecommendationLetter}
+              onSelectLetter={setActiveRecommendationLetterId}
+              onApprove={approveRecommendationLetter}
+              onSend={sendRecommendationLetter}
+            />
           ) : portalSection === "batch" ? (
             batchReviewPanel
           ) : portalSection === "evidence" ? (
@@ -6040,10 +7470,6 @@ function App() {
   }
 
   if (authMember.role === "admin") {
-    const stageCounts = builderMembers.reduce((acc, item) => {
-      acc[item.status] = (acc[item.status] || 0) + 1;
-      return acc;
-    }, {});
     const ops = adminDashboard?.metrics || {};
     const costData = adminCosts || {};
     const awsCosts = costData.aws || {};
@@ -6059,7 +7485,7 @@ function App() {
     const responseTimes = adminDashboard?.response_times || [];
     return (
       <React.Fragment>
-        <main className="shell admin-shell">
+        <main className="shell admin-shell" style={shellStyle}>
           <aside className="sidebar">
             <PortalBrand onHome={goToPortalHome} label="Go to admin home" />
             <div className="brand-sub">Admin Workspace</div>
@@ -6090,6 +7516,7 @@ function App() {
             </div>
             <span className="side-note">Admin portal only</span>
           </aside>
+          {sidebarResizer}
           <section className="main admin-main">
             <div className="topbar">
               <div className="topbar-copy">
@@ -6108,7 +7535,7 @@ function App() {
                 </button>
                 {memberMenuOpen ? (
                   <div className="member-menu">
-                    <button type="button" onClick={() => { setPasswordDialogOpen(true); setMemberMenuOpen(false); }}>Change Password</button>
+                    <button type="button" onClick={openPasswordDialog}>Change Password</button>
                     <button type="button" onClick={openHelpManual}>Help Manual</button>
                     <button type="button" onClick={handleLogout}>Logout</button>
                   </div>
@@ -6116,11 +7543,23 @@ function App() {
               </div>
             </div>
 
-            {portalHydrating ? (
-              <PortalHydrationNotice
-                title="Loading admin workspace"
-                detail="Operations metrics, support tickets, health data, and member diagnostics are refreshing while the admin shell stays available."
-              />
+            {message ? <div className={`banner ${message.type}`}>{message.text}</div> : null}
+            {passwordDialogOpen ? (
+              <div className="modal-backdrop" onClick={closePasswordDialog}>
+                <section className="modal-card" onClick={(event) => event.stopPropagation()}>
+                  <div className="panel-header">
+                    <div><div className="section-kicker">Account</div><h3 className="section-title">Change Password</h3></div>
+                    <button className="ghost compact-btn" type="button" onClick={closePasswordDialog}>Close</button>
+                  </div>
+                  <form className="stacked-form" onSubmit={handlePasswordChange}>
+                    {passwordMessage ? <div className={`banner ${passwordMessage.type}`}>{passwordMessage.text}</div> : null}
+                    <label>Current Password<input type="password" value={passwordForm.current_password} onChange={(event) => setPasswordForm((current) => ({ ...current, current_password: event.target.value }))} /></label>
+                    <label>New Password<input type="password" value={passwordForm.new_password} onChange={(event) => setPasswordForm((current) => ({ ...current, new_password: event.target.value }))} /></label>
+                    <label>Confirm New Password<input type="password" value={passwordForm.confirm_password} onChange={(event) => setPasswordForm((current) => ({ ...current, confirm_password: event.target.value }))} /></label>
+                    <div className="form-actions"><button className="primary compact-btn" type="submit" disabled={passwordBusy}>{passwordBusy ? "Updating..." : "Update Password"}</button></div>
+                  </form>
+                </section>
+              </div>
             ) : null}
 
             {portalSection === "messages" ? (
@@ -6131,66 +7570,6 @@ function App() {
                   <p>Keep all inbound and outbound threads in one dedicated place so the operational dashboard stays focused on health and debugging.</p>
                 </header>
                 {messagePanel}
-              </React.Fragment>
-            ) : portalSection === "health" ? (
-              <React.Fragment>
-                <header className="hero">
-                  <p className="eyebrow">System Health</p>
-                  <h1>Platform health, easy to scan.</h1>
-                  <p>See every portal, integration, and response-time signal in one compact operational view.</p>
-                </header>
-
-                <section className="panel admin-health-panel">
-                  <div className="panel-header">
-                    <div>
-                      <div className="section-kicker">Platform Health</div>
-                      <h3 className="section-title">Portals and integrations</h3>
-                    </div>
-                    <span className="mini-note">Live operations payload</span>
-                  </div>
-                  <div className="admin-health-strip">
-                    {portalHealth.map((item) => (
-                      <article key={item.name} className={`admin-health-chip ${healthStatusClass(item.status)}`} title={item.detail}>
-                        <span className="admin-health-icon">{healthIcon(item.name)}</span>
-                        <span className="admin-health-copy">
-                          <strong>{item.name}</strong>
-                          <small>{item.status}</small>
-                        </span>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="panel admin-response-panel" style={{ marginTop: "18px" }}>
-                  <div className="panel-header">
-                    <div>
-                      <div className="section-kicker">Response Times</div>
-                      <h3 className="section-title">Realtime average by tech stack</h3>
-                    </div>
-                    <span className="mini-note">Last 30 minutes</span>
-                  </div>
-                  <div className="response-time-table">
-                    <div className="response-time-head">
-                      <span>Stack</span>
-                      <span>Layer</span>
-                      <span>Avg</span>
-                      <span>Trend</span>
-                      <span>Status</span>
-                    </div>
-                    {responseTimes.length ? responseTimes.map((item) => (
-                      <article key={item.name} className="response-time-row">
-                        <div className="response-stack-name">
-                          <span className="admin-health-icon">{healthIcon(item.name)}</span>
-                          <strong>{item.name}</strong>
-                        </div>
-                        <span>{item.layer}</span>
-                        <strong>{formatResponseMs(item.avg_ms)}</strong>
-                        <ResponseSparkline points={item.trend || []} />
-                        <span className={`status-pill ${healthStatusClass(item.status)}`}>{item.status}</span>
-                      </article>
-                    )) : <p className="empty-state">No response-time telemetry available yet.</p>}
-                  </div>
-                </section>
               </React.Fragment>
             ) : portalSection === "issues" ? (
               <React.Fragment>
@@ -6418,6 +7797,66 @@ function App() {
                   </section>
                 </section>
               </React.Fragment>
+            ) : portalSection === "health" ? (
+              <React.Fragment>
+                <header className="hero">
+                  <p className="eyebrow">System Health</p>
+                  <h1>Platform health, easy to scan.</h1>
+                  <p>See every portal, integration, and response-time signal in one compact operational view.</p>
+                </header>
+
+                <section className="panel admin-health-panel">
+                  <div className="panel-header">
+                    <div>
+                      <div className="section-kicker">Platform Health</div>
+                      <h3 className="section-title">Portals and integrations</h3>
+                    </div>
+                    <span className="mini-note">Live operations payload</span>
+                  </div>
+                  <div className="admin-health-strip">
+                    {portalHealth.map((item) => (
+                      <article key={item.name} className={`admin-health-chip ${healthStatusClass(item.status)}`} title={item.detail}>
+                        <span className="admin-health-icon">{healthIcon(item.name)}</span>
+                        <span className="admin-health-copy">
+                          <strong>{item.name}</strong>
+                          <small>{item.status}</small>
+                        </span>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="panel admin-response-panel" style={{ marginTop: "18px" }}>
+                  <div className="panel-header">
+                    <div>
+                      <div className="section-kicker">Response Times</div>
+                      <h3 className="section-title">Realtime average by tech stack</h3>
+                    </div>
+                    <span className="mini-note">Last 30 minutes</span>
+                  </div>
+                  <div className="response-time-table">
+                    <div className="response-time-head">
+                      <span>Stack</span>
+                      <span>Layer</span>
+                      <span>Avg</span>
+                      <span>Trend</span>
+                      <span>Status</span>
+                    </div>
+                    {responseTimes.length ? responseTimes.map((item) => (
+                      <article key={item.name} className="response-time-row">
+                        <div className="response-stack-name">
+                          <span className="admin-health-icon">{healthIcon(item.name)}</span>
+                          <strong>{item.name}</strong>
+                        </div>
+                        <span>{item.layer}</span>
+                        <strong>{formatResponseMs(item.avg_ms)}</strong>
+                        <ResponseSparkline points={item.trend || []} />
+                        <span className={`status-pill ${healthStatusClass(item.status)}`}>{item.status}</span>
+                      </article>
+                    )) : <p className="empty-state">No response-time telemetry available yet.</p>}
+                  </div>
+                </section>
+              </React.Fragment>
             ) : portalSection === "support" ? (
               <React.Fragment>
                 <header className="hero">
@@ -6541,6 +7980,7 @@ function App() {
                     <p className="empty-state">No member issue diagnostics available.</p>
                   )}
                 </section>
+                <PetitionAccelerationPanel data={petitionAcceleration} busy={petitionAccelerationBusy} compact />
               </React.Fragment>
             ) : (
               <React.Fragment>
@@ -6556,8 +7996,6 @@ function App() {
                   <MetricCard label="Active Members" value={ops.active_members || 0} />
                   <MetricCard label="Open Support" value={ops.open_support_tickets || 0} />
                 </section>
-
-                <AdminProductOpsPanel dashboard={adminDashboard} />
 
                 <section className="builder-layout" style={{ marginTop: "18px" }}>
                   <section className="panel">
@@ -6611,7 +8049,7 @@ function App() {
 
   return (
     <React.Fragment>
-      <main className="shell">
+      <main className="shell" style={shellStyle}>
         <aside className="sidebar">
         <PortalBrand onHome={goToPortalHome} label="Go to member home" />
         <div className="brand-sub">Member Workspace</div>
@@ -6640,14 +8078,14 @@ function App() {
           }}
         />
         <div className="side-card">
-          <strong>Welcome {memberDashboard.client.display_name}</strong>
+          <strong>Welcome {dashboard.client.display_name}</strong>
           <p>Your portal is focused only on evidence intake, organization, and next steps.</p>
         </div>
         <div className="side-card">
           <strong>At a glance</strong>
-          <p>Readiness: {memberDashboard.metrics.readiness_score}%</p>
-          <p>Evidence items: {memberDashboard.metrics.evidence_count}</p>
-          <p>Criteria started: {memberDashboard.metrics.criteria_started}</p>
+          <p>Readiness: {dashboard.metrics.readiness_score}%</p>
+          <p>Evidence items: {dashboard.metrics.evidence_count}</p>
+          <p>Criteria started: {dashboard.metrics.criteria_started}</p>
         </div>
         {profile ? (
           <div className="side-card">
@@ -6658,13 +8096,14 @@ function App() {
         ) : null}
         <span className="side-note">Member portal only</span>
       </aside>
+      {sidebarResizer}
 
       <section className="main">
         <div className="topbar">
           <div className="topbar-copy">
-            <span className="topbar-label">{view.type === "workspace" ? "Evidence Workspace" : view.type === "profile" ? "Member Profile" : view.type === "planner" ? "Event Planner" : view.type === "intake" ? "Evidence Intake" : view.type === "messages" ? "Messages" : "Member Home"}</span>
+            <span className="topbar-label">{view.type === "workspace" ? "Evidence Workspace" : view.type === "profile" ? "Member Profile" : view.type === "critical_roles" ? "Critical Role Projects" : view.type === "original_contributions" ? "Original Contributions" : view.type === "planner" ? "Event Planner" : view.type === "intake" ? "Evidence Intake" : view.type === "messages" ? "Messages" : "Member Home"}</span>
             <div className="topbar-welcome">Welcome {authMember.display_name}.</div>
-            <strong>{view.type === "workspace" ? (selectedCriterion?.name || "Evidence By Criterion") : view.type === "profile" ? "Keep your attorney-ready profile current" : view.type === "planner" ? "Track upcoming opportunities and target dates in one clean planner" : view.type === "intake" ? "Upload and review evidence in its own focused intake page" : view.type === "messages" ? "Keep conversations in their own dedicated workspace" : "Evidence intake, planning, and organization"}</strong>
+            <strong>{view.type === "workspace" ? (selectedCriterion?.name || "Evidence By Criterion") : view.type === "profile" ? "Keep your attorney-ready profile current" : view.type === "critical_roles" ? "Capture one detailed project at a time for the leading or critical role criterion" : view.type === "original_contributions" ? "Document the originality, significance, and adoption of each contribution clearly" : view.type === "planner" ? "Track upcoming opportunities and target dates in one clean planner" : view.type === "intake" ? "Upload and review evidence in its own focused intake page" : view.type === "messages" ? "Keep conversations in their own dedicated workspace" : "Evidence intake, planning, and organization"}</strong>
           </div>
           <div className="member-menu-wrap">
             <button className="member-menu-trigger" type="button" onClick={() => setMemberMenuOpen((current) => !current)}>
@@ -6681,7 +8120,7 @@ function App() {
                 <button type="button" onClick={() => { setView({ type: "planner", criterionCode: "" }); setMemberMenuOpen(false); }}>Event Planner</button>
                 <button type="button" onClick={() => { setView({ type: "intake", criterionCode: "" }); setMemberMenuOpen(false); }}>Evidence Intake</button>
                 <button type="button" onClick={() => { setView({ type: "messages", criterionCode: "" }); setMemberMenuOpen(false); }}>Messages</button>
-                <button type="button" onClick={() => { setPasswordDialogOpen(true); setMemberMenuOpen(false); }}>Change Password</button>
+                <button type="button" onClick={openPasswordDialog}>Change Password</button>
                 <button type="button" onClick={openHelpManual}>Help Manual</button>
                 <button type="button" onClick={handleLogout}>Logout</button>
               </div>
@@ -6689,18 +8128,11 @@ function App() {
           </div>
         </div>
 
-        {portalHydrating ? (
-          <PortalHydrationNotice
-            title="Loading member workspace"
-            detail="Your member portal is open while evidence, planner, profile, and criteria data refresh in the background."
-          />
-        ) : null}
-
         {view.type === "home" ? (
           <React.Fragment>
             <header className="hero">
               <p className="eyebrow">Member Portal</p>
-              <h1>Welcome {memberDashboard.client.display_name}.</h1>
+              <h1>Welcome {dashboard.client.display_name}.</h1>
               <p>Capture evidence, let AI help classify and summarize it, and keep every criterion organized for the next phase of your EB1A journey.</p>
               <div className="hero-chips">
                 <span className="hero-chip">AI-assisted intake</span>
@@ -6710,31 +8142,28 @@ function App() {
             </header>
 
             <section className="metrics-grid">
-              <MetricCard label="Readiness" value={`${memberDashboard.metrics.readiness_score}%`} />
-              <MetricCard label="Evidence items" value={memberDashboard.metrics.evidence_count} />
-              <MetricCard label="Open tasks" value={memberDashboard.metrics.open_tasks} />
-              <MetricCard label="Criteria started" value={memberDashboard.metrics.criteria_started} />
+              <MetricCard label="Readiness" value={`${dashboard.metrics.readiness_score}%`} />
+              <MetricCard label="Evidence items" value={dashboard.metrics.evidence_count} />
+              <MetricCard label="Open tasks" value={dashboard.metrics.open_tasks} />
+              <MetricCard label="Criteria started" value={dashboard.metrics.criteria_started} />
             </section>
-
-            <CaseCommandCenter
-              data={memberDashboard.case_command_center}
-              onOpenCriterion={(code) => setView({ type: "workspace", criterionCode: code })}
-            />
+            <FilingTimelinePanel data={filingTimeline} busy={filingTimelineBusy} compact />
           </React.Fragment>
         ) : null}
 
         {message ? <div className={`banner ${message.type}`}>{message.text}</div> : null}
         {passwordDialogOpen ? (
-          <div className="modal-backdrop" onClick={() => setPasswordDialogOpen(false)}>
+          <div className="modal-backdrop" onClick={closePasswordDialog}>
             <section className="modal-card" onClick={(event) => event.stopPropagation()}>
               <div className="panel-header">
                 <div>
                   <div className="section-kicker">Account</div>
                   <h3 className="section-title">Change Password</h3>
                 </div>
-                <button className="ghost compact-btn" type="button" onClick={() => setPasswordDialogOpen(false)}>Close</button>
+                <button className="ghost compact-btn" type="button" onClick={closePasswordDialog}>Close</button>
               </div>
               <form className="stacked-form" onSubmit={handlePasswordChange}>
+                {passwordMessage ? <div className={`banner ${passwordMessage.type}`}>{passwordMessage.text}</div> : null}
                 <label>
                   Current Password
                   <input type="password" value={passwordForm.current_password} onChange={(event) => setPasswordForm((current) => ({ ...current, current_password: event.target.value }))} />
@@ -6757,14 +8186,12 @@ function App() {
 
         {view.type === "home" ? (
           <React.Fragment>
-            <section className="criteria-panel">
-              <div className="section-kicker">Evidence Map</div>
-              <h3 className="section-title">Evidence By Criterion</h3>
-              <p className="section-intro">Open a category to organize files, review summaries, search folders, and keep evidence easy to retrieve.</p>
-              <div className="criteria-grid">
-                {memberDashboard.criteria.map((criterion) => <CriterionCard key={criterion.code} item={criterion} onOpen={(code) => setView({ type: "workspace", criterionCode: code })} />)}
-              </div>
-            </section>
+            <MemberEvidenceCoveragePanel
+              criteria={dashboard.criteria || []}
+              evidence={evidenceItems || []}
+              criteriaByCode={criteriaByCode}
+              onOpenCriterion={(code) => setView(memberViewForCriterion(code))}
+            />
           </React.Fragment>
         ) : view.type === "planner" ? (
           <section className="planner-panel">
@@ -6798,7 +8225,7 @@ function App() {
                     <input value={row.issued_by} onChange={(event) => setPlannerRowField(row.id, "issued_by", event.target.value)} placeholder="IEEE, conference, journal, university" />
                     <select value={row.criterion_code} onChange={(event) => setPlannerRowField(row.id, "criterion_code", event.target.value)}>
                       <option value="">Choose category</option>
-                      {memberDashboard.criteria.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}
+                      {dashboard.criteria.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}
                     </select>
                     <input type="date" value={row.planned_completion_date || ""} onChange={(event) => setPlannerRowField(row.id, "planned_completion_date", event.target.value)} />
                     <select value={row.status || "planned"} onChange={(event) => setPlannerRowField(row.id, "status", event.target.value)}>
@@ -6849,7 +8276,7 @@ function App() {
                     <label>
                       Category
                       <select value={manualCategory} onChange={(event) => setManualCategory(event.target.value)}>
-                        {memberDashboard.criteria.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}
+                        {dashboard.criteria.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}
                       </select>
                     </label>
                     <label>
@@ -6884,7 +8311,7 @@ function App() {
                       <label>
                         Choose category
                         <select value={overrideCategory} onChange={(event) => setOverrideCategory(event.target.value)}>
-                          {memberDashboard.criteria.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}
+                          {dashboard.criteria.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}
                         </select>
                       </label>
                       <label>
@@ -6895,18 +8322,7 @@ function App() {
                       </label>
                     </React.Fragment>
                   ) : null}
-                  <label className="consent-line">
-                    <input
-                      type="checkbox"
-                      checked={consent}
-                      onChange={(event) => {
-                        setConsent(event.target.checked);
-                        if (event.target.checked) setDraftApprovalError("");
-                      }}
-                    />
-                    <span>I approve this evidence draft and want to save it.</span>
-                  </label>
-                  {draftApprovalError ? <p className="inline-error">{draftApprovalError}</p> : null}
+                  <label className="consent-line"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I approve this evidence draft and want to save it.</span></label>
                   <div className="form-actions">
                     <button className="primary compact-btn" type="button" disabled={uploadBusy} onClick={() => handleSaveDraft("")}>{uploadBusy ? "Saving..." : "Save Evidence"}</button>
                     <button className="ghost compact-btn" type="button" onClick={() => setDraft(null)}>Start over</button>
@@ -6924,7 +8340,584 @@ function App() {
                   </div>
                 </section>
               ) : null}
+
+              <section className="intake-history-panel">
+                <div className="panel-header">
+                  <div>
+                    <div className="section-kicker">Upload History</div>
+                    <h3 className="section-title">Submitted evidence history</h3>
+                    <p className="section-intro">Review what you have already uploaded, when it was saved, and which EB1A category it supports.</p>
+                  </div>
+                  <span>{memberIntakeHistory.length}</span>
+                </div>
+                {memberIntakeHistory.length ? (
+                  <div className="intake-history-table">
+                    <div className="intake-history-head">
+                      <button className="intake-sort-btn" type="button" onClick={() => toggleIntakeSort("evidence")}>
+                        <span>Evidence</span>
+                        <strong>{intakeSortLabel("evidence")}</strong>
+                      </button>
+                      <button className="intake-sort-btn" type="button" onClick={() => toggleIntakeSort("category")}>
+                        <span>Category</span>
+                        <strong>{intakeSortLabel("category")}</strong>
+                      </button>
+                      <button className="intake-sort-btn" type="button" onClick={() => toggleIntakeSort("uploaded")}>
+                        <span>Uploaded</span>
+                        <strong>{intakeSortLabel("uploaded")}</strong>
+                      </button>
+                      <button className="intake-sort-btn" type="button" onClick={() => toggleIntakeSort("type")}>
+                        <span>Type</span>
+                        <strong>{intakeSortLabel("type")}</strong>
+                      </button>
+                      <span>Links</span>
+                    </div>
+                    {memberIntakeHistory.map((item) => (
+                      <article
+                        key={item.id || item.file_name}
+                        className="intake-history-row"
+                        style={{ "--category-accent": criterionAccent(item.criterion_code) }}
+                      >
+                        <div className="intake-history-cell intake-history-evidence">
+                          <strong>{item.title || item.file_name || "Uploaded evidence"}</strong>
+                        </div>
+                        <div className="intake-history-cell">
+                          <span className="intake-category-badge">{criteriaByCode[item.criterion_code]?.name || item.criterion_code || "Uncategorized"}</span>
+                        </div>
+                        <div className="intake-history-cell">
+                          <span>{formatUploadedAt(item.created_at)}</span>
+                        </div>
+                        <div className="intake-history-cell">
+                          <span>{item.document_type || "Other"}</span>
+                        </div>
+                        <div className="intake-history-cell intake-history-actions">
+                          {item.open_url ? <a href={item.open_url} target="_blank" rel="noreferrer">Open evidence</a> : null}
+                          <button
+                            className="ghost compact-btn compact-link-btn"
+                            type="button"
+                            onClick={() => setView(memberViewForCriterion(item.criterion_code))}
+                          >
+                            Review category
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="empty-state">No submitted uploads yet. Once you save evidence here, the history will appear in this list.</p>
+                )}
+              </section>
             </section>
+        ) : view.type === "critical_roles" ? (
+          <section className="profile-panel">
+            <div className="panel-header profile-header">
+              <div>
+                <div className="section-kicker">Leading Or Critical Role</div>
+                <h3 className="section-title">Critical Role Projects</h3>
+                <p className="section-intro">A strong critical role entry shows that you held a job title with responsibilities central to a distinguished organization or unit, and that your work materially affected growth, revenue, product direction, compliance, market expansion, or other high-stakes outcomes. <em>Examples: leading a global launch, owning a platform strategy, driving a major market expansion, or being the person leadership relied on for a business-critical initiative.</em></p>
+              </div>
+            </div>
+            <section className="critical-role-workspace">
+              <div className="critical-role-overview">
+                <div>
+                  <div className="section-kicker">Project-by-project intake</div>
+                  <h4 className="section-title">Attorney-ready member details</h4>
+                  <p className="section-intro"><em>Save Draft</em> at any time and return later. Use <em>Submit Project</em> only when that entry is ready for attorney review. Each summary card opens the full project detail editor.</p>
+                </div>
+                <button className="primary compact-btn" type="button" onClick={startNewCriticalRoleProject}>Add Project</button>
+              </div>
+
+              <div className="critical-role-guidance">
+                <strong>What attorneys need here</strong>
+                <ul className="guidance-list">
+                  <li>Create a separate entry for each major project. <em>Do not combine different employers in one write-up.</em></li>
+                  <li>Contract, part-time, and founder work can still be relevant if the role was truly leading or critical. <em>The issue is not the pay structure; it is whether the role materially mattered.</em></li>
+                  <li>Explain why the organization was distinguished, then explain why your project mattered inside that organization. <em>Think market leadership, scale, user base, flagship products, or industry reputation.</em></li>
+                  <li>Quantify business value with revenue, cost savings, adoption, users reached, launch speed, market expansion, risk reduction, or compliance impact whenever you can. <em>Examples: 4B users reached, 50% faster releases, $36M enabled, 30% fewer issues.</em></li>
+                  <li>Use the peer-distinction section to show how your expertise went beyond your title, not just to repeat responsibilities. <em>Explain why leadership trusted you, why peers relied on you, or why your judgment was uncommon.</em></li>
+                </ul>
+              </div>
+
+              <div className="critical-role-layout">
+                <aside className="critical-role-list panel">
+                  <div className="panel-header">
+                    <h3>Projects</h3>
+                    <span>{criticalRoleProjects.length}</span>
+                  </div>
+                  {criticalRoleProjects.length ? (
+                    <div className="critical-role-list-items">
+                      {criticalRoleProjects.map((project) => (
+                        <button
+                          key={project.id}
+                          type="button"
+                          className={`critical-role-card ${activeCriticalRoleId === project.id ? "active" : ""}`}
+                          onClick={() => openCriticalRoleProject(project)}
+                        >
+                          <strong>{project.project_name || "Untitled project"}</strong>
+                          <span>{project.organization_name || "Organization pending"}{project.role_title ? ` • ${project.role_title}` : ""}</span>
+                          <span>{formatProjectDateRange(project.project_start_date, project.project_end_date, false)}{project.workflow_status ? ` • ${project.workflow_status}` : ""}</span>
+                          <p>{criticalRoleProjectCardMetric(project)}</p>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="empty-state">No critical role projects added yet. Start with the strongest project where your role was clearly central and measurable.</p>
+                  )}
+                </aside>
+
+                <form className="critical-role-form panel" onSubmit={(event) => event.preventDefault()}>
+                  <div className="panel-header">
+                    <h3>{activeCriticalRoleId ? "Edit project" : "New project"}</h3>
+                    <span>{criticalRoleForm.workflow_status === "submitted" ? "Submitted" : "Draft"}</span>
+                  </div>
+
+                  <div className="critical-role-section">
+                    <h4>Organization</h4>
+                    <div className="profile-grid">
+                      <label>
+                        Organization Name *
+                        <input value={criticalRoleForm.organization_name} onChange={(event) => setCriticalRoleField("organization_name", event.target.value)} required placeholder="Example: Meta, Google DeepMind, Mayo Clinic, Stripe" />
+                        <span className="field-help">Use the formal company or institution name exactly as it should appear in attorney drafts.</span>
+                      </label>
+                      <label>
+                        Business Unit / Team
+                        <input value={criticalRoleForm.organization_unit} onChange={(event) => setCriticalRoleField("organization_unit", event.target.value)} placeholder="Example: Payments Platform, AI Store, Research Lab" />
+                        <span className="field-help">Name the unit where your project lived so the legal team can frame your specific sphere of responsibility.</span>
+                      </label>
+                      <label>
+                        Organization Location
+                        <input value={criticalRoleForm.organization_location} onChange={(event) => setCriticalRoleField("organization_location", event.target.value)} placeholder="City, State, Country" />
+                      </label>
+                      <label>
+                        Organization Website
+                        <input value={criticalRoleForm.organization_website} onChange={(event) => setCriticalRoleField("organization_website", event.target.value)} placeholder="https://example.com" />
+                      </label>
+                      <label>
+                        Employment Type
+                        <select value={criticalRoleForm.employment_type} onChange={(event) => setCriticalRoleField("employment_type", event.target.value)}>
+                          <option value="">Choose one</option>
+                          {EMPLOYMENT_TYPE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                        <span className="field-help">The template notes that W-2, contract, and part-time work can still qualify if the role itself was critical.</span>
+                      </label>
+                      <label className="profile-span-2">
+                        Why This Organization Was Distinguished
+                        <textarea value={criticalRoleForm.organization_distinctiveness} onChange={(event) => setCriticalRoleField("organization_distinctiveness", event.target.value)} placeholder="Describe market leadership, scale, brand recognition, flagship products, industry position, or why the organization is notable in its field." />
+                        <span className="field-help">Focus on size, market presence, user base, reputation, or industry contribution so attorneys can show the employer was not ordinary.</span>
+                      </label>
+                      <label className="profile-span-2">
+                        Organization Achievements, Awards, or Reputation Signals
+                        <textarea value={criticalRoleForm.organization_achievements} onChange={(event) => setCriticalRoleField("organization_achievements", event.target.value)} placeholder="Examples: market share, awards, valuation, public recognition, flagship products, global reach, research impact." />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="critical-role-section">
+                    <h4>Role</h4>
+                    <div className="profile-grid">
+                      <label>
+                        Job Title / Role Title *
+                        <input value={criticalRoleForm.role_title} onChange={(event) => setCriticalRoleField("role_title", event.target.value)} placeholder="Example: Senior Product Manager, Principal Scientist, Director of Engineering" />
+                      </label>
+                      <label>
+                        Role Start Date
+                        <input type="date" value={criticalRoleForm.role_start_date} onChange={(event) => setCriticalRoleField("role_start_date", event.target.value)} />
+                      </label>
+                      <label>
+                        Role End Date
+                        <input type="date" value={criticalRoleForm.role_end_date} onChange={(event) => setCriticalRoleField("role_end_date", event.target.value)} disabled={criticalRoleForm.is_current_role} />
+                      </label>
+                      <label className="consent-line">
+                        <input type="checkbox" checked={criticalRoleForm.is_current_role} onChange={(event) => setCriticalRoleField("is_current_role", event.target.checked)} />
+                        <span>This is my current role</span>
+                      </label>
+                      <label className="profile-span-2">
+                        Role Summary *
+                        <textarea value={criticalRoleForm.role_summary} onChange={(event) => setCriticalRoleField("role_summary", event.target.value)} required placeholder="Summarize the role in attorney-friendly terms and explain why the responsibilities were crucial to the organization." />
+                        <span className="field-help">This should read like the short explanation an attorney would use to describe why the position mattered.</span>
+                      </label>
+                      <label className="profile-span-2">
+                        Core Responsibilities
+                        <textarea value={criticalRoleForm.role_responsibilities} onChange={(event) => setCriticalRoleField("role_responsibilities", event.target.value)} placeholder="List the highest-value responsibilities: product strategy, launch ownership, technical leadership, stakeholder management, compliance ownership, revenue responsibility, etc." />
+                      </label>
+                      <label className="profile-span-2">
+                        How The Role Evolved
+                        <textarea value={criticalRoleForm.role_evolution} onChange={(event) => setCriticalRoleField("role_evolution", event.target.value)} placeholder="Explain how your scope grew, what higher-stakes work you inherited, and how the organization relied on you over time." />
+                      </label>
+                      <label>
+                        Leadership Scope
+                        <textarea value={criticalRoleForm.leadership_scope} onChange={(event) => setCriticalRoleField("leadership_scope", event.target.value)} placeholder="Teams led, regions covered, budget owned, products managed, or executives supported." />
+                      </label>
+                      <label>
+                        Cross-functional Partners
+                        <textarea value={criticalRoleForm.cross_functional_partners} onChange={(event) => setCriticalRoleField("cross_functional_partners", event.target.value)} placeholder="Engineering, design, sales, policy, legal, research, operations, regional teams, partner organizations." />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="critical-role-section">
+                    <h4>Project</h4>
+                    <div className="profile-grid">
+                      <label>
+                        Project Name *
+                        <input value={criticalRoleForm.project_name} onChange={(event) => setCriticalRoleField("project_name", event.target.value)} required placeholder="Example: Global Payments Expansion, AI Safety Platform, Clinical Decision Engine" />
+                      </label>
+                      <label>
+                        Project Status
+                        <select value={criticalRoleForm.project_status} onChange={(event) => setCriticalRoleField("project_status", event.target.value)}>
+                          {PROJECT_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        Project Start Date
+                        <input type="date" value={criticalRoleForm.project_start_date} onChange={(event) => setCriticalRoleField("project_start_date", event.target.value)} />
+                      </label>
+                      <label>
+                        Project End Date
+                        <input type="date" value={criticalRoleForm.project_end_date} onChange={(event) => setCriticalRoleField("project_end_date", event.target.value)} />
+                      </label>
+                      <label className="profile-span-2">
+                        Project Summary
+                        <textarea value={criticalRoleForm.project_summary} onChange={(event) => setCriticalRoleField("project_summary", event.target.value)} placeholder="What was the initiative, what did it do, and why was it important to the organization?" />
+                      </label>
+                      <label className="profile-span-2">
+                        Business Need Or Problem To Solve
+                        <textarea value={criticalRoleForm.business_need} onChange={(event) => setCriticalRoleField("business_need", event.target.value)} placeholder="Describe the urgent need, revenue problem, platform gap, market opportunity, or operational bottleneck." />
+                      </label>
+                      <label className="profile-span-2">
+                        Strategic Importance
+                        <textarea value={criticalRoleForm.strategic_importance} onChange={(event) => setCriticalRoleField("strategic_importance", event.target.value)} placeholder="Explain why leadership cared: market expansion, user trust, retention, AI leadership, infrastructure modernization, payments growth, etc." />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="critical-role-section">
+                    <h4>Your contribution and value</h4>
+                    <div className="profile-grid">
+                      <label className="profile-span-2">
+                        Your Specific Contributions *
+                        <textarea value={criticalRoleForm.contributions_summary} onChange={(event) => setCriticalRoleField("contributions_summary", event.target.value)} required placeholder="Spell out what you personally ideated, built, led, approved, designed, negotiated, launched, or rescued." />
+                        <span className="field-help">Use direct ownership language so the attorneys can distinguish your work from the team’s work.</span>
+                      </label>
+                      <label className="profile-span-2">
+                        Originality / Innovation
+                        <textarea value={criticalRoleForm.innovation_originality} onChange={(event) => setCriticalRoleField("innovation_originality", event.target.value)} placeholder="What was novel, first-of-its-kind, unusually hard, or strategically inventive about your approach?" />
+                      </label>
+                      <label className="profile-span-2">
+                        Business Value Summary *
+                        <textarea value={criticalRoleForm.business_value_summary} onChange={(event) => setCriticalRoleField("business_value_summary", event.target.value)} required placeholder="Summarize the measurable business value this work created for the organization or users." />
+                      </label>
+                      <label className="profile-span-2">
+                        Quantitative Metrics
+                        <textarea value={criticalRoleForm.quantitative_metrics} onChange={(event) => setCriticalRoleField("quantitative_metrics", event.target.value)} placeholder="Include user counts, revenue impact, adoption metrics, faster launch timelines, reduced incident rates, CSAT gains, downloads, retention, or global reach." />
+                      </label>
+                      <label>
+                        Revenue / Monetization Impact
+                        <textarea value={criticalRoleForm.revenue_impact} onChange={(event) => setCriticalRoleField("revenue_impact", event.target.value)} placeholder="Examples: annual revenue enabled, subscription uplift, new market spend, transaction value supported." />
+                      </label>
+                      <label>
+                        Cost Savings / Efficiency
+                        <textarea value={criticalRoleForm.cost_savings} onChange={(event) => setCriticalRoleField("cost_savings", event.target.value)} placeholder="Examples: reduced headcount need, time saved, faster release cycle, fewer manual steps." />
+                      </label>
+                      <label>
+                        Speed / Operational Gain
+                        <textarea value={criticalRoleForm.efficiency_gain} onChange={(event) => setCriticalRoleField("efficiency_gain", event.target.value)} placeholder="Examples: launch in days instead of months, 50% faster release, 30% maintenance reduction." />
+                      </label>
+                      <label>
+                        User / Customer Impact
+                        <textarea value={criticalRoleForm.user_or_customer_impact} onChange={(event) => setCriticalRoleField("user_or_customer_impact", event.target.value)} placeholder="Who benefited and at what scale? Mention users, developers, customers, patients, or enterprises." />
+                      </label>
+                      <label>
+                        Market / Geographic Impact
+                        <textarea value={criticalRoleForm.market_or_geographic_impact} onChange={(event) => setCriticalRoleField("market_or_geographic_impact", event.target.value)} placeholder="Mention countries, regions, enterprise accounts, new market entry, or strategic partnerships." />
+                      </label>
+                      <label>
+                        Compliance / Risk Impact
+                        <textarea value={criticalRoleForm.compliance_or_risk_impact} onChange={(event) => setCriticalRoleField("compliance_or_risk_impact", event.target.value)} placeholder="Describe trust, safety, privacy, policy, fraud reduction, or legal compliance impact if relevant." />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="critical-role-section">
+                    <h4>Why you stood out</h4>
+                    <div className="profile-grid">
+                      <label className="profile-span-2">
+                        How You Were Distinguished From Peers
+                        <textarea value={criticalRoleForm.peer_distinction_summary} onChange={(event) => setCriticalRoleField("peer_distinction_summary", event.target.value)} placeholder="Explain how your leadership, judgment, product sense, technical depth, innovation, or execution went beyond what peers typically delivered." />
+                      </label>
+                      <label>
+                        Mentorship / Leadership Beyond Title
+                        <textarea value={criticalRoleForm.mentorship_leadership} onChange={(event) => setCriticalRoleField("mentorship_leadership", event.target.value)} placeholder="Coaching, mentoring, shaping team culture, setting frameworks, guiding cross-functional teams." />
+                      </label>
+                      <label>
+                        Executive Visibility / Trusted Advisor Role
+                        <textarea value={criticalRoleForm.executive_visibility} onChange={(event) => setCriticalRoleField("executive_visibility", event.target.value)} placeholder="How closely leadership relied on you, which VPs or executives reviewed the work, and what decisions you influenced." />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="critical-role-section">
+                    <h4>Evidence and attorney draft</h4>
+                    <div className="profile-grid">
+                      <label className="profile-span-2">
+                        Evidence You Can Potentially Provide
+                        <textarea value={criticalRoleForm.evidence_available} onChange={(event) => setCriticalRoleField("evidence_available", event.target.value)} placeholder="List emails, launch docs, decks, org charts, screenshots, press coverage, metrics dashboards, performance reviews, patents, awards, or recommendation letter sources." />
+                      </label>
+                      <label className="profile-span-2">
+                        Attorney-friendly Summary
+                        <textarea value={criticalRoleForm.attorney_friendly_summary} onChange={(event) => setCriticalRoleField("attorney_friendly_summary", event.target.value)} placeholder="Write a tight paragraph the legal team could reuse in a petition draft to explain why your role on this project was leading or critical." />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="form-actions">
+                    <button className="ghost compact-btn" type="button" disabled={criticalRoleBusy} onClick={saveCriticalRoleProjectDraft}>{criticalRoleBusy ? "Saving..." : "Save Draft"}</button>
+                    <button className="primary compact-btn" type="button" disabled={criticalRoleBusy} onClick={submitCriticalRoleProject}>{criticalRoleBusy ? "Submitting..." : activeCriticalRoleId ? "Submit Project" : "Create And Submit"}</button>
+                    <button className="ghost compact-btn" type="button" onClick={startNewCriticalRoleProject}>New Blank Project</button>
+                    {activeCriticalRoleId ? <button className="danger compact-btn" type="button" onClick={deleteCriticalRoleProject} disabled={criticalRoleBusy}>Delete</button> : null}
+                  </div>
+                </form>
+              </div>
+            </section>
+          </section>
+        ) : view.type === "original_contributions" ? (
+          <section className="profile-panel">
+            <div className="panel-header profile-header">
+              <div>
+                <div className="section-kicker">Original Contributions</div>
+                <h3 className="section-title">Original Contributions</h3>
+                <p className="section-intro">A strong original contributions entry shows that you introduced something genuinely new and that it mattered beyond routine team output. The legal team is looking for originality plus significance. <em>Examples: a first-of-its-kind workflow, a research contribution adopted by others, a platform capability that changed how customers operate, or a method that saved major time or money at scale.</em></p>
+              </div>
+            </div>
+            <section className="critical-role-workspace">
+              <div className="critical-role-overview">
+                <div>
+                  <div className="section-kicker">Contribution-by-contribution intake</div>
+                  <h4 className="section-title">Attorney-ready member details</h4>
+                  <p className="section-intro"><em>Save Draft</em> at any time and return later. Use <em>Submit Contribution</em> only when that entry is ready for attorney review. If you have multiple distinct innovations, create separate entries rather than combining them.</p>
+                </div>
+                <button className="primary compact-btn" type="button" onClick={startNewOriginalContribution}>Add Contribution</button>
+              </div>
+
+              <div className="critical-role-guidance">
+                <strong>What attorneys need here</strong>
+                <ul className="guidance-list">
+                  <li>Each entry should satisfy all three prongs: a real contribution, something original, and major significance. <em>Do not stop at “I worked on it.” Explain what was actually new.</em></li>
+                  <li>Work-related contributions and external contributions can both count, but explain the context clearly. <em>Research, grant work, entrepreneurship, and nonprofit work can all matter when supported well.</em></li>
+                  <li>Metrics matter. Include adoption, users, citations, funding, valuation, revenue, time savings, bug reduction, or quality gains wherever possible. <em>Examples: 90% time reduction, 10,000 adopters, 20% revenue growth, 50% fewer production bugs.</em></li>
+                  <li>If the contribution had multiple strong use cases, describe each one so the legal team can choose the best framing later. <em>For example, one capability may help global testing, pricing experiments, and launch quality.</em></li>
+                  <li>Show broader field influence through recognition, press, community mentions, or adoption letters when available. <em>Examples: LinkedIn posts, Medium articles, press releases, citations, or third-party letters.</em></li>
+                </ul>
+              </div>
+
+              <div className="critical-role-layout">
+                <aside className="critical-role-list panel">
+                  <div className="panel-header">
+                    <h3>Contributions</h3>
+                    <span>{originalContributions.length}</span>
+                  </div>
+                  {originalContributions.length ? (
+                    <div className="critical-role-list-items">
+                      {originalContributions.map((entry) => (
+                        <button
+                          key={entry.id}
+                          type="button"
+                          className={`critical-role-card ${activeOriginalContributionId === entry.id ? "active" : ""}`}
+                          onClick={() => openOriginalContribution(entry)}
+                        >
+                          <strong>{entry.contribution_title || "Untitled contribution"}</strong>
+                          <span>{entry.organization_name || "Organization pending"}{entry.contribution_category ? ` • ${entry.contribution_category}` : ""}</span>
+                          <span>{formatProjectDateRange(entry.contribution_start_date, entry.contribution_end_date, false)}{entry.workflow_status ? ` • ${entry.workflow_status}` : ""}</span>
+                          <p>{originalContributionCardMetric(entry)}</p>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="empty-state">No original contributions added yet. Start with the strongest innovation where you can explain originality and measurable significance.</p>
+                  )}
+                </aside>
+
+                <form className="critical-role-form panel" onSubmit={(event) => event.preventDefault()}>
+                  <div className="panel-header">
+                    <h3>{activeOriginalContributionId ? "Edit contribution" : "New contribution"}</h3>
+                    <span>{originalContributionForm.workflow_status === "submitted" ? "Submitted" : "Draft"}</span>
+                  </div>
+
+                  <div className="critical-role-section">
+                    <h4>Contribution basics</h4>
+                    <div className="profile-grid">
+                      <label>
+                        Contribution Title *
+                        <input value={originalContributionForm.contribution_title} onChange={(event) => setOriginalContributionField("contribution_title", event.target.value)} required placeholder="Example: Experimentation Platform, Diagnostic Model, Fraud Detection Framework" />
+                        <span className="field-help">Name the innovation, framework, feature, methodology, research output, or initiative as specifically as possible.</span>
+                      </label>
+                      <label>
+                        Contribution Category
+                        <select value={originalContributionForm.contribution_category} onChange={(event) => setOriginalContributionField("contribution_category", event.target.value)}>
+                          {CONTRIBUTION_CATEGORY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        Field Of Expertise
+                        <input value={originalContributionForm.field_of_expertise} onChange={(event) => setOriginalContributionField("field_of_expertise", event.target.value)} placeholder="Technical Product Management, AI, Payments, Research, etc." />
+                      </label>
+                      <label>
+                        Job Title
+                        <input value={originalContributionForm.job_title} onChange={(event) => setOriginalContributionField("job_title", event.target.value)} placeholder="Senior Product Manager, Founder, Principal Researcher, etc." />
+                      </label>
+                      <label>
+                        Organization Or Context
+                        <input value={originalContributionForm.organization_name} onChange={(event) => setOriginalContributionField("organization_name", event.target.value)} placeholder="Employer, research lab, startup, nonprofit, or external collaboration" />
+                      </label>
+                      <label>
+                        Project Or Product Name
+                        <input value={originalContributionForm.project_name} onChange={(event) => setOriginalContributionField("project_name", event.target.value)} placeholder="Example: Ads Ranking Platform, Oncology Research Program, Enterprise Risk Suite" />
+                      </label>
+                      <label>
+                        Contribution Status
+                        <select value={originalContributionForm.contribution_status} onChange={(event) => setOriginalContributionField("contribution_status", event.target.value)}>
+                          {PROJECT_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        Start Date
+                        <input type="date" value={originalContributionForm.contribution_start_date} onChange={(event) => setOriginalContributionField("contribution_start_date", event.target.value)} />
+                      </label>
+                      <label>
+                        End Date
+                        <input type="date" value={originalContributionForm.contribution_end_date} onChange={(event) => setOriginalContributionField("contribution_end_date", event.target.value)} />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="critical-role-section">
+                    <h4>Originality and innovation</h4>
+                    <div className="profile-grid">
+                      <label className="profile-span-2">
+                        What Was Original *
+                        <textarea value={originalContributionForm.originality_summary} onChange={(event) => setOriginalContributionField("originality_summary", event.target.value)} required placeholder="Describe the specific innovation you introduced and why it was unique in your field or company." />
+                        <span className="field-help">Attorneys need enough detail to show this was not routine execution or a small variation on existing work.</span>
+                      </label>
+                      <label className="profile-span-2">
+                        How It Challenged Existing Methods Or Paradigms
+                        <textarea value={originalContributionForm.challenging_paradigms} onChange={(event) => setOriginalContributionField("challenging_paradigms", event.target.value)} placeholder="Explain what the old way was, why it was limited, and how your contribution changed the approach." />
+                      </label>
+                      <label className="profile-span-2">
+                        Prior State Of The Field Or Workflow
+                        <textarea value={originalContributionForm.prior_state_of_field} onChange={(event) => setOriginalContributionField("prior_state_of_field", event.target.value)} placeholder="Describe the baseline process, common limitations, and the pain points that existed before your contribution." />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="critical-role-section">
+                    <h4>Your role and distinct contribution</h4>
+                    <div className="profile-grid">
+                      <label className="profile-span-2">
+                        Work-related Vs External Context
+                        <textarea value={originalContributionForm.work_vs_external_context} onChange={(event) => setOriginalContributionField("work_vs_external_context", event.target.value)} placeholder="Clarify whether this was work-related, research-based, entrepreneurial, grant-related, nonprofit, or external collaboration." />
+                      </label>
+                      <label>
+                        Your Personal Role
+                        <textarea value={originalContributionForm.personal_role} onChange={(event) => setOriginalContributionField("personal_role", event.target.value)} placeholder="Product lead, researcher, founder, inventor, principal engineer, etc." />
+                      </label>
+                      <label className="profile-span-2">
+                        Your Distinct Contribution *
+                        <textarea value={originalContributionForm.distinct_contribution_summary} onChange={(event) => setOriginalContributionField("distinct_contribution_summary", event.target.value)} required placeholder="Spell out exactly what you personally introduced, designed, led, authored, built, validated, or commercialized." />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="critical-role-section">
+                    <h4>Problem, solution, and use cases</h4>
+                    <div className="profile-grid">
+                      <label className="profile-span-2">
+                        Technical Or Business Problem
+                        <textarea value={originalContributionForm.technical_or_business_problem} onChange={(event) => setOriginalContributionField("technical_or_business_problem", event.target.value)} placeholder="Describe the pain point, inefficiency, market gap, scientific limitation, or operational challenge your contribution addressed." />
+                      </label>
+                      <label className="profile-span-2">
+                        Solution Or Innovation You Created
+                        <textarea value={originalContributionForm.solution_or_innovation} onChange={(event) => setOriginalContributionField("solution_or_innovation", event.target.value)} placeholder="Explain the mechanism, framework, feature, app, method, product, or process you created." />
+                      </label>
+                      <label className="profile-span-2">
+                        Unique Features Or Notable Use Cases
+                        <textarea value={originalContributionForm.unique_features} onChange={(event) => setOriginalContributionField("unique_features", event.target.value)} placeholder="List the strongest use cases, novel features, downstream capabilities, or examples showing why the contribution was different." />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="critical-role-section">
+                    <h4>Impact and major significance</h4>
+                    <div className="profile-grid">
+                      <label className="profile-span-2">
+                        Impact Metrics *
+                        <textarea value={originalContributionForm.impact_metrics} onChange={(event) => setOriginalContributionField("impact_metrics", event.target.value)} required placeholder="Include numbers wherever possible: time savings, users reached, revenue, citations, funding, valuation, bug reduction, adoption, quality improvement, or market size." />
+                      </label>
+                      <label>
+                        Adoption Scale
+                        <textarea value={originalContributionForm.adoption_scale} onChange={(event) => setOriginalContributionField("adoption_scale", event.target.value)} placeholder="Who used or adopted it, and at what scale?" />
+                      </label>
+                      <label>
+                        Beneficiaries
+                        <textarea value={originalContributionForm.beneficiary_summary} onChange={(event) => setOriginalContributionField("beneficiary_summary", event.target.value)} placeholder="Developers, researchers, hospitals, customers, startups, platform users, or the broader public." />
+                      </label>
+                      <label>
+                        Time Savings
+                        <textarea value={originalContributionForm.time_savings} onChange={(event) => setOriginalContributionField("time_savings", event.target.value)} placeholder="Examples: reduced a 6-week process to 1 week, cut testing by 90%." />
+                      </label>
+                      <label>
+                        Cost Savings
+                        <textarea value={originalContributionForm.cost_savings} onChange={(event) => setOriginalContributionField("cost_savings", event.target.value)} placeholder="Examples: saved millions in labor, infrastructure, or lost revenue." />
+                      </label>
+                      <label>
+                        Revenue Or Funding Impact
+                        <textarea value={originalContributionForm.revenue_impact} onChange={(event) => setOriginalContributionField("revenue_impact", event.target.value)} placeholder="Examples: increased spend, monetization, funding raised, valuation achieved." />
+                      </label>
+                      <label>
+                        Quality / Risk Impact
+                        <textarea value={originalContributionForm.quality_or_risk_impact} onChange={(event) => setOriginalContributionField("quality_or_risk_impact", event.target.value)} placeholder="Bug reduction, quality improvement, reduced escalations, safer releases, policy or compliance improvement." />
+                      </label>
+                      <label className="profile-span-2">
+                        Broader Field Impact *
+                        <textarea value={originalContributionForm.field_wide_impact} onChange={(event) => setOriginalContributionField("field_wide_impact", event.target.value)} required placeholder="Explain how the contribution influenced the broader field, market, ecosystem, or industry rather than helping only one team." />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="critical-role-section">
+                    <h4>Recognition and evidence</h4>
+                    <div className="profile-grid">
+                      <label className="profile-span-2">
+                        Recognition And Influence
+                        <textarea value={originalContributionForm.recognition_and_influence} onChange={(event) => setOriginalContributionField("recognition_and_influence", event.target.value)} placeholder="Describe recognition by other experts, adoption by others, conference talks, citations, internal executive recognition, or industry influence." />
+                      </label>
+                      <label className="profile-span-2">
+                        Media Or Public Mentions
+                        <textarea value={originalContributionForm.media_or_public_mentions} onChange={(event) => setOriginalContributionField("media_or_public_mentions", event.target.value)} placeholder="List Medium posts, LinkedIn posts, press releases, media articles, public product pages, or field references." />
+                      </label>
+                      <label>
+                        Adoption Letters Targets
+                        <textarea value={originalContributionForm.adoption_letters_targets} onChange={(event) => setOriginalContributionField("adoption_letters_targets", event.target.value)} placeholder="Who could write letters about adoption or significance? Include names, companies, titles, and likely use cases if known." />
+                      </label>
+                      <label>
+                        Evidence Available
+                        <textarea value={originalContributionForm.evidence_available} onChange={(event) => setOriginalContributionField("evidence_available", event.target.value)} placeholder="Product docs, citations, dashboards, screenshots, patents, press, external references, executive emails, research metrics." />
+                      </label>
+                      <label className="profile-span-2">
+                        Attorney-friendly Summary
+                        <textarea value={originalContributionForm.attorney_friendly_summary} onChange={(event) => setOriginalContributionField("attorney_friendly_summary", event.target.value)} placeholder="Write a short paragraph the legal team could reuse to explain why this contribution was original and of major significance." />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="form-actions">
+                    <button className="ghost compact-btn" type="button" disabled={originalContributionBusy} onClick={saveOriginalContributionDraft}>{originalContributionBusy ? "Saving..." : "Save Draft"}</button>
+                    <button className="primary compact-btn" type="button" disabled={originalContributionBusy} onClick={submitOriginalContribution}>{originalContributionBusy ? "Submitting..." : activeOriginalContributionId ? "Submit Contribution" : "Create And Submit"}</button>
+                    <button className="ghost compact-btn" type="button" onClick={startNewOriginalContribution}>New Blank Contribution</button>
+                    {activeOriginalContributionId ? <button className="danger compact-btn" type="button" onClick={deleteOriginalContribution} disabled={originalContributionBusy}>Delete</button> : null}
+                  </div>
+                </form>
+              </div>
+            </section>
+          </section>
         ) : view.type === "messages" ? (
           <section className="profile-panel">
             <div className="panel-header profile-header">
@@ -6958,6 +8951,269 @@ function App() {
               <button type="button" className={profileTab === "criteria" ? "active" : ""} onClick={() => setProfileTab("criteria")}>Criterion Highlights</button>
             </div>
 
+            {false ? (
+              <section className="critical-role-workspace">
+                <div className="critical-role-overview">
+                  <div>
+                    <div className="section-kicker">Leading Or Critical Role</div>
+                    <h4 className="section-title">Project-by-project attorney intake</h4>
+                    <p className="section-intro">Add one entry for each qualifying project within an organization. Keep companies separate, quantify impact wherever possible, and explain why both your role and the organization were distinguished.</p>
+                  </div>
+                  <button className="primary compact-btn" type="button" onClick={startNewCriticalRoleProject}>Add Project</button>
+                </div>
+
+                <div className="critical-role-guidance">
+                  <strong>What attorneys need here</strong>
+                  <ul className="guidance-list">
+                    <li>Create a separate entry for each major project. Do not combine different employers in one write-up.</li>
+                    <li>Contract, part-time, and founder work can still be relevant if the role was truly leading or critical.</li>
+                    <li>Explain why the organization was distinguished, then explain why your project mattered inside that organization.</li>
+                    <li>Quantify business value with revenue, cost savings, adoption, users reached, launch speed, market expansion, risk reduction, or compliance impact whenever you can.</li>
+                    <li>Use the peer-distinction section to show how your expertise went beyond your title, not just to repeat responsibilities.</li>
+                  </ul>
+                </div>
+
+                <div className="critical-role-layout">
+                  <aside className="critical-role-list panel">
+                    <div className="panel-header">
+                      <h3>Projects</h3>
+                      <span>{criticalRoleProjects.length}</span>
+                    </div>
+                    {criticalRoleProjects.length ? (
+                      <div className="critical-role-list-items">
+                        {criticalRoleProjects.map((project) => (
+                          <button
+                            key={project.id}
+                            type="button"
+                            className={`critical-role-card ${activeCriticalRoleId === project.id ? "active" : ""}`}
+                            onClick={() => openCriticalRoleProject(project)}
+                          >
+                            <strong>{project.project_name || "Untitled project"}</strong>
+                            <span>{project.organization_name || "Organization pending"}{project.role_title ? ` • ${project.role_title}` : ""}</span>
+                            <span>{formatProjectDateRange(project.project_start_date, project.project_end_date, false)}</span>
+                            <p>{criticalRoleProjectCardMetric(project)}</p>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="empty-state">No critical role projects added yet. Start with the strongest project where your role was clearly central and measurable.</p>
+                    )}
+                  </aside>
+
+                  <form className="critical-role-form panel" onSubmit={saveCriticalRoleProject}>
+                    <div className="panel-header">
+                      <h3>{activeCriticalRoleId ? "Edit project" : "New project"}</h3>
+                      <span>{criticalRoleForm.organization_name || "Draft"}</span>
+                    </div>
+
+                    <div className="critical-role-section">
+                      <h4>Organization</h4>
+                      <div className="profile-grid">
+                        <label>
+                          Organization Name *
+                          <input value={criticalRoleForm.organization_name} onChange={(event) => setCriticalRoleField("organization_name", event.target.value)} required />
+                          <span className="field-help">Use the formal company or institution name exactly as it should appear in attorney drafts.</span>
+                        </label>
+                        <label>
+                          Business Unit / Team
+                          <input value={criticalRoleForm.organization_unit} onChange={(event) => setCriticalRoleField("organization_unit", event.target.value)} placeholder="Example: Payments Platform, AI Store, Research Lab" />
+                          <span className="field-help">Name the unit where your project lived so the legal team can frame your specific sphere of responsibility.</span>
+                        </label>
+                        <label>
+                          Organization Location
+                          <input value={criticalRoleForm.organization_location} onChange={(event) => setCriticalRoleField("organization_location", event.target.value)} placeholder="City, State, Country" />
+                        </label>
+                        <label>
+                          Organization Website
+                          <input value={criticalRoleForm.organization_website} onChange={(event) => setCriticalRoleField("organization_website", event.target.value)} placeholder="https://example.com" />
+                        </label>
+                        <label>
+                          Employment Type
+                          <select value={criticalRoleForm.employment_type} onChange={(event) => setCriticalRoleField("employment_type", event.target.value)}>
+                            <option value="">Choose one</option>
+                            {EMPLOYMENT_TYPE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                          </select>
+                          <span className="field-help">The template notes that W-2, contract, and part-time work can still qualify if the role itself was critical.</span>
+                        </label>
+                        <label className="profile-span-2">
+                          Why This Organization Was Distinguished
+                          <textarea value={criticalRoleForm.organization_distinctiveness} onChange={(event) => setCriticalRoleField("organization_distinctiveness", event.target.value)} placeholder="Describe market leadership, scale, brand recognition, flagship products, industry position, or why the organization is notable in its field." />
+                          <span className="field-help">Focus on size, market presence, user base, reputation, or industry contribution so attorneys can show the employer was not ordinary.</span>
+                        </label>
+                        <label className="profile-span-2">
+                          Organization Achievements, Awards, or Reputation Signals
+                          <textarea value={criticalRoleForm.organization_achievements} onChange={(event) => setCriticalRoleField("organization_achievements", event.target.value)} placeholder="Examples: market share, awards, valuation, public recognition, flagship products, global reach, research impact." />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="critical-role-section">
+                      <h4>Role</h4>
+                      <div className="profile-grid">
+                        <label>
+                          Role Title *
+                          <input value={criticalRoleForm.role_title} onChange={(event) => setCriticalRoleField("role_title", event.target.value)} required />
+                        </label>
+                        <label>
+                          Role Start Date
+                          <input type="date" value={criticalRoleForm.role_start_date} onChange={(event) => setCriticalRoleField("role_start_date", event.target.value)} />
+                        </label>
+                        <label>
+                          Role End Date
+                          <input type="date" value={criticalRoleForm.role_end_date} onChange={(event) => setCriticalRoleField("role_end_date", event.target.value)} disabled={criticalRoleForm.is_current_role} />
+                        </label>
+                        <label className="consent-line">
+                          <input type="checkbox" checked={criticalRoleForm.is_current_role} onChange={(event) => setCriticalRoleField("is_current_role", event.target.checked)} />
+                          <span>This is my current role</span>
+                        </label>
+                        <label className="profile-span-2">
+                          Role Summary *
+                          <textarea value={criticalRoleForm.role_summary} onChange={(event) => setCriticalRoleField("role_summary", event.target.value)} required placeholder="Summarize the role in attorney-friendly terms and explain why the responsibilities were crucial to the organization." />
+                          <span className="field-help">This should read like the short explanation an attorney would use to describe why the position mattered.</span>
+                        </label>
+                        <label className="profile-span-2">
+                          Core Responsibilities
+                          <textarea value={criticalRoleForm.role_responsibilities} onChange={(event) => setCriticalRoleField("role_responsibilities", event.target.value)} placeholder="List the highest-value responsibilities: product strategy, launch ownership, technical leadership, stakeholder management, compliance ownership, revenue responsibility, etc." />
+                        </label>
+                        <label className="profile-span-2">
+                          How The Role Evolved
+                          <textarea value={criticalRoleForm.role_evolution} onChange={(event) => setCriticalRoleField("role_evolution", event.target.value)} placeholder="Explain how your scope grew, what higher-stakes work you inherited, and how the organization relied on you over time." />
+                        </label>
+                        <label>
+                          Leadership Scope
+                          <textarea value={criticalRoleForm.leadership_scope} onChange={(event) => setCriticalRoleField("leadership_scope", event.target.value)} placeholder="Teams led, regions covered, budget owned, products managed, or executives supported." />
+                        </label>
+                        <label>
+                          Cross-functional Partners
+                          <textarea value={criticalRoleForm.cross_functional_partners} onChange={(event) => setCriticalRoleField("cross_functional_partners", event.target.value)} placeholder="Engineering, design, sales, policy, legal, research, operations, regional teams, partner organizations." />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="critical-role-section">
+                      <h4>Project</h4>
+                      <div className="profile-grid">
+                        <label>
+                          Project Name *
+                          <input value={criticalRoleForm.project_name} onChange={(event) => setCriticalRoleField("project_name", event.target.value)} required />
+                        </label>
+                        <label>
+                          Project Status
+                          <select value={criticalRoleForm.project_status} onChange={(event) => setCriticalRoleField("project_status", event.target.value)}>
+                            {PROJECT_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                          </select>
+                        </label>
+                        <label>
+                          Project Start Date
+                          <input type="date" value={criticalRoleForm.project_start_date} onChange={(event) => setCriticalRoleField("project_start_date", event.target.value)} />
+                        </label>
+                        <label>
+                          Project End Date
+                          <input type="date" value={criticalRoleForm.project_end_date} onChange={(event) => setCriticalRoleField("project_end_date", event.target.value)} />
+                        </label>
+                        <label className="profile-span-2">
+                          Project Summary
+                          <textarea value={criticalRoleForm.project_summary} onChange={(event) => setCriticalRoleField("project_summary", event.target.value)} placeholder="What was the initiative, what did it do, and why was it important to the organization?" />
+                        </label>
+                        <label className="profile-span-2">
+                          Business Need Or Problem To Solve
+                          <textarea value={criticalRoleForm.business_need} onChange={(event) => setCriticalRoleField("business_need", event.target.value)} placeholder="Describe the urgent need, revenue problem, platform gap, market opportunity, compliance requirement, or operational bottleneck." />
+                        </label>
+                        <label className="profile-span-2">
+                          Strategic Importance
+                          <textarea value={criticalRoleForm.strategic_importance} onChange={(event) => setCriticalRoleField("strategic_importance", event.target.value)} placeholder="Explain why leadership cared: market expansion, user trust, retention, AI leadership, infrastructure modernization, payments growth, etc." />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="critical-role-section">
+                      <h4>Your contribution and value</h4>
+                      <div className="profile-grid">
+                        <label className="profile-span-2">
+                          Your Specific Contributions *
+                          <textarea value={criticalRoleForm.contributions_summary} onChange={(event) => setCriticalRoleField("contributions_summary", event.target.value)} required placeholder="Spell out what you personally ideated, built, led, approved, designed, negotiated, launched, or rescued." />
+                          <span className="field-help">Use direct ownership language so the attorneys can distinguish your work from the team’s work.</span>
+                        </label>
+                        <label className="profile-span-2">
+                          Originality / Innovation
+                          <textarea value={criticalRoleForm.innovation_originality} onChange={(event) => setCriticalRoleField("innovation_originality", event.target.value)} placeholder="What was novel, first-of-its-kind, unusually hard, or strategically inventive about your approach?" />
+                        </label>
+                        <label className="profile-span-2">
+                          Business Value Summary *
+                          <textarea value={criticalRoleForm.business_value_summary} onChange={(event) => setCriticalRoleField("business_value_summary", event.target.value)} required placeholder="Summarize the measurable business value this work created for the organization or users." />
+                        </label>
+                        <label className="profile-span-2">
+                          Quantitative Metrics
+                          <textarea value={criticalRoleForm.quantitative_metrics} onChange={(event) => setCriticalRoleField("quantitative_metrics", event.target.value)} placeholder="Include user counts, revenue impact, adoption metrics, faster launch timelines, reduced incident rates, CSAT gains, downloads, retention, or global reach." />
+                        </label>
+                        <label>
+                          Revenue / Monetization Impact
+                          <textarea value={criticalRoleForm.revenue_impact} onChange={(event) => setCriticalRoleField("revenue_impact", event.target.value)} placeholder="Examples: annual revenue enabled, subscription uplift, new market spend, transaction value supported." />
+                        </label>
+                        <label>
+                          Cost Savings / Efficiency
+                          <textarea value={criticalRoleForm.cost_savings} onChange={(event) => setCriticalRoleField("cost_savings", event.target.value)} placeholder="Examples: reduced headcount need, time saved, faster release cycle, fewer manual steps." />
+                        </label>
+                        <label>
+                          Speed / Operational Gain
+                          <textarea value={criticalRoleForm.efficiency_gain} onChange={(event) => setCriticalRoleField("efficiency_gain", event.target.value)} placeholder="Examples: launch in days instead of months, 50% faster release, 30% maintenance reduction." />
+                        </label>
+                        <label>
+                          User / Customer Impact
+                          <textarea value={criticalRoleForm.user_or_customer_impact} onChange={(event) => setCriticalRoleField("user_or_customer_impact", event.target.value)} placeholder="Who benefited and at what scale? Mention users, developers, customers, patients, merchants, or enterprises." />
+                        </label>
+                        <label>
+                          Market / Geographic Impact
+                          <textarea value={criticalRoleForm.market_or_geographic_impact} onChange={(event) => setCriticalRoleField("market_or_geographic_impact", event.target.value)} placeholder="Mention countries, regions, enterprise accounts, new market entry, or strategic partnerships." />
+                        </label>
+                        <label>
+                          Compliance / Risk Impact
+                          <textarea value={criticalRoleForm.compliance_or_risk_impact} onChange={(event) => setCriticalRoleField("compliance_or_risk_impact", event.target.value)} placeholder="Describe trust, safety, privacy, policy, fraud reduction, or legal compliance impact if relevant." />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="critical-role-section">
+                      <h4>Why you stood out</h4>
+                      <div className="profile-grid">
+                        <label className="profile-span-2">
+                          How You Were Distinguished From Peers
+                          <textarea value={criticalRoleForm.peer_distinction_summary} onChange={(event) => setCriticalRoleField("peer_distinction_summary", event.target.value)} placeholder="Explain how your leadership, judgment, product sense, technical depth, innovation, or execution went beyond what peers typically delivered." />
+                        </label>
+                        <label>
+                          Mentorship / Leadership Beyond Title
+                          <textarea value={criticalRoleForm.mentorship_leadership} onChange={(event) => setCriticalRoleField("mentorship_leadership", event.target.value)} placeholder="Coaching, mentoring, shaping team culture, setting frameworks, guiding cross-functional teams." />
+                        </label>
+                        <label>
+                          Executive Visibility / Trusted Advisor Role
+                          <textarea value={criticalRoleForm.executive_visibility} onChange={(event) => setCriticalRoleField("executive_visibility", event.target.value)} placeholder="How closely leadership relied on you, which VPs or executives reviewed the work, and what decisions you influenced." />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="critical-role-section">
+                      <h4>Evidence and attorney draft</h4>
+                      <div className="profile-grid">
+                        <label className="profile-span-2">
+                          Evidence You Can Potentially Provide
+                          <textarea value={criticalRoleForm.evidence_available} onChange={(event) => setCriticalRoleField("evidence_available", event.target.value)} placeholder="List emails, launch docs, decks, org charts, screenshots, press coverage, metrics dashboards, performance reviews, patents, awards, or recommendation letter sources." />
+                        </label>
+                        <label className="profile-span-2">
+                          Attorney-friendly Summary
+                          <textarea value={criticalRoleForm.attorney_friendly_summary} onChange={(event) => setCriticalRoleField("attorney_friendly_summary", event.target.value)} placeholder="Write a tight paragraph the legal team could reuse in a petition draft to explain why your role on this project was leading or critical." />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="form-actions">
+                      <button className="primary compact-btn" type="submit" disabled={criticalRoleBusy}>{criticalRoleBusy ? "Saving..." : activeCriticalRoleId ? "Save Changes" : "Create Project"}</button>
+                      <button className="ghost compact-btn" type="button" onClick={startNewCriticalRoleProject}>New Blank Project</button>
+                      {activeCriticalRoleId ? <button className="danger compact-btn" type="button" onClick={deleteCriticalRoleProject} disabled={criticalRoleBusy}>Delete</button> : null}
+                    </div>
+                  </form>
+                </div>
+              </section>
+            ) : (
             <form className="profile-form" onSubmit={handleProfileSubmit}>
               {profileTab === "identity" ? (
                 <div className="profile-grid">
@@ -7143,6 +9399,7 @@ function App() {
                 <button className="ghost compact-btn" type="button" onClick={() => setView({ type: "home", criterionCode: "" })}>Back to Home</button>
               </div>
             </form>
+            )}
           </section>
         ) : (
           <section className="workspace-page">

@@ -1,6 +1,6 @@
 import json
 
-from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import load_cors_origins
@@ -109,15 +109,50 @@ def optional_member_user(token: str = "") -> dict | None:
     return None
 
 
-def require_admin_user(authorization: str | None = Header(None)) -> dict:
+def require_member_user(authorization: str | None = Header(None)) -> dict:
+    parsed = bearer_token(authorization)
+    try:
+        return service().member_session(parsed)
+    except ValueError as exc:
+        _auth_error(str(exc))
+    return {}
+
+
+def require_builder_user(authorization: str | None = Header(None)) -> dict:
+    parsed = bearer_token(authorization)
+    try:
+        return service().builder_session(parsed)
+    except ValueError as exc:
+        _auth_error(str(exc))
+    return {}
+
+
+def require_staff_role(expected_roles: set[str], authorization: str | None = Header(None)) -> dict:
     parsed = bearer_token(authorization)
     try:
         user = service().staff_session(parsed)
     except ValueError as exc:
         _auth_error(str(exc))
-    if user.get("role") != "admin":
+    role = str(user.get("role", "")).strip().lower()
+    if role not in expected_roles:
         _auth_error("Insufficient permissions", status_code=403)
     return user
+
+
+def require_leader_user(authorization: str | None = Header(None)) -> dict:
+    return require_staff_role({"leader"}, authorization)
+
+
+def require_attorney_user(authorization: str | None = Header(None)) -> dict:
+    return require_staff_role({"attorney"}, authorization)
+
+
+def require_legal_staff_user(authorization: str | None = Header(None)) -> dict:
+    return require_staff_role({"attorney", "leader"}, authorization)
+
+
+def require_admin_user(authorization: str | None = Header(None)) -> dict:
+    return require_staff_role({"admin"}, authorization)
 
 
 def _login_audit_context(request: Request) -> dict:
@@ -246,12 +281,12 @@ def staff_logout(token: str = Header(alias="Authorization", default="")) -> dict
 
 
 @app.get("/api/builder/dashboard")
-def builder_dashboard() -> dict:
+def builder_dashboard(_builder_user: dict = Depends(require_builder_user)) -> dict:
     return service().builder_dashboard()
 
 
 @app.get("/api/leader/dashboard")
-def leader_dashboard() -> dict:
+def leader_dashboard(_leader_user: dict = Depends(require_leader_user)) -> dict:
     return service().leader_dashboard()
 
 
@@ -266,6 +301,7 @@ def leader_invite_member(
     current_employer: str = Form(""),
     builder_id: str = Form(""),
     attorney_id: str = Form(""),
+    _leader_user: dict = Depends(require_leader_user),
 ) -> dict:
     try:
         return service().leader_invite_member(first_name, last_name, email, industry_domain, primary_field, current_title, current_employer, builder_id, attorney_id)
@@ -274,7 +310,7 @@ def leader_invite_member(
 
 
 @app.patch("/api/leader/members/{client_id}/builder-assignment")
-def leader_assign_builder(client_id: str, builder_id: str = Form(...)) -> dict:
+def leader_assign_builder(client_id: str, builder_id: str = Form(...), _leader_user: dict = Depends(require_leader_user)) -> dict:
     try:
         return service().leader_assign_builder(client_id, builder_id)
     except ValueError as exc:
@@ -282,9 +318,63 @@ def leader_assign_builder(client_id: str, builder_id: str = Form(...)) -> dict:
 
 
 @app.patch("/api/leader/members/{client_id}/attorney-assignment")
-def leader_assign_attorney(client_id: str, attorney_id: str = Form(...)) -> dict:
+def leader_assign_attorney(client_id: str, attorney_id: str = Form(...), _leader_user: dict = Depends(require_leader_user)) -> dict:
     try:
         return service().leader_assign_attorney(client_id, attorney_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.get("/api/leader/product-backlog")
+def leader_product_backlog(_leader_user: dict = Depends(require_leader_user)) -> dict:
+    return service().product_feature_backlog()
+
+
+@app.post("/api/leader/product-backlog")
+async def create_leader_product_backlog_item(
+    title: str = Form(...),
+    request_type: str = Form("enhancement"),
+    target_portals: str = Form(""),
+    priority: str = Form("P2"),
+    business_value: str = Form(""),
+    description: str = Form(...),
+    acceptance_criteria: str = Form(""),
+    requested_by: str = Form(""),
+    actor_email: str = Form(""),
+    screenshots: list[UploadFile] | None = File(None),
+    _leader_user: dict = Depends(require_leader_user),
+) -> dict:
+    try:
+        attachments = []
+        for upload in screenshots or []:
+            content = await upload.read()
+            attachments.append({"file_name": upload.filename, "content_type": upload.content_type, "bytes": content})
+        return service().create_product_feature_request(
+            actor_email=actor_email or _leader_user.get("email", ""),
+            title=title,
+            request_type=request_type,
+            target_portals=target_portals,
+            priority=priority,
+            business_value=business_value,
+            description=description,
+            acceptance_criteria=acceptance_criteria,
+            requested_by=requested_by,
+            attachments=attachments,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.patch("/api/leader/product-backlog/{request_id}")
+def update_leader_product_backlog_item(
+    request_id: str,
+    priority: str = Form(""),
+    status: str = Form(""),
+    actor_email: str = Form(""),
+    _leader_user: dict = Depends(require_leader_user),
+) -> dict:
+    try:
+        return service().update_product_feature_request(request_id, priority=priority, status=status, actor_email=actor_email or _leader_user.get("email", ""))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -363,9 +453,142 @@ def admin_costs_refresh(_admin_user: dict = Depends(require_admin_user)) -> dict
 
 
 @app.get("/api/attorney/petition-generator")
-def attorney_petition_generator(client_id: str = "") -> dict:
+def attorney_petition_generator(client_id: str = "", _attorney_user: dict = Depends(require_attorney_user)) -> dict:
     try:
-        return service().attorney_petition_generator(client_id)
+        return service().attorney_petition_generator(client_id, attorney_email=_attorney_user.get("email", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.get("/api/petition-acceleration")
+def petition_acceleration(client_id: str = "", actor_role: str = "attorney", actor_email: str = "", _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
+    try:
+        role = _legal_user.get("role", actor_role)
+        email = _legal_user.get("email", actor_email)
+        return service().petition_acceleration_workspace(client_id, actor_role=role, actor_email=email)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.get("/api/member/petition-acceleration")
+def member_petition_acceleration(_member_user: dict = Depends(require_member_user)) -> dict:
+    try:
+        return service().petition_acceleration_workspace(_member_user["client_id"], actor_role="member")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.get("/api/builder/members/{client_id}/petition-acceleration")
+def builder_petition_acceleration(client_id: str, _builder_user: dict = Depends(require_builder_user)) -> dict:
+    try:
+        return service().petition_acceleration_workspace(client_id, actor_role="builder", actor_email=_builder_user.get("email", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.get("/api/attorney/members/{client_id}/petition-acceleration")
+def attorney_petition_acceleration(client_id: str, _attorney_user: dict = Depends(require_attorney_user)) -> dict:
+    try:
+        return service().petition_acceleration_workspace(client_id, actor_role="attorney", actor_email=_attorney_user.get("email", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.get("/api/leader/members/{client_id}/petition-acceleration")
+def leader_petition_acceleration(client_id: str, _leader_user: dict = Depends(require_leader_user)) -> dict:
+    try:
+        return service().petition_acceleration_workspace(client_id, actor_role="leader", actor_email=_leader_user.get("email", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.get("/api/admin/petition-acceleration")
+def admin_petition_acceleration(client_id: str = "", _admin_user: dict = Depends(require_admin_user)) -> dict:
+    try:
+        return service().petition_acceleration_workspace(client_id, actor_role="admin", actor_email=_admin_user.get("email", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.get("/api/members/{client_id}/filing-timeline")
+def member_filing_timeline(client_id: str, actor_role: str = "member", actor_email: str = "", actor_client_id: str = "") -> dict:
+    try:
+        return service().petition_delivery_timeline(client_id, actor_role=actor_role, actor_email=actor_email, actor_client_id=actor_client_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.post("/api/attorney/endeavor-letter-generator")
+def attorney_endeavor_letter_generator(payload: dict = Body(...), _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
+    try:
+        role = _legal_user.get("role", payload.get("actor_role", "attorney"))
+        email = _legal_user.get("email", payload.get("actor_email", ""))
+        return service().attorney_endeavor_letter_generator(
+            payload.get("client_id", ""),
+            prompt_config=payload.get("prompt_config", {}),
+            actor_role=role,
+            actor_email=email,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.get("/api/attorney/members/{client_id}/recommendation-letter-workspace")
+def attorney_recommendation_letter_workspace(client_id: str, _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
+    try:
+        return service().recommendation_letter_workspace(client_id, actor_role=_legal_user.get("role", "attorney"), actor_email=_legal_user.get("email", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.post("/api/attorney/recommendation-letter-generator")
+def attorney_recommendation_letter_generator(payload: dict = Body(...), _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
+    try:
+        role = _legal_user.get("role", payload.get("actor_role", "attorney"))
+        email = _legal_user.get("email", payload.get("actor_email", ""))
+        return service().attorney_recommendation_letter_generator(
+            payload.get("client_id", ""),
+            letter_kind=payload.get("letter_kind", "independent"),
+            project_type=payload.get("project_type", ""),
+            project_id=payload.get("project_id", ""),
+            prompt_config=payload.get("prompt_config", {}),
+            actor_role=role,
+            actor_email=email,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.patch("/api/attorney/recommendation-letters/{letter_id}")
+def update_recommendation_letter(letter_id: str, payload: dict = Body(...), _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
+    try:
+        return service().update_recommendation_letter_status(
+            letter_id,
+            payload.get("status", ""),
+            actor_role=_legal_user.get("role", "attorney"),
+            actor_email=_legal_user.get("email", ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.post("/api/attorney/recommendation-letters/{letter_id}/send-to-member")
+def send_recommendation_letter_to_member(letter_id: str, _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
+    try:
+        return service().send_recommendation_letter_to_member(letter_id, actor_role=_legal_user.get("role", "attorney"), actor_email=_legal_user.get("email", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.get("/api/recommendation-letters/{letter_id}/download")
+def download_recommendation_letter(letter_id: str) -> Response:
+    try:
+        download = service().recommendation_letter_download(letter_id)
+        return Response(
+            content=download["content"],
+            media_type=download["content_type"],
+            headers={"Content-Disposition": f'attachment; filename="{download["file_name"]}"'},
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -379,6 +602,23 @@ def assistant_reply(payload: dict = Body(...)) -> dict:
             client_id=payload.get("client_id", ""),
             actor_email=payload.get("actor_email", ""),
             thread=payload.get("thread", []),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.post("/api/activity-events")
+def activity_events(payload: dict = Body(...)) -> dict:
+    try:
+        return service().log_portal_activity(
+            payload.get("actor_role", ""),
+            actor_email=payload.get("actor_email", ""),
+            actor_client_id=payload.get("actor_client_id", ""),
+            event_type=payload.get("event_type", "page_view"),
+            message=payload.get("message", ""),
+            endpoint=payload.get("endpoint", "/web/activity"),
+            metadata=payload.get("metadata", {}),
+            related_client_id=payload.get("related_client_id", ""),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
@@ -442,33 +682,33 @@ async def create_support_ticket(
 
 
 @app.get("/api/attorney/members")
-def attorney_members(attorney_email: str = "") -> list[dict]:
+def attorney_members(_attorney_user: dict = Depends(require_attorney_user)) -> list[dict]:
     try:
-        return service().attorney_members(attorney_email)
+        return service().attorney_members(_attorney_user.get("email", ""))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.get("/api/attorney/members/{client_id}")
-def attorney_member_detail(client_id: str, attorney_email: str = "") -> dict:
+def attorney_member_detail(client_id: str, _attorney_user: dict = Depends(require_attorney_user)) -> dict:
     try:
-        return service().attorney_member_detail(client_id, attorney_email)
+        return service().attorney_member_detail(client_id, _attorney_user.get("email", ""))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.get("/api/attorney/members/{client_id}/evidence")
-def attorney_member_evidence(client_id: str, actor_role: str = "attorney", actor_email: str = "") -> list[dict]:
+def attorney_member_evidence(client_id: str, _legal_user: dict = Depends(require_legal_staff_user)) -> list[dict]:
     try:
-        return service().attorney_member_evidence(client_id, actor_role=actor_role, actor_email=actor_email)
+        return service().attorney_member_evidence(client_id, actor_role=_legal_user.get("role", "attorney"), actor_email=_legal_user.get("email", ""))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.get("/api/batch-intake/sessions")
-def batch_intake_sessions(client_id: str, actor_role: str = "attorney", actor_email: str = "") -> list[dict]:
+def batch_intake_sessions(client_id: str, _legal_user: dict = Depends(require_legal_staff_user)) -> list[dict]:
     try:
-        return service().batch_intake_sessions(client_id, actor_role=actor_role, actor_email=actor_email)
+        return service().batch_intake_sessions(client_id, actor_role=_legal_user.get("role", "attorney"), actor_email=_legal_user.get("email", ""))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -480,26 +720,29 @@ async def attorney_batch_intake_create(
     actor_role: str = Form("attorney"),
     actor_email: str = Form(""),
     file: UploadFile = File(...),
+    _legal_user: dict = Depends(require_legal_staff_user),
 ) -> dict:
     try:
         payload = await file.read()
+        role = _legal_user.get("role", actor_role)
+        email = _legal_user.get("email", actor_email)
         return service().attorney_batch_intake_create(
             client_id=client_id,
             member_context=member_context,
             zip_name=file.filename or "batch-intake.zip",
             zip_bytes=payload,
-            created_by_role=actor_role,
-            actor_role=actor_role,
-            actor_email=actor_email,
+            created_by_role=role,
+            actor_role=role,
+            actor_email=email,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.get("/api/attorney/batch-intake/{session_id}")
-def attorney_batch_intake_session(session_id: str, actor_role: str = "attorney", actor_email: str = "") -> dict:
+def attorney_batch_intake_session(session_id: str, _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
     try:
-        return service().attorney_batch_intake_session(session_id, actor_role=actor_role, actor_email=actor_email)
+        return service().attorney_batch_intake_session(session_id, actor_role=_legal_user.get("role", "attorney"), actor_email=_legal_user.get("email", ""))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -519,6 +762,7 @@ def update_attorney_batch_intake_item(
     review_status: str = Form(""),
     actor_role: str = Form("attorney"),
     actor_email: str = Form(""),
+    _legal_user: dict = Depends(require_legal_staff_user),
 ) -> dict:
     try:
         kwargs = {}
@@ -532,8 +776,8 @@ def update_attorney_batch_intake_item(
             "assigned_folder_name": assigned_folder_name,
             "duplicate_action": duplicate_action,
             "review_status": review_status,
-            "actor_role": actor_role,
-            "actor_email": actor_email,
+            "actor_role": _legal_user.get("role", actor_role),
+            "actor_email": _legal_user.get("email", actor_email),
         }.items():
             if value != "":
                 kwargs[key] = value
@@ -550,10 +794,11 @@ def bulk_update_attorney_batch_intake(
     duplicate_action: str = Form(""),
     actor_role: str = Form("attorney"),
     actor_email: str = Form(""),
+    _legal_user: dict = Depends(require_legal_staff_user),
 ) -> dict:
     try:
         items = [item.strip() for item in item_ids.split(",") if item.strip()]
-        kwargs = {"actor_role": actor_role, "actor_email": actor_email}
+        kwargs = {"actor_role": _legal_user.get("role", actor_role), "actor_email": _legal_user.get("email", actor_email)}
         if review_status != "":
             kwargs["review_status"] = review_status
         if duplicate_action != "":
@@ -568,9 +813,10 @@ def commit_attorney_batch_intake(
     session_id: str,
     actor_role: str = Form("attorney"),
     actor_email: str = Form(""),
+    _legal_user: dict = Depends(require_legal_staff_user),
 ) -> dict:
     try:
-        return service().commit_attorney_batch_intake(session_id, actor_role=actor_role, actor_email=actor_email)
+        return service().commit_attorney_batch_intake(session_id, actor_role=_legal_user.get("role", actor_role), actor_email=_legal_user.get("email", actor_email))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -709,24 +955,18 @@ def update_builder_task(task_id: str, status: str = Form(""), due_date: str = Fo
 
 
 @app.get("/api/member/dashboard")
-def dashboard(token: str = Header(alias="Authorization", default="")) -> dict:
-    member = optional_member_user(token)
-    if not member:
-        return service().dashboard()
+def dashboard(member: dict = Depends(require_member_user)) -> dict:
     return service().member_dashboard(member["client_id"], member["case_id"], member.get("display_name", ""))
 
 
 @app.get("/api/member/profile")
-def member_profile(token: str = Header(alias="Authorization", default="")) -> dict:
-    member = optional_member_user(token)
-    if not member:
-        return service().member_profile()
+def member_profile(member: dict = Depends(require_member_user)) -> dict:
     return service().member_profile(member["client_id"], member["case_id"])
 
 
 @app.put("/api/member/profile")
 def update_member_profile(
-    token: str = Header(alias="Authorization", default=""),
+    member: dict = Depends(require_member_user),
     first_name: str = Form(...),
     last_name: str = Form(...),
     email: str = Form(...),
@@ -766,10 +1006,9 @@ def update_member_profile(
     profile_confirmed: bool = Form(False),
 ) -> dict:
     try:
-        member = optional_member_user(token)
         return service().update_member_profile(
-            client_id=member["client_id"] if member else None,
-            case_id=member["case_id"] if member else None,
+            client_id=member["client_id"],
+            case_id=member["case_id"],
             first_name=first_name,
             last_name=last_name,
             email=email,
@@ -810,6 +1049,58 @@ def update_member_profile(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.post("/api/member/critical-role-projects")
+async def create_critical_role_project(request: Request, member: dict = Depends(require_member_user)) -> dict:
+    try:
+        form = await request.form()
+        return service().save_critical_role_project(member["client_id"], member["case_id"], **dict(form))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.patch("/api/member/critical-role-projects/{project_id}")
+async def update_critical_role_project(project_id: str, request: Request, member: dict = Depends(require_member_user)) -> dict:
+    try:
+        form = await request.form()
+        return service().save_critical_role_project(member["client_id"], member["case_id"], project_id=project_id, **dict(form))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.delete("/api/member/critical-role-projects/{project_id}")
+def remove_critical_role_project(project_id: str, member: dict = Depends(require_member_user)) -> dict:
+    try:
+        return service().delete_critical_role_project(member["client_id"], member["case_id"], project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.post("/api/member/original-contributions")
+async def create_original_contribution(request: Request, member: dict = Depends(require_member_user)) -> dict:
+    try:
+        form = await request.form()
+        return service().save_original_contribution(member["client_id"], member["case_id"], **dict(form))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.patch("/api/member/original-contributions/{entry_id}")
+async def update_original_contribution(entry_id: str, request: Request, member: dict = Depends(require_member_user)) -> dict:
+    try:
+        form = await request.form()
+        return service().save_original_contribution(member["client_id"], member["case_id"], entry_id=entry_id, **dict(form))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.delete("/api/member/original-contributions/{entry_id}")
+def remove_original_contribution(entry_id: str, member: dict = Depends(require_member_user)) -> dict:
+    try:
+        return service().delete_original_contribution(member["client_id"], member["case_id"], entry_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.get("/api/criteria")
