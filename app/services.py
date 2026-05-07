@@ -1741,19 +1741,30 @@ class EvidenceService:
             year_actual = self._sum_aws_time_results(year_monthly)
             trailing_days = max(len(trailing_daily), 1)
             daily_actual = self._sum_aws_time_results(trailing_daily) / trailing_days
-            remainder_forecast = self._aws_forecast_total(client, today, next_month_start, "MONTHLY")
             days_in_month = calendar.monthrange(today.year, today.month)[1]
-            month_projected = month_actual + max(remainder_forecast, 0.0)
+            forecast_detail = ""
+            try:
+                remainder_forecast = self._aws_forecast_total(client, today, next_month_start, "MONTHLY")
+                month_projected = month_actual + max(remainder_forecast, 0.0)
+                detail = "Refreshed from AWS Cost Explorer."
+                projection_basis = "Month-to-date actual vs projected month-end total."
+            except ClientError as exc:
+                error = exc.response.get("Error", {}) if getattr(exc, "response", None) else {}
+                forecast_detail = error.get("Message", str(exc))
+                days_elapsed = max(today.day, 1)
+                month_projected = max(month_actual, (month_actual / days_elapsed) * days_in_month)
+                detail = f"Actuals refreshed from AWS Cost Explorer. Forecast unavailable ({forecast_detail}); projections use month-to-date run rate."
+                projection_basis = "Month-to-date actual annualized because AWS forecast is not available yet."
             daily_projected = month_projected / max(days_in_month, 1)
             yearly_projected = month_projected * 12
             return {
                 "status": "available",
                 "title": "AWS Cloud Costs",
-                "detail": "Refreshed from AWS Cost Explorer.",
+                "detail": detail,
                 "currency": "USD",
                 "recurring": [
                     {"period": "Daily", "actual": round(daily_actual, 2), "projected": round(daily_projected, 2), "basis": "Trailing 30-day average vs current monthly forecast run rate."},
-                    {"period": "Monthly", "actual": round(month_actual, 2), "projected": round(month_projected, 2), "basis": "Month-to-date actual vs projected month-end total."},
+                    {"period": "Monthly", "actual": round(month_actual, 2), "projected": round(month_projected, 2), "basis": projection_basis},
                     {"period": "Yearly", "actual": round(year_actual, 2), "projected": round(yearly_projected, 2), "basis": "Year-to-date actual vs annualized current monthly forecast."},
                 ],
                 "services": self._aws_service_breakdown(service_costs),

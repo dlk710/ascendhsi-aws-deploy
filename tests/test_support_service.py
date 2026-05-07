@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from botocore.exceptions import ClientError
+
 from app.config import AppConfig
 from app.db import one, rows
 from app.services import EvidenceService
@@ -91,6 +93,43 @@ class SupportTicketServiceTests(unittest.TestCase):
         self.assertEqual(dashboard["support_summary"]["open_count"], 1)
         self.assertTrue(dashboard["support_tickets"])
         self.assertIn("ticket_number", dashboard["support_tickets"][0])
+
+    def test_aws_cost_summary_keeps_actuals_when_forecast_unavailable(self):
+        class FakeCostExplorerClient:
+            def get_cost_and_usage(self, **request):
+                if request.get("GroupBy"):
+                    return {
+                        "ResultsByTime": [
+                            {
+                                "Groups": [
+                                    {
+                                        "Keys": ["Amazon Simple Storage Service"],
+                                        "Metrics": {"UnblendedCost": {"Amount": "2.50", "Unit": "USD"}},
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                return {
+                    "ResultsByTime": [
+                        {"Total": {"UnblendedCost": {"Amount": "1.25", "Unit": "USD"}}},
+                        {"Total": {"UnblendedCost": {"Amount": "0.75", "Unit": "USD"}}},
+                    ]
+                }
+
+            def get_cost_forecast(self, **_request):
+                raise ClientError(
+                    {"Error": {"Code": "DataUnavailableException", "Message": "Insufficient amount of historical data."}},
+                    "GetCostForecast",
+                )
+
+        with patch("boto3.client", return_value=FakeCostExplorerClient()):
+            summary = self.service._fetch_aws_cost_summary()
+
+        self.assertEqual(summary["status"], "available")
+        self.assertIn("Forecast unavailable", summary["detail"])
+        self.assertEqual(summary["recurring"][1]["actual"], 2.0)
+        self.assertEqual(summary["services"][0]["name"], "Amazon Simple Storage Service")
 
     def test_member_support_ticket_requires_description_for_each_attachment(self):
         with self.assertRaisesRegex(ValueError, "description is required for each attachment"):
