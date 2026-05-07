@@ -7,24 +7,24 @@ const AUTH_TOKEN_KEY = "ascend_member_token";
 const AUTH_MEMBER_KEY = "ascend_member_info";
 const ASSISTANT_SESSION_PREFIX = "ascend_assistant_thread_";
 const PORTAL_OPTIONS = [
-  { value: "member", label: "Member Portal", intro: "Sign in to manage evidence, keep your profile current, and stay aligned with Ascend on what comes next.", username: "vas@ascendhsi.com", password: "Ascend123!" },
-  { value: "builder", label: "Profile Builder Portal", intro: "Sign in to manage assigned members, push profile-building opportunities, and keep progress moving across your roster.", username: "builder@ascendhsi.com", password: "Ascend123!" },
-  { value: "leader", label: "Leader Portal", intro: "Sign in to review member progress across builders, rebalance assignments, and keep the broader operation moving.", username: "leader@ascendhsi.com", password: "Ascend123!" },
-  { value: "attorney", label: "Attorney Portal", intro: "Sign in to review the full client profile, assess gaps and strengths, and prepare petition strategy with complete context.", username: "attorney@ascendhsi.com", password: "Ascend123!" },
-  { value: "admin", label: "Admin Portal", intro: "Sign in to monitor system health, operational flow, user activity, and case movement across the platform.", username: "admin@ascendhsi.com", password: "Ascend123!" },
+  { value: "member", label: "Member Portal", intro: "Sign in to manage evidence, keep your profile current, and stay aligned with Ascend on what comes next.", username: "vas@ascendhsi.com" },
+  { value: "builder", label: "Profile Builder Portal", intro: "Sign in to manage assigned members, push profile-building opportunities, and keep progress moving across your roster.", username: "builder@ascendhsi.com" },
+  { value: "leader", label: "Leader Portal", intro: "Sign in to review member progress across builders, rebalance assignments, and keep the broader operation moving.", username: "leader@ascendhsi.com" },
+  { value: "attorney", label: "Attorney Portal", intro: "Sign in to review the full client profile, assess gaps and strengths, and prepare petition strategy with complete context.", username: "attorney@ascendhsi.com" },
+  { value: "admin", label: "Admin Portal", intro: "Sign in to monitor system health, operational flow, user activity, and case movement across the platform.", username: "admin@ascendhsi.com" },
 ];
 const PREVIEW_ROLES = [];
 const PREVIEW_ACCOUNTS = {
   leader: [
-    { username: "leader@ascendhsi.com", email: "leader@ascendhsi.com", password: "Ascend123!", display_name: "Ava Morales" },
-    { username: "jonathan.price@ascendhsi.com", email: "jonathan.price@ascendhsi.com", password: "Ascend123!", display_name: "Jonathan Price" },
+    { username: "leader@ascendhsi.com", email: "leader@ascendhsi.com", display_name: "Ava Morales" },
+    { username: "jonathan.price@ascendhsi.com", email: "jonathan.price@ascendhsi.com", display_name: "Jonathan Price" },
   ],
   attorney: [
-    { username: "attorney@ascendhsi.com", email: "attorney@ascendhsi.com", password: "Ascend123!", display_name: "Sophia Chen" },
-    { username: "marcus.reed@ascendhsi.com", email: "marcus.reed@ascendhsi.com", password: "Ascend123!", display_name: "Marcus Reed" },
+    { username: "attorney@ascendhsi.com", email: "attorney@ascendhsi.com", display_name: "Sophia Chen" },
+    { username: "marcus.reed@ascendhsi.com", email: "marcus.reed@ascendhsi.com", display_name: "Marcus Reed" },
   ],
   admin: [
-    { username: "admin@ascendhsi.com", email: "admin@ascendhsi.com", password: "Ascend123!", display_name: "Maya Thompson" },
+    { username: "admin@ascendhsi.com", email: "admin@ascendhsi.com", display_name: "Maya Thompson" },
   ],
 };
 const PLANNER_STATUS_OPTIONS = [
@@ -139,13 +139,7 @@ function previewIdentity(role, username = "") {
 }
 
 function previewLoginNote(role) {
-  const accounts = PREVIEW_ACCOUNTS[role] || [];
-  if (!accounts.length) {
-    const meta = portalMeta(role);
-    return `${meta.label} demo login: \`${meta.username}\` with password \`${meta.password}\``;
-  }
-  const usernames = accounts.map((item) => `\`${item.username}\``).join(" or ");
-  return `${portalMeta(role).label} demo logins: ${usernames} with password \`Ascend123!\``;
+  return `${portalMeta(role).label}: use your Ascend-issued credentials to continue.`;
 }
 
 async function getJson(path, params) {
@@ -2292,10 +2286,10 @@ function App() {
     try {
       if (isPreviewRole(authMode)) {
         const options = PREVIEW_ACCOUNTS[authMode] || [];
-        const match = options.find((item) => item.username === loginForm.username.trim().toLowerCase() && item.password === loginForm.password);
+        const match = options.find((item) => item.username === loginForm.username.trim().toLowerCase());
         if (!match) {
           const examples = options.map((item) => item.username).join(" or ");
-          setMessage({ type: "error", text: `Use ${examples} with password Ascend123! for the ${portalMeta(authMode).label}.` });
+          setMessage({ type: "error", text: `Use an authorized ${portalMeta(authMode).label} account${examples ? ` such as ${examples}` : ""}.` });
           return;
         }
         const identity = previewIdentity(authMode, match.username);
@@ -5011,7 +5005,7 @@ function App() {
                   ) : null}
                   <label className="consent-line"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I approve this evidence draft and want to save it.</span></label>
                   <div className="form-actions">
-                    <button className="primary compact-btn" type="button" disabled={!consent || uploadBusy} onClick={() => handleSaveDraft("")}>{uploadBusy ? "Saving..." : "Save Evidence"}</button>
+                    <button className="primary compact-btn" type="button" disabled={uploadBusy} onClick={() => handleSaveDraft("")}>{uploadBusy ? "Saving..." : "Save Evidence"}</button>
                     <button className="ghost compact-btn" type="button" onClick={() => setDraft(null)}>Start over</button>
                   </div>
                 </section>

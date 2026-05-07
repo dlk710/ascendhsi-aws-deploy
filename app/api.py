@@ -1,6 +1,6 @@
 import json
 
-from fastapi import Body, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import load_cors_origins
@@ -73,6 +73,21 @@ def bearer_token(authorization: str | None = Header(None)) -> str:
 
 def optional_bearer_token(authorization: str = Header(alias="Authorization", default="")) -> str:
     return authorization.removeprefix("Bearer ").strip()
+
+
+def _auth_error(error: str, status_code: int = 401) -> None:
+    raise HTTPException(status_code=status_code, detail={"ok": False, "status": "failed", "error": error})
+
+
+def require_admin_user(authorization: str | None = Header(None)) -> dict:
+    parsed = bearer_token(authorization)
+    try:
+        user = service().staff_session(parsed)
+    except ValueError as exc:
+        _auth_error(str(exc))
+    if user.get("role") != "admin":
+        _auth_error("Insufficient permissions", status_code=403)
+    return user
 
 
 @app.post("/api/auth/login")
@@ -235,7 +250,7 @@ def leader_assign_attorney(client_id: str, attorney_id: str = Form(...)) -> dict
 
 
 @app.get("/api/admin/operations")
-def admin_operations() -> dict:
+def admin_operations(_admin_user: dict = Depends(require_admin_user)) -> dict:
     return service().admin_operational_dashboard()
 
 
@@ -510,7 +525,7 @@ def delete_message(message_id: str, actor_role: str, actor_email: str = "", acto
 
 
 @app.get("/api/admin/members/{client_id}/debug")
-def admin_member_debug(client_id: str) -> dict:
+def admin_member_debug(client_id: str, _admin_user: dict = Depends(require_admin_user)) -> dict:
     try:
         return service().member_issue_debug(client_id)
     except ValueError as exc:
@@ -518,7 +533,7 @@ def admin_member_debug(client_id: str) -> dict:
 
 
 @app.post("/api/admin/members/{client_id}/reset-session")
-def admin_reset_member_session(client_id: str) -> dict:
+def admin_reset_member_session(client_id: str, _admin_user: dict = Depends(require_admin_user)) -> dict:
     try:
         return service().reset_member_sessions(client_id)
     except ValueError as exc:
@@ -590,7 +605,10 @@ def dashboard(token: str = Header(alias="Authorization", default="")) -> dict:
     parsed = token.removeprefix("Bearer ").strip()
     if not parsed:
         return service().dashboard()
-    member = service().member_session(parsed)
+    try:
+        member = service().member_session(parsed)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
     return service().member_dashboard(member["client_id"], member["case_id"], member.get("display_name", ""))
 
 
