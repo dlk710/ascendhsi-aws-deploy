@@ -6,6 +6,7 @@ const LOGO_URL = "https://ascendhsi.com/wp-content/uploads/2024/08/Ascend-logo-n
 const AUTH_TOKEN_KEY = "ascend_member_token";
 const AUTH_MEMBER_KEY = "ascend_member_info";
 const ASSISTANT_SESSION_PREFIX = "ascend_assistant_thread_";
+const DEFAULT_QUICK_LOGIN_PASSWORD = "Ascend123!";
 const PORTAL_OPTIONS = [
   { value: "member", label: "Member Portal", intro: "Sign in to manage evidence, keep your profile current, and stay aligned with Ascend on what comes next.", username: "vas@ascendhsi.com" },
   { value: "builder", label: "Profile Builder Portal", intro: "Sign in to manage assigned members, push profile-building opportunities, and keep progress moving across your roster.", username: "builder@ascendhsi.com" },
@@ -13,6 +14,7 @@ const PORTAL_OPTIONS = [
   { value: "attorney", label: "Attorney Portal", intro: "Sign in to review the full client profile, assess gaps and strengths, and prepare petition strategy with complete context.", username: "attorney@ascendhsi.com" },
   { value: "admin", label: "Admin Portal", intro: "Sign in to monitor system health, operational flow, user activity, and case movement across the platform.", username: "admin@ascendhsi.com" },
 ];
+const LOGIN_HELPERS_ENABLED = window.ASCEND_RUNTIME_CONFIG?.showDemoLogins !== false;
 const PREVIEW_ROLES = [];
 const PREVIEW_ACCOUNTS = {
   leader: [
@@ -26,6 +28,13 @@ const PREVIEW_ACCOUNTS = {
   admin: [
     { username: "admin@ascendhsi.com", email: "admin@ascendhsi.com", display_name: "Maya Thompson" },
   ],
+};
+const DEV_LOGIN_ACCOUNTS = {
+  member: [{ username: "vas@ascendhsi.com", email: "vas@ascendhsi.com", display_name: "Member", password: DEFAULT_QUICK_LOGIN_PASSWORD }],
+  builder: [{ username: "builder@ascendhsi.com", email: "builder@ascendhsi.com", display_name: "Profile Builder", password: DEFAULT_QUICK_LOGIN_PASSWORD }],
+  leader: PREVIEW_ACCOUNTS.leader.map((account) => ({ ...account, password: DEFAULT_QUICK_LOGIN_PASSWORD })),
+  attorney: PREVIEW_ACCOUNTS.attorney.map((account) => ({ ...account, password: DEFAULT_QUICK_LOGIN_PASSWORD })),
+  admin: PREVIEW_ACCOUNTS.admin.map((account) => ({ ...account, password: DEFAULT_QUICK_LOGIN_PASSWORD })),
 };
 const PLANNER_STATUS_OPTIONS = [
   { value: "planned", label: "Planned" },
@@ -125,7 +134,7 @@ function portalMeta(role) {
 function requestedPortalSection(role, fallback = "home") {
   const requested = new URLSearchParams(window.location.search).get("section") || fallback;
   const allowed = {
-    admin: new Set(["home", "health", "issues", "support", "debug", "messages"]),
+    admin: new Set(["home", "health", "costs", "issues", "support", "debug", "messages"]),
   };
   return allowed[role]?.has(requested) ? requested : fallback;
 }
@@ -169,6 +178,13 @@ function LastLoginStamp({ user }) {
   return <span className="last-login-stamp">Last login: {formatLastLogin(user?.last_login_at)}</span>;
 }
 
+function devLoginOptions(role) {
+  if (!LOGIN_HELPERS_ENABLED) return [];
+  const previewAccounts = isPreviewRole(role) ? PREVIEW_ACCOUNTS[role] || [] : [];
+  if (previewAccounts.length) return previewAccounts;
+  return DEV_LOGIN_ACCOUNTS[role] || [];
+}
+
 async function getJson(path, params) {
   const url = new URL(`${API_URL}${path}`);
   if (params) {
@@ -205,6 +221,63 @@ function formatUploadedAt(value) {
   const date = new Date(String(value).replace(" ", "T"));
   if (Number.isNaN(date.getTime())) return `Uploaded ${value}`;
   return `Uploaded ${date.toLocaleString([], { month: "short", day: "2-digit", year: "numeric", hour: "numeric", minute: "2-digit" })}`;
+}
+
+function formatDateTime(value) {
+  if (!value) return "Not refreshed yet";
+  const date = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString([], { month: "short", day: "2-digit", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function formatMoney(value, currency = "USD") {
+  const amount = Number(value || 0);
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: currency || "USD", maximumFractionDigits: 2 }).format(amount);
+}
+
+function formatResponseMs(value) {
+  const amount = Number(value || 0);
+  if (!amount) return "N/A";
+  if (amount >= 1000) return `${(amount / 1000).toFixed(amount >= 2000 ? 1 : 2)}s`;
+  return `${Math.round(amount)}ms`;
+}
+
+function healthStatusClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (["healthy", "online", "success", "available", "configured", "synced"].includes(normalized)) return "completed";
+  if (["degraded", "fallback", "needs_refresh", "warning"].includes(normalized)) return "planned";
+  return "blocked";
+}
+
+function healthIcon(name) {
+  const normalized = String(name || "").toLowerCase();
+  if (normalized.includes("cloudfront")) return "CF";
+  if (normalized.includes("load balancer")) return "ALB";
+  if (normalized.includes("fargate") || normalized.includes("ecs")) return "ECS";
+  if (normalized.includes("ecr")) return "ECR";
+  if (normalized.includes("postgres") || normalized.includes("rds")) return "RDS";
+  if (normalized.includes("dynamodb")) return "DDB";
+  if (normalized.includes("secrets")) return "SM";
+  if (normalized.includes("member")) return "M";
+  if (normalized.includes("builder")) return "B";
+  if (normalized.includes("leader")) return "L";
+  if (normalized.includes("attorney")) return "A";
+  if (normalized.includes("admin")) return "O";
+  if (normalized.includes("api") || normalized.includes("fast")) return "API";
+  if (normalized.includes("sqlite") || normalized.includes("database")) return "DB";
+  if (normalized.includes("drive") || normalized.includes("s3") || normalized.includes("storage")) return "S";
+  if (normalized.includes("openai") || normalized.includes("ai")) return "AI";
+  return "OK";
+}
+
+function supportCategoryClass(category) {
+  const normalized = String(category || "other").toLowerCase();
+  if (normalized.includes("login") || normalized.includes("auth")) return "support-category-auth";
+  if (normalized.includes("upload") || normalized.includes("evidence") || normalized.includes("storage")) return "support-category-evidence";
+  if (normalized.includes("ai") || normalized.includes("assistant")) return "support-category-ai";
+  if (normalized.includes("message") || normalized.includes("email")) return "support-category-message";
+  if (normalized.includes("bug") || normalized.includes("error")) return "support-category-bug";
+  return "support-category-other";
 }
 
 function cleanSummary(value) {
@@ -439,6 +512,28 @@ function MetricCard({ label, value }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </article>
+  );
+}
+
+function ResponseSparkline({ points = [] }) {
+  const values = points.map((point) => Number(point.ms) || 0);
+  const maxValue = Math.max(...values, 1);
+  const minValue = Math.min(...values, 0);
+  const spread = Math.max(maxValue - minValue, 1);
+  const polyline = values.map((value, index) => {
+    const x = values.length <= 1 ? 96 : Math.round((index / (values.length - 1)) * 96);
+    const y = Math.round(32 - ((value - minValue) / spread) * 26);
+    return `${x},${Math.max(4, Math.min(32, y))}`;
+  }).join(" ");
+  return (
+    <svg className="response-sparkline" viewBox="0 0 96 36" role="img" aria-label="Response time trend">
+      <polyline points={polyline} />
+      {values.map((value, index) => {
+        const x = values.length <= 1 ? 96 : Math.round((index / (values.length - 1)) * 96);
+        const y = Math.round(32 - ((value - minValue) / spread) * 26);
+        return <circle key={`${index}_${value}`} cx={x} cy={Math.max(4, Math.min(32, y))} r="2.2" />;
+      })}
+    </svg>
   );
 }
 
@@ -737,6 +832,7 @@ function SidebarNav({ items, value, onChange }) {
     if (itemValue === "intake") return "intake";
     if (itemValue === "health") return "health";
     if (itemValue === "issues") return "issues";
+    if (itemValue === "costs") return "health";
     if (itemValue === "debug") return "debug";
     return "home";
   }
@@ -757,6 +853,15 @@ function SidebarNav({ items, value, onChange }) {
         </button>
       ))}
     </div>
+  );
+}
+
+function PortalBrand({ onHome, label = "Go to portal home" }) {
+  return (
+    <button className="brand-home-button" type="button" onClick={onHome} aria-label={label}>
+      <img className="brand-logo" src={LOGO_URL} alt="Ascend HSI logo" />
+      <span className="brand">Ascend HSI</span>
+    </button>
   );
 }
 
@@ -1555,6 +1660,8 @@ function App() {
   const [adminIssueLog, setAdminIssueLog] = useState({ items: [], priority_counts: {}, status_counts: {} });
   const [issueLogForm, setIssueLogForm] = useState(emptyIssueLogForm());
   const [issueLogBusy, setIssueLogBusy] = useState(false);
+  const [adminCosts, setAdminCosts] = useState(null);
+  const [adminCostBusy, setAdminCostBusy] = useState(false);
   const [petitionDraft, setPetitionDraft] = useState(null);
   const [petitionBusy, setPetitionBusy] = useState(false);
   const [batchZipFile, setBatchZipFile] = useState(null);
@@ -1667,6 +1774,7 @@ function App() {
     if (authMember?.role === "admin") {
       if (portalSection === "health") return "System Health";
       if (portalSection === "issues") return "Issue Portal";
+      if (portalSection === "costs") return "Cost Explorer";
       if (portalSection === "debug") return "Debug Console";
       if (portalSection === "support") return "Support Tickets";
       if (portalSection === "messages") return "Messages";
@@ -2043,9 +2151,10 @@ function App() {
     setLoading(true);
     setMessage(null);
     try {
-      const [opsData, issueData, builderData, membersData, criteriaData] = await Promise.all([
+      const [opsData, issueData, costData, builderData, membersData, criteriaData] = await Promise.all([
         getJson("/api/admin/operations"),
         getJson("/api/admin/issue-log"),
+        getJson("/api/admin/costs"),
         getJson("/api/builder/dashboard"),
         getJson("/api/builder/members"),
         getJson("/api/criteria"),
@@ -2053,6 +2162,7 @@ function App() {
       const roster = membersData.length ? membersData : (builderData.members || []);
       setAdminDashboard(opsData);
       setAdminIssueLog(issueData);
+      setAdminCosts(costData);
       setBuilderDashboard(builderData);
       setBuilderMembers(roster);
       setCriteriaList(criteriaData);
@@ -2069,6 +2179,21 @@ function App() {
       setMessage({ type: "error", text: "Could not load the admin portal." });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function refreshAdminCosts() {
+    setAdminCostBusy(true);
+    setMessage(null);
+    try {
+      const response = await sendJson("/api/admin/costs/refresh", {});
+      if (!response.ok) throw response.payload;
+      setAdminCosts(response.payload);
+      setMessage({ type: "success", text: "Cost Explorer refreshed." });
+    } catch (_error) {
+      setMessage({ type: "error", text: "Could not refresh Cost Explorer data." });
+    } finally {
+      setAdminCostBusy(false);
     }
   }
 
@@ -2513,6 +2638,59 @@ function App() {
     }
   }
 
+  async function handleDevLogin(account) {
+    const username = account.username || "";
+    const password = account.password || DEFAULT_QUICK_LOGIN_PASSWORD;
+    setLoginForm({ username, password });
+    setLoginBusy(true);
+    setMessage(null);
+    try {
+      if (isPreviewRole(authMode)) {
+        const identity = previewIdentity(authMode, username);
+        persistAuth(`preview:${authMode}`, identity);
+        setAuthMember(identity);
+        setLoginForm({ username: "", password: "" });
+        setAuthReady(true);
+        if (authMode === "admin") {
+          await loadAdminPortal();
+        } else if (authMode === "leader") {
+          setLeaderPerspective("leader");
+          await loadLeaderPortal();
+        } else {
+          await loadReviewPortals();
+        }
+        return;
+      }
+      const formData = new FormData();
+      formData.set("username", username);
+      formData.set("password", password);
+      const result = await sendForm(roleConfig(authMode).loginPath, formData);
+      if (result.ok) {
+        const payloadUser = result.payload.member || result.payload.builder || result.payload.user;
+        persistAuth(result.payload.token, payloadUser);
+        setAuthMember(payloadUser);
+        setLoginForm({ username: "", password: "" });
+        setAuthReady(true);
+        if (authMode === "builder") {
+          await loadBuilderDashboard();
+        } else if (authMode === "leader") {
+          setLeaderPerspective("leader");
+          await loadLeaderPortal();
+        } else if (authMode === "attorney") {
+          await loadReviewPortals(selectedBuilderMemberId, payloadUser.email || "");
+        } else if (authMode === "admin") {
+          await loadAdminPortal();
+        } else {
+          await loadHome();
+        }
+      } else {
+        setMessage({ type: "error", text: result.payload.error || "Saved credential login failed." });
+      }
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
   async function handleLogout() {
     if (isPreviewRole(authMember?.role)) {
       clearAuth();
@@ -2540,6 +2718,7 @@ function App() {
       setAdminDashboard(null);
       setAdminIssueLog({ items: [], priority_counts: {}, status_counts: {} });
       setIssueLogForm(emptyIssueLogForm());
+      setAdminCosts(null);
       setView({ type: "home", criterionCode: "" });
       setPortalSection("home");
       setMemberMenuOpen(false);
@@ -2584,6 +2763,7 @@ function App() {
     setAdminDashboard(null);
     setAdminIssueLog({ items: [], priority_counts: {}, status_counts: {} });
     setIssueLogForm(emptyIssueLogForm());
+    setAdminCosts(null);
     setView({ type: "home", criterionCode: "" });
     setPortalSection("home");
     setMemberMenuOpen(false);
@@ -3243,6 +3423,7 @@ function App() {
 
   if (!authMember) {
     const selectedPortal = portalMeta(authMode);
+    const loginChoices = devLoginOptions(authMode);
     return (
       <main className="login-page">
         <section className="login-hero">
@@ -3269,6 +3450,25 @@ function App() {
             <button className="primary" type="submit" disabled={loginBusy}>{loginBusy ? "Signing in..." : "Sign In"}</button>
             <p className="login-note">{previewLoginNote(authMode)}</p>
           </form>
+          {loginChoices.length ? (
+            <div className="dev-login-panel">
+              <div className="section-kicker">Quick Login Shortcuts</div>
+              <div className="dev-login-grid">
+                {loginChoices.map((account) => (
+                  <button
+                    key={account.username}
+                    className="dev-login-btn"
+                    type="button"
+                    disabled={loginBusy}
+                    onClick={() => handleDevLogin(account)}
+                  >
+                    <strong>{account.display_name || account.username}</strong>
+                    <span>{account.username}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </section>
       </main>
     );
@@ -3286,6 +3486,16 @@ function App() {
   const showingBuilderWorkspace = authMember.role === "builder" || isLeaderBuilderView;
   const builderLabel = showingBuilderWorkspace ? "Profile Builder" : "Leader";
   const memberSection = view.type === "messages" ? "messages" : view.type === "profile" ? "profile" : view.type === "planner" ? "planner" : view.type === "intake" ? "intake" : "home";
+  function goToPortalHome() {
+    setMessage(null);
+    setMemberMenuOpen(false);
+    if (authMember.role === "member") {
+      setView({ type: "home", criterionCode: "" });
+      setSelectedFolderId("");
+      return;
+    }
+    setPortalSection("home");
+  }
   const messagePanel = (
     <ThreadedMessageCenter
       title="Conversation Threads"
@@ -3572,8 +3782,7 @@ function App() {
       <React.Fragment>
         <main className="shell attorney-shell">
           <aside className="sidebar attorney-sidebar">
-          <img className="brand-logo" src={LOGO_URL} alt="Ascend HSI logo" />
-          <div className="brand">Ascend HSI</div>
+          <PortalBrand onHome={goToPortalHome} label={isLeaderExecutiveView ? "Go to leader home" : "Go to builder home"} />
           <div className="brand-sub">{isLeaderExecutiveView ? "Leader Workspace" : isLeaderBuilderView ? "Leader Acting As Builder" : "Profile Builder Workspace"}</div>
           {authMember.role === "leader" ? (
             <div className="side-card perspective-side-card">
@@ -4147,8 +4356,7 @@ function App() {
       <React.Fragment>
         <main className="shell attorney-shell">
           <aside className="sidebar attorney-sidebar">
-          <img className="brand-logo" src={LOGO_URL} alt="Ascend HSI logo" />
-          <div className="brand">Ascend HSI</div>
+          <PortalBrand onHome={goToPortalHome} label="Go to attorney home" />
           <div className="brand-sub">{isLeaderAttorneyView ? "Leader Acting As Attorney" : "Attorney Workspace"}</div>
           {isLeaderAttorneyView ? (
             <div className="side-card perspective-side-card">
@@ -4595,21 +4803,26 @@ function App() {
       return acc;
     }, {});
     const ops = adminDashboard?.metrics || {};
+    const costData = adminCosts || {};
+    const awsCosts = costData.aws || {};
+    const openaiCosts = costData.openai || {};
     const debugMember = adminDashboard?.member_debug;
     const supportSummary = adminDashboard?.support_summary || {};
     const supportTickets = adminDashboard?.support_tickets || [];
+    const portalHealth = adminDashboard?.portal_health || [];
+    const responseTimes = adminDashboard?.response_times || [];
     return (
       <React.Fragment>
-        <main className="shell">
+        <main className="shell admin-shell">
           <aside className="sidebar">
-            <img className="brand-logo" src={LOGO_URL} alt="Ascend HSI logo" />
-            <div className="brand">Ascend HSI</div>
+            <PortalBrand onHome={goToPortalHome} label="Go to admin home" />
             <div className="brand-sub">Admin Workspace</div>
             <SidebarNav
               items={[
                 { value: "home", label: "Admin Home" },
                 { value: "health", label: "System Health" },
                 { value: "issues", label: `Issue Portal${adminIssueLog?.status_counts?.open ? ` (${adminIssueLog.status_counts.open})` : ""}` },
+                { value: "costs", label: "Cost Explorer" },
                 { value: "support", label: `Support Tickets${supportSummary.open_count ? ` (${supportSummary.open_count})` : ""}` },
                 { value: "debug", label: "Debug Console" },
                 { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}` },
@@ -4631,7 +4844,7 @@ function App() {
             </div>
             <span className="side-note">Admin portal only</span>
           </aside>
-          <section className="main">
+          <section className="main admin-main">
             <div className="topbar">
               <div className="topbar-copy">
                 <span className="topbar-label">Admin Portal</span>
@@ -4677,38 +4890,59 @@ function App() {
                 <header className="hero">
                   <p className="eyebrow">System Health</p>
                   <h1>Platform health, easy to scan.</h1>
-                  <p>Keep pipeline movement and portal status in one operational page so health checks stay separate from debugging work.</p>
+                  <p>See every portal, integration, and response-time signal in one compact operational view.</p>
                 </header>
 
-                <section className="builder-layout">
-                  <section className="panel">
-                    <div className="section-kicker">Case Movement</div>
-                    <h3 className="section-title">Pipeline By Stage</h3>
-                    <div className="task-mini-list">
-                      {Object.entries(stageCounts).map(([stage, count]) => (
-                        <article key={stage} className="task-mini-item">
-                          <strong>{stage.replaceAll("_", " ")}</strong>
-                          <p>{count} client(s)</p>
-                        </article>
-                      ))}
+                <section className="panel admin-health-panel">
+                  <div className="panel-header">
+                    <div>
+                      <div className="section-kicker">Platform Health</div>
+                      <h3 className="section-title">Portals and integrations</h3>
                     </div>
-                  </section>
-
-                  <section className="panel">
-                    <div className="section-kicker">Platform Health</div>
-                    <h3 className="section-title">Portal And Connection Status</h3>
-                    <div className="task-mini-list">
-                      {(adminDashboard?.portal_health || []).map((item) => (
-                        <article key={item.name} className="task-mini-item">
+                    <span className="mini-note">Live operations payload</span>
+                  </div>
+                  <div className="admin-health-strip">
+                    {portalHealth.map((item) => (
+                      <article key={item.name} className={`admin-health-chip ${healthStatusClass(item.status)}`} title={item.detail}>
+                        <span className="admin-health-icon">{healthIcon(item.name)}</span>
+                        <span className="admin-health-copy">
                           <strong>{item.name}</strong>
-                          <p>{item.detail}</p>
-                          <div className="task-mini-meta">
-                            <span className={`status-pill ${item.status === "healthy" || item.status === "online" ? "completed" : "blocked"}`}>{item.status}</span>
-                          </div>
-                        </article>
-                      ))}
+                          <small>{item.status}</small>
+                        </span>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="panel admin-response-panel" style={{ marginTop: "18px" }}>
+                  <div className="panel-header">
+                    <div>
+                      <div className="section-kicker">Response Times</div>
+                      <h3 className="section-title">Realtime average by tech stack</h3>
                     </div>
-                  </section>
+                    <span className="mini-note">Last 30 minutes</span>
+                  </div>
+                  <div className="response-time-table">
+                    <div className="response-time-head">
+                      <span>Stack</span>
+                      <span>Layer</span>
+                      <span>Avg</span>
+                      <span>Trend</span>
+                      <span>Status</span>
+                    </div>
+                    {responseTimes.length ? responseTimes.map((item) => (
+                      <article key={item.name} className="response-time-row">
+                        <div className="response-stack-name">
+                          <span className="admin-health-icon">{healthIcon(item.name)}</span>
+                          <strong>{item.name}</strong>
+                        </div>
+                        <span>{item.layer}</span>
+                        <strong>{formatResponseMs(item.avg_ms)}</strong>
+                        <ResponseSparkline points={item.trend || []} />
+                        <span className={`status-pill ${healthStatusClass(item.status)}`}>{item.status}</span>
+                      </article>
+                    )) : <p className="empty-state">No response-time telemetry available yet.</p>}
+                  </div>
                 </section>
               </React.Fragment>
             ) : portalSection === "issues" ? (
@@ -4728,6 +4962,147 @@ function App() {
                   onRemove={removeIssueLog}
                 />
               </React.Fragment>
+            ) : portalSection === "costs" ? (
+              <React.Fragment>
+                <header className="hero">
+                  <p className="eyebrow">Cost Explorer</p>
+                  <h1>Billing visibility for planning.</h1>
+                  <p>Refresh AWS Cloud and OpenAI cost data on demand, keep the latest refresh timestamp visible, and compare actuals against projections for daily, monthly, and yearly planning.</p>
+                </header>
+
+                <section className="panel">
+                  <div className="panel-header">
+                    <div>
+                      <div className="section-kicker">Refresh Controls</div>
+                      <h3 className="section-title">Live cost sync</h3>
+                      <p className="section-intro">{costData.detail || "Use Refresh to pull the latest cost data into the Admin Portal."}</p>
+                    </div>
+                    <div className="cost-toolbar">
+                      <span className="mini-note">Last refreshed: {formatDateTime(costData.refreshed_at)}</span>
+                      <button className="ghost compact-btn" type="button" onClick={refreshAdminCosts} disabled={adminCostBusy}>
+                        {adminCostBusy ? "Refreshing..." : "Refresh"}
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="builder-layout" style={{ marginTop: "18px" }}>
+                  <section className="panel">
+                    <div className="section-kicker">AWS Cloud</div>
+                    <h3 className="section-title">Actuals vs projected</h3>
+                    <p className="section-intro">{awsCosts.detail || "AWS cost data is not available yet."}</p>
+                    <div className="task-mini-list">
+                      {(awsCosts.recurring || []).length ? awsCosts.recurring.map((item) => (
+                        <article key={item.period} className="task-mini-item">
+                          <strong>{item.period}</strong>
+                          <p>Actual {formatMoney(item.actual, awsCosts.currency)} • Projected {formatMoney(item.projected, awsCosts.currency)}</p>
+                          <div className="task-mini-meta">
+                            <span>{item.basis}</span>
+                            <span className={`status-pill ${awsCosts.status === "available" ? "completed" : "blocked"}`}>{awsCosts.status || "unavailable"}</span>
+                          </div>
+                        </article>
+                      )) : <p className="empty-state">No AWS cost data available. Configure AWS Cost Explorer credentials and run Refresh.</p>}
+                    </div>
+                  </section>
+
+                  <section className="panel">
+                    <div className="section-kicker">AWS Breakdown</div>
+                    <h3 className="section-title">Top services</h3>
+                    <p className="section-intro">Current month spend split by AWS service.</p>
+                    <div className="task-mini-list">
+                      {(awsCosts.services || []).length ? awsCosts.services.map((item) => (
+                        <article key={item.name} className="task-mini-item">
+                          <strong>{item.name}</strong>
+                          <div className="task-mini-meta">
+                            <span>{formatMoney(item.amount, awsCosts.currency)}</span>
+                          </div>
+                        </article>
+                      )) : <p className="empty-state">No AWS service breakdown available yet.</p>}
+                    </div>
+                  </section>
+                </section>
+
+                <section className="builder-layout" style={{ marginTop: "18px" }}>
+                  <section className="panel">
+                    <div className="section-kicker">OpenAI Billing</div>
+                    <h3 className="section-title">Actuals vs projected</h3>
+                    <p className="section-intro">{openaiCosts.detail || "OpenAI billing data is not available yet."}</p>
+                    <div className="task-mini-list">
+                      {(openaiCosts.recurring || []).length ? openaiCosts.recurring.map((item) => (
+                        <article key={item.period} className="task-mini-item">
+                          <strong>{item.period}</strong>
+                          <p>Actual {formatMoney(item.actual, openaiCosts.currency)} • Projected {formatMoney(item.projected, openaiCosts.currency)}</p>
+                          <div className="task-mini-meta">
+                            <span>{item.basis}</span>
+                            <span className={`status-pill ${openaiCosts.status === "available" ? "completed" : "blocked"}`}>{openaiCosts.status || "unavailable"}</span>
+                          </div>
+                        </article>
+                      )) : <p className="empty-state">No OpenAI billing data available. Set an admin billing key and run Refresh.</p>}
+                    </div>
+                  </section>
+
+                  <section className="panel">
+                    <div className="section-kicker">OpenAI Usage</div>
+                    <h3 className="section-title">AI calls by portal and function</h3>
+                    <p className="section-intro">Operational AI calls tracked inside the portal, split by portal and function so admin can see where usage is concentrated.</p>
+                    <div className="metrics-grid cost-mini-grid">
+                      <MetricCard label="Tracked AI Calls" value={openaiCosts.call_totals?.total_calls || 0} />
+                      <MetricCard label="OpenAI-Sourced" value={openaiCosts.call_totals?.openai_calls || 0} />
+                      <MetricCard label="Fallback" value={openaiCosts.call_totals?.fallback_calls || 0} />
+                      <MetricCard label="Failed" value={openaiCosts.call_totals?.failed_calls || 0} />
+                    </div>
+                    <div className="task-mini-list" style={{ marginTop: "14px" }}>
+                      {(openaiCosts.call_breakdown || []).length ? openaiCosts.call_breakdown.map((item) => (
+                        <article key={`${item.portal}_${item.function}`} className="task-mini-item">
+                          <strong>{item.portal} • {item.function}</strong>
+                          <div className="task-mini-meta">
+                            <span>Total {item.total_calls}</span>
+                            <span>OpenAI {item.openai_calls}</span>
+                            <span>Fallback {item.fallback_calls}</span>
+                            <span>Failed {item.failed_calls}</span>
+                          </div>
+                        </article>
+                      )) : <p className="empty-state">No tracked AI calls yet.</p>}
+                    </div>
+                  </section>
+                </section>
+
+                <section className="builder-layout" style={{ marginTop: "18px" }}>
+                  <section className="panel">
+                    <div className="section-kicker">OpenAI Billing Breakdown</div>
+                    <h3 className="section-title">Line items</h3>
+                    <p className="section-intro">Current month OpenAI charges grouped by line item when the billing API returns them.</p>
+                    <div className="task-mini-list">
+                      {(openaiCosts.line_items || []).length ? openaiCosts.line_items.map((item) => (
+                        <article key={item.name} className="task-mini-item">
+                          <strong>{item.name}</strong>
+                          <div className="task-mini-meta">
+                            <span>{formatMoney(item.amount, openaiCosts.currency)}</span>
+                          </div>
+                        </article>
+                      )) : <p className="empty-state">No OpenAI line-item breakdown available yet.</p>}
+                    </div>
+                  </section>
+
+                  <section className="panel">
+                    <div className="section-kicker">Recent Trend</div>
+                    <h3 className="section-title">Daily cost trail</h3>
+                    <p className="section-intro">Most recent daily cost points pulled during the latest refresh.</p>
+                    <div className="task-mini-list">
+                      {[...(awsCosts.trend || []).slice(-7).map((item) => ({ ...item, source: "AWS", currency: awsCosts.currency })), ...(openaiCosts.trend || []).slice(-7).map((item) => ({ ...item, source: "OpenAI", currency: openaiCosts.currency }))].length ? (
+                        [...(awsCosts.trend || []).slice(-7).map((item) => ({ ...item, source: "AWS", currency: awsCosts.currency })), ...(openaiCosts.trend || []).slice(-7).map((item) => ({ ...item, source: "OpenAI", currency: openaiCosts.currency }))].map((item) => (
+                          <article key={`${item.source}_${item.date}`} className="task-mini-item">
+                            <strong>{item.source} • {item.date}</strong>
+                            <div className="task-mini-meta">
+                              <span>{formatMoney(item.amount, item.currency)}</span>
+                            </div>
+                          </article>
+                        ))
+                      ) : <p className="empty-state">No daily trend points available yet.</p>}
+                    </div>
+                  </section>
+                </section>
+              </React.Fragment>
             ) : portalSection === "support" ? (
               <React.Fragment>
                 <header className="hero">
@@ -4743,59 +5118,47 @@ function App() {
                   <MetricCard label="Needs Verification" value={supportSummary.needs_verification_count || 0} />
                 </section>
 
-                <section className="panel" style={{ marginTop: "18px" }}>
-                  <div className="section-kicker">Ticket Queue</div>
-                  <h3 className="section-title">Recent Support Tickets</h3>
-                  <p className="section-intro">Each ticket includes the portal context, triage summary, root cause hypothesis, and the next actions the admin team should take.</p>
-                  <div className="task-mini-list">
+                <section className="panel support-queue-panel" style={{ marginTop: "18px" }}>
+                  <div className="panel-header">
+                    <div>
+                      <div className="section-kicker">Ticket Queue</div>
+                      <h3 className="section-title">Recent support tickets</h3>
+                    </div>
+                    <span className="mini-note">{supportTickets.length} visible</span>
+                  </div>
+                  <div className="support-ticket-table">
+                    <div className="support-ticket-head">
+                      <span>Ticket</span>
+                      <span>Category</span>
+                      <span>Portal</span>
+                      <span>Reporter</span>
+                      <span>Triage</span>
+                      <span>Priority</span>
+                      <span>Created</span>
+                      <span>Link</span>
+                    </div>
                     {supportTickets.length ? supportTickets.map((ticket) => (
-                      <article key={ticket.id} className="task-mini-item">
-                        <div>
-                          <strong>{ticket.ticket_number} • {ticket.short_description}</strong>
-                          <p>{ticket.admin_summary}</p>
+                      <article
+                        key={ticket.id}
+                        className={`support-ticket-row ${supportCategoryClass(ticket.category)}`}
+                        title={`${ticket.admin_summary || ticket.short_description || ""}\nRoot cause: ${ticket.root_cause || "Needs review"}\nNext: ${(ticket.next_actions || []).join(" | ") || "Reproduce and inspect the matching flow."}`}
+                      >
+                        <div className="support-ticket-main">
+                          <span className="support-ticket-icon">{ticket.is_blocking ? "!" : "#"}</span>
+                          <span>
+                            <strong>{ticket.ticket_number}</strong>
+                            <small>{ticket.short_description}</small>
+                          </span>
                         </div>
-                        <div className="task-mini-meta">
-                          <span>{ticket.reporter_name}</span>
-                          <span>{ticket.portal}</span>
-                          <span>{ticket.created_at}</span>
-                          <span>{supportPriorityLabel(ticket.priority)} priority</span>
-                          <span>{ticket.is_blocking ? "Blocking" : "Not blocking"}</span>
-                          <span className={`status-pill ${ticket.behavior_assessment === "likely_bug" ? "blocked" : ticket.behavior_assessment === "expected_behavior" ? "planned" : "in_progress"}`}>{ticket.behavior_assessment?.replaceAll("_", " ") || "needs verification"}</span>
-                        </div>
-                        <div className="support-ticket-detail">
-                          {ticket.issue_location ? <p><strong>Portal context:</strong> {ticket.issue_location}</p> : null}
-                          <p><strong>User-reported issue:</strong> {ticket.short_description}</p>
-                          <p><strong>User detail:</strong> {ticket.details}</p>
-                          <p><strong>Likely root cause:</strong> {ticket.root_cause}</p>
-                          <p><strong>Reasoning:</strong> {ticket.reasoning}</p>
-                          <p><strong>Actions to take:</strong> {(ticket.next_actions || []).join(" • ") || "Reproduce the issue and inspect the matching portal flow."}</p>
-                          <div className="task-mini-meta">
-                            <span>{ticket.category?.replaceAll("_", " ") || "other"}</span>
-                            {ticket.current_url ? <a href={ticket.current_url} target="_blank" rel="noreferrer">Open reported URL</a> : null}
-                          </div>
-                          {(ticket.attachments || []).length ? (
-                            <div className="support-attachment-links">
-                              {ticket.attachments.map((attachment) => (
-                                attachment.open_url ? (
-                                  <a key={attachment.id} href={attachment.open_url} target="_blank" rel="noreferrer">
-                                    {attachment.file_name}
-                                    {attachment.description ? ` • ${attachment.description}` : ""}
-                                  </a>
-                                ) : (
-                                  <span key={attachment.id}>
-                                    {attachment.file_name}
-                                    {attachment.description ? ` • ${attachment.description}` : ""}
-                                  </span>
-                                )
-                              ))}
-                            </div>
-                          ) : null}
-                          {!ticket.attachments?.length && ticket.screenshot_url ? (
-                            <div className="support-attachment-links">
-                              <a href={ticket.screenshot_url} target="_blank" rel="noreferrer">Open screenshot link</a>
-                            </div>
-                          ) : null}
-                        </div>
+                        <span className="support-category-badge">{ticket.category?.replaceAll("_", " ") || "other"}</span>
+                        <span>{ticket.portal}</span>
+                        <span>{ticket.reporter_name}</span>
+                        <span className={`status-pill ${ticket.behavior_assessment === "likely_bug" ? "blocked" : ticket.behavior_assessment === "expected_behavior" ? "planned" : "in_progress"}`}>{ticket.behavior_assessment?.replaceAll("_", " ") || "needs verification"}</span>
+                        <span>{supportPriorityLabel(ticket.priority)}</span>
+                        <span>{formatDateTime(ticket.created_at)}</span>
+                        <span className="support-ticket-link">
+                          {ticket.current_url ? <a href={ticket.current_url} target="_blank" rel="noreferrer">Open</a> : "Context"}
+                        </span>
                       </article>
                     )) : <p className="empty-state">No support tickets submitted yet.</p>}
                   </div>
@@ -4809,56 +5172,59 @@ function App() {
                   <p>Review recent failures and take the first recovery action for a member without crowding the main admin summary page.</p>
                 </header>
 
-                <section className="builder-layout">
-                  <section className="panel">
-                    <div className="section-kicker">Operational Errors</div>
-                    <h3 className="section-title">Recent Errors</h3>
-                    <p className="section-intro">Recent failures across auth, AI processing, and evidence workflows.</p>
-                    <div className="task-mini-list">
-                      {(adminDashboard?.recent_errors || []).length ? (
-                        adminDashboard.recent_errors.map((item) => (
-                          <article key={item.id} className="task-mini-item">
-                            <strong>{item.event_type}</strong>
-                            <p>{item.message || "No message captured."}</p>
-                            <div className="task-mini-meta">
-                              <span>{item.portal || "system"}</span>
-                              <span>{item.endpoint || "n/a"}</span>
-                              <span>{item.created_at}</span>
-                            </div>
-                          </article>
-                        ))
-                      ) : (
-                        <p className="empty-state">No recent operational errors.</p>
-                      )}
+                <section className="panel admin-table-panel">
+                  <div className="panel-header">
+                    <div>
+                      <div className="section-kicker">Operational Errors</div>
+                      <h3 className="section-title">Recent errors</h3>
+                      <p className="section-intro">Recent failures across auth, AI processing, evidence workflows, and admin operations in a compact incident ledger.</p>
                     </div>
-                  </section>
-
-                  <section className="panel">
-                    <div className="section-kicker">Debug Console</div>
-                    <h3 className="section-title">Member Issue Review</h3>
-                    <p className="section-intro">Use this panel to inspect a member issue quickly and take the first operational recovery step.</p>
-                    {debugMember ? (
-                      <div className="task-mini-list">
-                        <article className="task-mini-item">
-                          <strong>{debugMember.member.display_name}</strong>
-                          <p>Readiness {debugMember.member.readiness_score}% • {debugMember.evidence_count} evidence • {debugMember.open_tasks} open tasks • {debugMember.active_sessions} active session(s)</p>
+                    <span className="mini-note">{(adminDashboard?.recent_errors || []).length} visible</span>
+                  </div>
+                  <div className="debug-error-table">
+                    <div className="debug-error-row debug-error-head"><span>Event</span><span>Portal</span><span>Endpoint</span><span>Status</span><span>Created</span><span>Message</span></div>
+                    {(adminDashboard?.recent_errors || []).length ? (
+                      adminDashboard.recent_errors.map((item) => (
+                        <article key={item.id} className="debug-error-row">
+                          <strong>{item.event_type}</strong>
+                          <span>{item.portal || "system"}</span>
+                          <span>{item.endpoint || "n/a"}</span>
+                          <span className="status-pill blocked">{item.status || "error"}</span>
+                          <span>{item.created_at}</span>
+                          <small>{item.message || "No message captured."}</small>
                         </article>
-                        <article className="task-mini-item">
-                          <strong>Recent member-related errors</strong>
-                          <p>{debugMember.recent_errors.length ? debugMember.recent_errors.map((item) => item.message || item.event_type).join(" • ") : "No recent member-specific errors captured."}</p>
-                        </article>
-                        <article className="task-mini-item">
-                          <strong>Recommended actions</strong>
-                          <p>{debugMember.recommended_actions.join(" • ")}</p>
-                          <div className="form-actions">
-                            <button className="ghost compact-btn" type="button" onClick={() => resetMemberIssueSession(debugMember.member.client_id)}>Reset Member Session</button>
-                          </div>
-                        </article>
-                      </div>
+                      ))
                     ) : (
-                      <p className="empty-state">No member issue diagnostics available.</p>
+                      <p className="empty-state">No recent operational errors.</p>
                     )}
-                  </section>
+                  </div>
+                </section>
+
+                <section className="panel admin-table-panel" style={{ marginTop: "18px" }}>
+                  <div className="panel-header">
+                    <div>
+                      <div className="section-kicker">Debug Console</div>
+                      <h3 className="section-title">Member issue review</h3>
+                      <p className="section-intro">Inspect a member issue quickly, see evidence/task/session counts, and take the first operational recovery action.</p>
+                    </div>
+                    {debugMember ? <button className="ghost compact-btn" type="button" onClick={() => resetMemberIssueSession(debugMember.member.client_id)}>Reset Session</button> : null}
+                  </div>
+                  {debugMember ? (
+                    <div className="debug-member-table">
+                      <div className="debug-member-row debug-member-head"><span>Member</span><span>Readiness</span><span>Evidence</span><span>Open tasks</span><span>Sessions</span><span>Recent errors</span><span>Recommended actions</span></div>
+                      <article className="debug-member-row">
+                        <strong>{debugMember.member.display_name}</strong>
+                        <span>{debugMember.member.readiness_score}%</span>
+                        <span>{debugMember.evidence_count}</span>
+                        <span>{debugMember.open_tasks}</span>
+                        <span className={`status-pill ${debugMember.active_sessions ? "planned" : "completed"}`}>{debugMember.active_sessions} active</span>
+                        <small>{debugMember.recent_errors.length ? debugMember.recent_errors.map((item) => item.message || item.event_type).join(" | ") : "No recent member-specific errors captured."}</small>
+                        <small>{debugMember.recommended_actions.join(" | ")}</small>
+                      </article>
+                    </div>
+                  ) : (
+                    <p className="empty-state">No member issue diagnostics available.</p>
+                  )}
                 </section>
               </React.Fragment>
             ) : (
@@ -4929,8 +5295,7 @@ function App() {
     <React.Fragment>
       <main className="shell">
         <aside className="sidebar">
-        <img className="brand-logo" src={LOGO_URL} alt="Ascend HSI logo" />
-        <div className="brand">Ascend HSI</div>
+        <PortalBrand onHome={goToPortalHome} label="Go to member home" />
         <div className="brand-sub">Member Workspace</div>
         <SidebarNav
           items={[

@@ -19,6 +19,10 @@ body { margin: 0; background: var(--paper); color: var(--ink); }
 button, input, textarea, select { font: inherit; }
 a { color: inherit; }
 textarea { line-height: 1.45; }
+input::placeholder, textarea::placeholder {
+  color: #87918b;
+  font-style: italic;
+}
 
 .auth-shell { display: grid; place-items: center; padding: 40px; }
 .login-page {
@@ -65,6 +69,44 @@ textarea { line-height: 1.45; }
 .login-card { display: grid; gap: 14px; margin-top: 18px; }
 .login-card label { display: grid; gap: 7px; font-weight: 700; }
 .login-note { margin: 6px 0 0; font-size: 0.9rem; color: var(--muted); }
+.dev-login-panel {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.dev-login-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.dev-login-btn {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fffdfa 0%, #f8f2e7 100%);
+  cursor: pointer;
+}
+.dev-login-btn strong {
+  color: var(--green-dark);
+  font-size: 0.94rem;
+}
+.dev-login-btn span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+.dev-login-btn:hover:not(:disabled) {
+  border-color: #cdb98f;
+  box-shadow: 0 10px 24px rgba(18,69,55,0.06);
+  transform: translateY(-1px);
+}
+.dev-login-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
 .login-toggle {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -143,6 +185,24 @@ textarea { line-height: 1.45; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.brand-home-button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+}
+.brand-home-button:focus-visible {
+  border-radius: 8px;
+  outline: 2px solid rgba(240,223,184,0.78);
+  outline-offset: 5px;
+}
+.brand-home-button:hover .brand { color: #f0dfb8; }
+.brand { display: block; transition: color 0.16s ease; }
 
 .main { padding: 26px; }
 .topbar {
@@ -260,6 +320,236 @@ textarea { line-height: 1.45; }
 }
 .metric-card span { display: block; color: var(--muted); margin-bottom: 6px; font-size: 0.8rem; }
 .metric-card strong { color: var(--green); font-size: 1.55rem; }
+.cost-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.cost-mini-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 0;
+}
+.admin-health-panel,
+.admin-response-panel,
+.support-queue-panel {
+  padding: 16px;
+}
+.admin-health-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(118px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.admin-health-chip {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--green);
+  border-radius: 8px;
+  background: #fffdfa;
+}
+.admin-health-chip.planned {
+  border-left-color: var(--gold);
+  background: #fff8e7;
+}
+.admin-health-chip.blocked {
+  border-left-color: var(--danger);
+  background: #fff1ed;
+}
+.admin-health-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #e5efe9;
+  color: var(--green-dark);
+  font-size: 0.62rem;
+  font-weight: 950;
+  line-height: 1;
+}
+.admin-health-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.admin-health-copy strong {
+  color: var(--green-dark);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.admin-health-copy small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.response-time-table,
+.support-ticket-table {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+.response-time-head,
+.response-time-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.6fr) minmax(84px, 0.7fr) minmax(70px, 0.55fr) minmax(160px, 1.15fr) minmax(92px, 0.75fr);
+  gap: 10px;
+  align-items: center;
+}
+.response-time-head,
+.support-ticket-head {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0 6px 2px;
+}
+.response-time-row {
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffdfa 0%, #f8f2e7 100%);
+}
+.response-time-row > span,
+.response-time-row > strong {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+.response-time-row > strong {
+  color: var(--green-dark);
+  font-size: 0.84rem;
+}
+.response-stack-name {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.response-stack-name strong {
+  min-width: 0;
+  color: var(--green-dark);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.response-sparkline {
+  width: 100%;
+  min-width: 120px;
+  height: 36px;
+  overflow: visible;
+}
+.response-sparkline polyline {
+  fill: none;
+  stroke: var(--green);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.response-sparkline circle {
+  fill: #fffdfa;
+  stroke: var(--green-dark);
+  stroke-width: 1.4;
+}
+.support-ticket-head,
+.support-ticket-row {
+  display: grid;
+  grid-template-columns: minmax(210px, 1.8fr) minmax(115px, 0.95fr) minmax(100px, 0.85fr) minmax(120px, 1fr) minmax(130px, 1fr) minmax(72px, 0.55fr) minmax(110px, 0.9fr) minmax(56px, 0.45fr);
+  gap: 8px;
+  align-items: center;
+}
+.support-ticket-row {
+  --support-accent: #7c8792;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--support-accent) 24%, var(--line));
+  border-left: 3px solid var(--support-accent);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffdfa 0%, #f9f4eb 100%);
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.support-ticket-row > span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.support-category-auth { --support-accent: #5d7f9a; }
+.support-category-evidence { --support-accent: #2f7d67; }
+.support-category-ai { --support-accent: #7a5ea8; }
+.support-category-message { --support-accent: #c6a15b; }
+.support-category-bug { --support-accent: #a44732; }
+.support-ticket-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.support-ticket-main span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.support-ticket-main strong {
+  color: var(--green-dark);
+  font-size: 0.78rem;
+}
+.support-ticket-main small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.support-ticket-icon {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--support-accent) 14%, white);
+  color: color-mix(in srgb, var(--support-accent) 82%, #13241d);
+  font-size: 0.68rem;
+  font-weight: 950;
+}
+.support-category-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--support-accent) 12%, white);
+  border: 1px solid color-mix(in srgb, var(--support-accent) 26%, white);
+  color: color-mix(in srgb, var(--support-accent) 82%, #13241d);
+  font-size: 0.68rem;
+  font-weight: 850;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.support-ticket-link a {
+  color: var(--green-dark);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-decoration: none;
+}
+.support-ticket-link a:hover {
+  text-decoration: underline;
+}
 
 .perspective-side-card {
   display: grid;
@@ -1853,7 +2143,9 @@ textarea { min-height: 150px; resize: vertical; }
   font-size: 0.7rem;
   white-space: nowrap;
 }
-.issue-log-table {
+.issue-log-table,
+.debug-error-table,
+.debug-member-table {
   display: grid;
   gap: 6px;
   margin-top: 12px;
@@ -1911,7 +2203,9 @@ textarea { min-height: 150px; resize: vertical; }
   padding: 5px 8px;
   font-size: 0.66rem;
 }
-.issue-log-row.issue-log-head {
+.issue-log-row.issue-log-head,
+.debug-error-head,
+.debug-member-head {
   min-height: 24px;
   padding: 3px 8px;
   border: 0;
@@ -1921,6 +2215,162 @@ textarea { min-height: 150px; resize: vertical; }
   font-weight: 900;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+.debug-error-row,
+.debug-member-row {
+  display: grid;
+  gap: 7px;
+  align-items: center;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--green);
+  border-radius: 7px;
+  background: rgba(255, 253, 250, 0.76);
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.debug-error-row { grid-template-columns: minmax(130px, 1fr) minmax(88px, 0.7fr) minmax(170px, 1.25fr) 84px minmax(118px, 0.88fr) minmax(220px, 1.8fr); }
+.debug-member-row { grid-template-columns: minmax(150px, 1fr) 76px 72px 82px 92px minmax(220px, 1.55fr) minmax(260px, 1.8fr); }
+.debug-error-row strong,
+.debug-member-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--green-dark);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.debug-error-row > span,
+.debug-error-row small,
+.debug-member-row > span,
+.debug-member-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.debug-error-row .status-pill,
+.debug-member-row .status-pill {
+  justify-content: center;
+  padding: 5px 8px;
+  font-size: 0.66rem;
+}
+
+.admin-main {
+  font-size: 0.78rem;
+}
+.admin-main .topbar-copy strong {
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+.admin-main .topbar-welcome {
+  font-size: 0.96rem;
+}
+.admin-main .hero {
+  padding: 16px 18px;
+}
+.admin-main .hero h1 {
+  margin-bottom: 5px;
+  font-size: clamp(1.28rem, 2vw, 1.68rem);
+}
+.admin-main .hero p {
+  max-width: 780px;
+  font-size: 0.78rem;
+  line-height: 1.38;
+}
+.admin-main .eyebrow,
+.admin-main .section-kicker {
+  margin-bottom: 5px;
+  font-size: 0.66rem;
+  letter-spacing: 0.07em;
+}
+.admin-main .panel {
+  padding: 16px;
+}
+.admin-main .panel-header {
+  gap: 12px;
+}
+.admin-main .section-title {
+  font-size: 1rem;
+}
+.admin-main .section-intro {
+  max-width: 860px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+.admin-main .mini-note {
+  font-size: 0.72rem;
+  line-height: 1.32;
+}
+.admin-main .metrics-grid {
+  gap: 10px;
+  margin-top: 12px;
+}
+.admin-main .metric-card {
+  padding: 11px 12px;
+}
+.admin-main .metric-card span {
+  margin-bottom: 4px;
+  font-size: 0.68rem;
+}
+.admin-main .metric-card strong {
+  font-size: 1.18rem;
+}
+.admin-main .builder-layout {
+  gap: 12px;
+}
+.admin-main .task-mini-list {
+  gap: 6px;
+  margin-top: 10px;
+}
+.admin-main .task-mini-item {
+  gap: 5px;
+  min-height: 36px;
+  padding: 7px 8px;
+  border-radius: 7px;
+}
+.admin-main .task-mini-item strong {
+  color: var(--green-dark);
+  font-size: 0.74rem;
+}
+.admin-main .task-mini-item p {
+  margin: 1px 0 0;
+  font-size: 0.7rem;
+  line-height: 1.25;
+}
+.admin-main .task-mini-meta {
+  gap: 6px;
+  font-size: 0.66rem;
+  line-height: 1.25;
+}
+.admin-main .status-pill {
+  padding: 5px 8px;
+  font-size: 0.66rem;
+}
+.admin-main .compact-btn {
+  padding: 6px 10px;
+  font-size: 0.7rem;
+}
+.admin-main .cost-toolbar {
+  gap: 8px;
+}
+.admin-main .cost-mini-grid {
+  gap: 8px;
+}
+.admin-main .support-ticket-row,
+.admin-main .response-time-row {
+  font-size: 0.7rem;
+}
+.admin-main .support-ticket-main strong,
+.admin-main .response-stack-name strong {
+  font-size: 0.74rem;
+}
+.admin-main .support-ticket-main small {
+  font-size: 0.66rem;
+}
+.admin-main .empty-state {
+  font-size: 0.76rem;
 }
 
 @media (max-width: 1100px) {
@@ -1946,7 +2396,19 @@ textarea { min-height: 150px; resize: vertical; }
     grid-template-columns: 1fr;
   }
   .issue-entry-row,
-  .issue-log-row {
+  .issue-log-row,
+  .debug-error-row,
+  .debug-member-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .admin-health-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .response-time-head,
+  .support-ticket-head {
+    display: none;
+  }
+  .response-time-row,
+  .support-ticket-row {
     grid-template-columns: 1fr;
     align-items: stretch;
   }

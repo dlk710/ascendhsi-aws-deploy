@@ -59,6 +59,7 @@ class DatabaseTests(unittest.TestCase):
         self.assertIn("support_ticket_attachments", names)
         self.assertIn("batch_intake_sessions", names)
         self.assertIn("batch_intake_items", names)
+        self.assertIn("admin_cost_snapshots", names)
 
     def test_account_tables_track_last_login_audit_fields(self):
         for table in ("member_accounts", "profile_builder_accounts", "staff_accounts"):

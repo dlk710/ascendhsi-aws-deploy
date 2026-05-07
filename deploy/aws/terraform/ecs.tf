@@ -124,7 +124,14 @@ resource "aws_ecs_task_definition" "backend" {
         { name = "ASCEND_S3_SERVER_SIDE_ENCRYPTION", value = "AES256" },
         { name = "ASCEND_API_DOMAIN", value = var.api_domain },
         { name = "ASCEND_BUG_LOG_TABLE", value = var.issue_log_table_name },
+        { name = "ASCEND_FRONTEND_BUCKET", value = aws_s3_bucket.frontend.id },
+        { name = "ASCEND_CLOUDFRONT_DISTRIBUTION_ID", value = aws_cloudfront_distribution.frontend.id },
+        { name = "ASCEND_ECS_CLUSTER", value = "${local.name_prefix}-cluster" },
+        { name = "ASCEND_ECS_SERVICE", value = "${local.name_prefix}-backend" },
+        { name = "ASCEND_ECR_REPOSITORY", value = aws_ecr_repository.backend.name },
+        { name = "ASCEND_ALB_NAME", value = substr("${local.name_prefix}-api", 0, 32) },
         { name = "AWS_REGION", value = var.aws_region },
+        { name = "AWS_COST_EXPLORER_REGION", value = "us-east-1" },
       ]
       secrets = local.backend_secrets
       command = [

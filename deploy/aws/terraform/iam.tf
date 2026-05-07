@@ -97,6 +97,18 @@ data "aws_iam_policy_document" "ecs_task_policy" {
       "arn:aws:dynamodb:${var.aws_region}:${local.account_id}:table/${var.issue_log_table_name}",
     ]
   }
+
+  statement {
+    sid = "AllowCostExplorerRead"
+
+    actions = [
+      "ce:GetCostAndUsage",
+      "ce:GetCostForecast",
+      "ce:GetDimensionValues",
+    ]
+
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role" "ecs_task" {

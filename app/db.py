@@ -430,6 +430,14 @@ CREATE TABLE IF NOT EXISTS batch_intake_items (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS admin_cost_snapshots (
+  source TEXT PRIMARY KEY,
+  refreshed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  status TEXT NOT NULL DEFAULT 'pending',
+  payload TEXT NOT NULL DEFAULT '{}',
+  detail TEXT NOT NULL DEFAULT ''
+);
 """
 
 

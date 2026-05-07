@@ -320,6 +320,16 @@ def remove_admin_issue_log(
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
+@app.get("/api/admin/costs")
+def admin_costs(_admin_user: dict = Depends(require_admin_user)) -> dict:
+    return service().admin_cost_dashboard()
+
+
+@app.post("/api/admin/costs/refresh")
+def admin_costs_refresh(_admin_user: dict = Depends(require_admin_user)) -> dict:
+    return service().refresh_admin_cost_dashboard()
+
+
 @app.get("/api/attorney/petition-generator")
 def attorney_petition_generator(client_id: str = "") -> dict:
     try:

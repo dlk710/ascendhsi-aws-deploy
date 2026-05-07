@@ -169,6 +169,34 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         service.admin_operational_dashboard.assert_not_called()
 
+    def test_admin_costs_uses_service(self):
+        service = Mock()
+        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
+        service.admin_cost_dashboard.return_value = {"status": "needs_refresh", "aws": {}, "openai": {}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/admin/costs", headers={"Authorization": "Bearer ssess_admin"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "needs_refresh")
+        service.admin_cost_dashboard.assert_called_once_with()
+
+    def test_admin_costs_refresh_uses_service(self):
+        service = Mock()
+        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
+        service.refresh_admin_cost_dashboard.return_value = {"status": "ok", "aws": {"actual_month_to_date": 10}, "openai": {}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post("/api/admin/costs/refresh", headers={"Authorization": "Bearer ssess_admin"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        service.refresh_admin_cost_dashboard.assert_called_once_with()
+
+    def test_admin_costs_rejects_non_admin_role(self):
+        service = Mock()
+        service.staff_session.return_value = {"display_name": "Ava Morales", "role": "leader"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/admin/costs", headers={"Authorization": "Bearer ssess_leader"})
+        self.assertEqual(response.status_code, 403)
+        service.admin_cost_dashboard.assert_not_called()
+
     def test_admin_issue_log_uses_service(self):
         service = Mock()
         service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
