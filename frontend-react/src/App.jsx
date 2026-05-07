@@ -122,6 +122,14 @@ function portalMeta(role) {
   return PORTAL_OPTIONS.find((item) => item.value === role) || PORTAL_OPTIONS[0];
 }
 
+function requestedPortalSection(role, fallback = "home") {
+  const requested = new URLSearchParams(window.location.search).get("section") || fallback;
+  const allowed = {
+    admin: new Set(["home", "health", "issues", "support", "debug", "messages"]),
+  };
+  return allowed[role]?.has(requested) ? requested : fallback;
+}
+
 function isPreviewRole(role) {
   return PREVIEW_ROLES.includes(role);
 }
@@ -356,6 +364,18 @@ function emptyLeaderInviteForm() {
   };
 }
 
+function emptyIssueLogForm() {
+  return {
+    title: "",
+    portal: "Admin Portal",
+    section: "Issue Portal",
+    priority: "P1",
+    status: "open",
+    description: "",
+    reported_by: "",
+  };
+}
+
 function emptySupportAttachment() {
   return {
     id: `support_file_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -419,6 +439,77 @@ function MetricCard({ label, value }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </article>
+  );
+}
+
+function IssueLogPanel({ backlog, form, busy, onFormChange, onSubmit, onUpdate, onRemove }) {
+  const items = backlog?.items || [];
+  return (
+    <section className="product-backlog-panel admin-ops-compact">
+      <div className="panel admin-table-panel">
+        <div className="panel-header">
+          <div>
+            <div className="section-kicker">Issue Portal</div>
+            <h3 className="section-title">Bug log across the product suite</h3>
+            <p className="section-intro">Add, update, and remove issue rows with priority, status, timestamps, and AWS DynamoDB sync state in one spreadsheet-style registry.</p>
+          </div>
+          <span className="mini-note">AWS mirror: {backlog?.aws_table_name || "ascend_product_issue_logs"} • {backlog?.aws_region || "us-east-2"}</span>
+        </div>
+        <div className="admin-count-strip">
+          {["P0", "P1", "P2", "P3"].map((priority) => (
+            <span key={priority}><strong>{priority}</strong>{backlog?.priority_counts?.[priority] || 0}</span>
+          ))}
+          {["open", "triaged", "in_progress", "blocked", "fixed", "closed"].map((status) => (
+            <span key={status}><strong>{status.replaceAll("_", " ")}</strong>{backlog?.status_counts?.[status] || 0}</span>
+          ))}
+        </div>
+
+        <form className="issue-entry-row" onSubmit={onSubmit}>
+          <input value={form.title} onChange={(event) => onFormChange("title", event.target.value)} placeholder="Issue title" aria-label="Issue title" />
+          <select value={form.portal} onChange={(event) => onFormChange("portal", event.target.value)} aria-label="Portal">
+            {["Member Portal", "Profile Builder Portal", "Leader Portal", "Attorney Portal", "Admin Portal"].map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+          <input value={form.section} onChange={(event) => onFormChange("section", event.target.value)} placeholder="Section" aria-label="Section" />
+          <select value={form.priority} onChange={(event) => onFormChange("priority", event.target.value)} aria-label="Priority">
+            <option value="P0">P0</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
+          </select>
+          <select value={form.status} onChange={(event) => onFormChange("status", event.target.value)} aria-label="Status">
+            <option value="open">Open</option><option value="triaged">Triaged</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="fixed">Fixed</option><option value="closed">Closed</option>
+          </select>
+          <input value={form.reported_by} onChange={(event) => onFormChange("reported_by", event.target.value)} placeholder="Reporter" aria-label="Reported by" />
+          <input value={form.description} onChange={(event) => onFormChange("description", event.target.value)} placeholder="Short reproduction notes" aria-label="Description" />
+          <button className="primary compact-btn" type="submit" disabled={busy}>{busy ? "Saving" : "Add row"}</button>
+        </form>
+
+        <div className="issue-log-table">
+          <div className="issue-log-row issue-log-head"><span>Bug ID</span><span>Issue</span><span>Portal / Section</span><span>Priority</span><span>Status</span><span>Reporter</span><span>Updated</span><span>AWS</span><span>Actions</span></div>
+          {items.map((item) => (
+            <article key={item.bug_id} className={`issue-log-row priority-${item.priority?.toLowerCase()}`}>
+              <div>
+                <strong>{item.bug_id}</strong>
+                <small>{item.created_at}</small>
+              </div>
+              <div>
+                <strong>{item.title}</strong>
+                <small>{item.description}</small>
+              </div>
+              <span>{item.portal} / {item.section}</span>
+              <select value={item.priority} onChange={(event) => onUpdate(item, { priority: event.target.value })}>
+                <option value="P0">P0</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
+              </select>
+              <select value={item.status} onChange={(event) => onUpdate(item, { status: event.target.value })}>
+                <option value="open">Open</option><option value="triaged">Triaged</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="fixed">Fixed</option><option value="closed">Closed</option>
+              </select>
+              <span>{item.reported_by || "Admin"}</span>
+              <span>{item.updated_at || item.created_at}</span>
+              <span className={`status-pill ${item.aws_sync_status === "synced" ? "completed" : item.aws_sync_status === "pending" ? "planned" : "blocked"}`}>{item.aws_sync_status || "pending"}</span>
+              <button className="danger compact-btn" type="button" onClick={() => onRemove(item)}>Remove</button>
+            </article>
+          ))}
+          {!items.length ? <p className="empty-state">No bug logs captured yet. Use the add row above to start the registry.</p> : null}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -578,6 +669,8 @@ function NavIcon({ name }) {
       return <svg {...commonProps}><path d="M12 5v10" /><path d="m8 11 4 4 4-4" /><path d="M5 19h14" /></svg>;
     case "health":
       return <svg {...commonProps}><path d="M4 13h3l2-4 3 7 2-5h6" /></svg>;
+    case "issues":
+      return <svg {...commonProps}><path d="M7 4.5h10l2 2v13H5v-13z" /><path d="M9 10h6" /><path d="M9 13h6" /><path d="M9 16h3" /></svg>;
     case "debug":
       return <svg {...commonProps}><circle cx="6" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="18" cy="12" r="1.3" /></svg>;
     default:
@@ -643,6 +736,7 @@ function SidebarNav({ items, value, onChange }) {
     if (itemValue === "planner") return "planner";
     if (itemValue === "intake") return "intake";
     if (itemValue === "health") return "health";
+    if (itemValue === "issues") return "issues";
     if (itemValue === "debug") return "debug";
     return "home";
   }
@@ -1458,6 +1552,9 @@ function App() {
   const [messageComposer, setMessageComposer] = useState({ recipient_role: "", recipient_key: "", subject: "", body: "", urgent: false, reply_to_id: "" });
   const [messageBusy, setMessageBusy] = useState(false);
   const [adminDashboard, setAdminDashboard] = useState(null);
+  const [adminIssueLog, setAdminIssueLog] = useState({ items: [], priority_counts: {}, status_counts: {} });
+  const [issueLogForm, setIssueLogForm] = useState(emptyIssueLogForm());
+  const [issueLogBusy, setIssueLogBusy] = useState(false);
   const [petitionDraft, setPetitionDraft] = useState(null);
   const [petitionBusy, setPetitionBusy] = useState(false);
   const [batchZipFile, setBatchZipFile] = useState(null);
@@ -1569,6 +1666,7 @@ function App() {
     }
     if (authMember?.role === "admin") {
       if (portalSection === "health") return "System Health";
+      if (portalSection === "issues") return "Issue Portal";
       if (portalSection === "debug") return "Debug Console";
       if (portalSection === "support") return "Support Tickets";
       if (portalSection === "messages") return "Messages";
@@ -1945,17 +2043,20 @@ function App() {
     setLoading(true);
     setMessage(null);
     try {
-      const [opsData, builderData, membersData, criteriaData] = await Promise.all([
+      const [opsData, issueData, builderData, membersData, criteriaData] = await Promise.all([
         getJson("/api/admin/operations"),
+        getJson("/api/admin/issue-log"),
         getJson("/api/builder/dashboard"),
         getJson("/api/builder/members"),
         getJson("/api/criteria"),
       ]);
       const roster = membersData.length ? membersData : (builderData.members || []);
       setAdminDashboard(opsData);
+      setAdminIssueLog(issueData);
       setBuilderDashboard(builderData);
       setBuilderMembers(roster);
       setCriteriaList(criteriaData);
+      setPortalSection(requestedPortalSection("admin", portalSection || "home"));
       const activeMemberId = memberId || roster[0]?.client_id || "";
       setSelectedBuilderMemberId(activeMemberId);
       if (activeMemberId) {
@@ -1968,6 +2069,62 @@ function App() {
       setMessage({ type: "error", text: "Could not load the admin portal." });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadIssueLog() {
+    try {
+      const data = await getJson("/api/admin/issue-log");
+      setAdminIssueLog(data);
+    } catch (_error) {
+      setMessage({ type: "error", text: "Could not load the issue log." });
+    }
+  }
+
+  async function submitIssueLog(event) {
+    event.preventDefault();
+    setIssueLogBusy(true);
+    setMessage(null);
+    try {
+      const formData = new FormData();
+      Object.entries(issueLogForm).forEach(([key, value]) => formData.set(key, value || ""));
+      formData.set("actor_email", authMember?.email || "");
+      const result = await sendForm("/api/admin/issue-log", formData);
+      if (result.ok) {
+        setIssueLogForm(emptyIssueLogForm());
+        await loadIssueLog();
+        setMessage({ type: "success", text: `Bug ${result.payload.bug_id} logged.` });
+      } else {
+        setMessage({ type: "error", text: result.payload.error || "Could not log the issue." });
+      }
+    } finally {
+      setIssueLogBusy(false);
+    }
+  }
+
+  async function updateIssueLog(item, updates) {
+    const formData = new FormData();
+    formData.set("actor_email", authMember?.email || "");
+    if (updates.priority) formData.set("priority", updates.priority);
+    if (updates.status) formData.set("status", updates.status);
+    const result = await sendForm(`/api/admin/issue-log/${item.bug_id}`, formData, "PATCH");
+    if (result.ok) {
+      await loadIssueLog();
+    } else {
+      setMessage({ type: "error", text: result.payload.error || "Could not update the issue." });
+    }
+  }
+
+  async function removeIssueLog(item) {
+    if (!window.confirm(`Remove ${item.bug_id} from the issue registry?`)) return;
+    const formData = new FormData();
+    formData.set("actor_email", authMember?.email || "");
+    const result = await sendForm(`/api/admin/issue-log/${item.bug_id}`, formData, "DELETE");
+    if (result.ok) {
+      await loadIssueLog();
+      setMessage({ type: "success", text: `Removed ${item.bug_id} from the visible issue registry.` });
+    } else {
+      setMessage({ type: "error", text: result.payload.error || "Could not remove the issue." });
     }
   }
 
@@ -2381,6 +2538,8 @@ function App() {
       setSelectedThreadId("");
       setMessageComposer({ recipient_role: "", recipient_key: "", subject: "", body: "", urgent: false, reply_to_id: "" });
       setAdminDashboard(null);
+      setAdminIssueLog({ items: [], priority_counts: {}, status_counts: {} });
+      setIssueLogForm(emptyIssueLogForm());
       setView({ type: "home", criterionCode: "" });
       setPortalSection("home");
       setMemberMenuOpen(false);
@@ -2423,6 +2582,8 @@ function App() {
     setSelectedThreadId("");
     setMessageComposer({ recipient_role: "", recipient_key: "", subject: "", body: "", urgent: false, reply_to_id: "" });
     setAdminDashboard(null);
+    setAdminIssueLog({ items: [], priority_counts: {}, status_counts: {} });
+    setIssueLogForm(emptyIssueLogForm());
     setView({ type: "home", criterionCode: "" });
     setPortalSection("home");
     setMemberMenuOpen(false);
@@ -4448,6 +4609,7 @@ function App() {
               items={[
                 { value: "home", label: "Admin Home" },
                 { value: "health", label: "System Health" },
+                { value: "issues", label: `Issue Portal${adminIssueLog?.status_counts?.open ? ` (${adminIssueLog.status_counts.open})` : ""}` },
                 { value: "support", label: `Support Tickets${supportSummary.open_count ? ` (${supportSummary.open_count})` : ""}` },
                 { value: "debug", label: "Debug Console" },
                 { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}` },
@@ -4465,6 +4627,7 @@ function App() {
               <p>OpenAI calls: {ops.openai_endpoint_calls || 0}</p>
               <p>Operational errors: {ops.operational_errors || 0}</p>
               <p>Open support tickets: {supportSummary.open_count || 0}</p>
+              <p>Open bugs: {adminIssueLog?.status_counts?.open || 0}</p>
             </div>
             <span className="side-note">Admin portal only</span>
           </aside>
@@ -4547,6 +4710,23 @@ function App() {
                     </div>
                   </section>
                 </section>
+              </React.Fragment>
+            ) : portalSection === "issues" ? (
+              <React.Fragment>
+                <header className="hero">
+                  <p className="eyebrow">Issue Portal</p>
+                  <h1>Product suite bugs, centralized.</h1>
+                  <p>Track every bug with a bug ID, portal, section, priority, status, dates, and an AWS mirror so the team can diagnose and close issues without losing the thread.</p>
+                </header>
+                <IssueLogPanel
+                  backlog={adminIssueLog}
+                  form={issueLogForm}
+                  busy={issueLogBusy}
+                  onFormChange={(field, value) => setIssueLogForm((current) => ({ ...current, [field]: value }))}
+                  onSubmit={submitIssueLog}
+                  onUpdate={updateIssueLog}
+                  onRemove={removeIssueLog}
+                />
               </React.Fragment>
             ) : portalSection === "support" ? (
               <React.Fragment>

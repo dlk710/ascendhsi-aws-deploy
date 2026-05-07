@@ -1,17 +1,22 @@
 import mimetypes
 import hashlib
 import json
+import os
 import re
 import secrets
 import tempfile
 import zipfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 import uuid
+
+from botocore.exceptions import ClientError
 
 PLANNER_STATUSES = {"planned", "in_progress", "completed", "blocked"}
 DEFAULT_MEMBER_PASSWORD = "Ascend123!"
 DEFAULT_MEMBER_EMAIL = "vas@ascendhsi.com"
+ISSUE_PRIORITIES = {"P0", "P1", "P2", "P3"}
+ISSUE_STATUSES = {"open", "triaged", "in_progress", "blocked", "fixed", "closed"}
 
 from app.config import load_app_config, load_openai_config, load_storage_config
 from app.db import connect, initialize, one, rows, seed_default_case
@@ -631,6 +636,354 @@ class EvidenceService:
             "storage_provider": "local",
             "storage_class": "",
         }
+
+    def _bug_log_id(self) -> str:
+        return f"BUG-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
+
+    def _normalize_issue_priority(self, value: str) -> str:
+        cleaned = str(value or "").strip().upper()
+        return cleaned if cleaned in ISSUE_PRIORITIES else "P2"
+
+    def _normalize_issue_status(self, value: str) -> str:
+        cleaned = str(value or "").strip().lower()
+        return cleaned if cleaned in ISSUE_STATUSES else "open"
+
+    def _serialize_issue_log(self, item: dict | None) -> dict:
+        return dict(item or {})
+
+    def _aws_issue_table_name(self) -> str:
+        return os.environ.get("ASCEND_BUG_LOG_TABLE", "ascend_product_issue_logs")
+
+    def _aws_issue_region(self) -> str:
+        return (
+            os.environ.get("AWS_BUG_LOG_REGION")
+            or os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION")
+            or "us-east-2"
+        )
+
+    def _ensure_issue_log_table(self, client, table_name: str) -> None:
+        try:
+            client.describe_table(TableName=table_name)
+            return
+        except ClientError as exc:
+            error = exc.response.get("Error", {}) if getattr(exc, "response", None) else {}
+            if error.get("Code") != "ResourceNotFoundException":
+                raise
+        client.create_table(
+            TableName=table_name,
+            AttributeDefinitions=[{"AttributeName": "bug_id", "AttributeType": "S"}],
+            KeySchema=[{"AttributeName": "bug_id", "KeyType": "HASH"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        client.get_waiter("table_exists").wait(TableName=table_name)
+
+    def _sync_issue_log_to_aws(self, issue: dict) -> dict:
+        try:
+            import boto3
+        except ImportError:
+            return {
+                "aws_table_name": self._aws_issue_table_name(),
+                "aws_sync_status": "unavailable",
+                "aws_sync_message": "boto3 is not installed in the active environment.",
+                "last_synced_at": "",
+            }
+
+        table_name = self._aws_issue_table_name()
+        region = self._aws_issue_region()
+        try:
+            client = boto3.client("dynamodb", region_name=region)
+            self._ensure_issue_log_table(client, table_name)
+            client.put_item(
+                TableName=table_name,
+                Item={
+                    "bug_id": {"S": issue["bug_id"]},
+                    "title": {"S": issue.get("title", "")},
+                    "portal": {"S": issue.get("portal", "")},
+                    "section": {"S": issue.get("section", "")},
+                    "priority": {"S": issue.get("priority", "P2")},
+                    "status": {"S": issue.get("status", "open")},
+                    "description": {"S": issue.get("description", "")},
+                    "reported_by": {"S": issue.get("reported_by", "")},
+                    "created_at": {"S": issue.get("created_at", "")},
+                    "updated_at": {"S": issue.get("updated_at", "")},
+                    "closed_at": {"S": issue.get("closed_at") or ""},
+                    "deleted_at": {"S": issue.get("deleted_at") or ""},
+                    "deleted_by_key": {"S": issue.get("deleted_by_key") or ""},
+                    "suite": {"S": "Ascend Product Suite"},
+                },
+            )
+            return {
+                "aws_table_name": table_name,
+                "aws_sync_status": "synced",
+                "aws_sync_message": f"Mirrored to DynamoDB table {table_name} in {region}.",
+                "last_synced_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        except ClientError as exc:
+            error = exc.response.get("Error", {}) if getattr(exc, "response", None) else {}
+            message = error.get("Message", str(exc))
+            return {
+                "aws_table_name": table_name,
+                "aws_sync_status": "error",
+                "aws_sync_message": f"AWS issue log sync failed: {message}",
+                "last_synced_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        except Exception as exc:
+            return {
+                "aws_table_name": table_name,
+                "aws_sync_status": "error",
+                "aws_sync_message": f"AWS issue log sync failed: {exc}",
+                "last_synced_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            }
+
+    def _aws_issue_logs(self) -> list[dict]:
+        try:
+            import boto3
+        except ImportError:
+            return []
+
+        try:
+            client = boto3.client("dynamodb", region_name=self._aws_issue_region())
+            response = client.scan(TableName=self._aws_issue_table_name())
+        except Exception:
+            return []
+
+        def value(item: dict, key: str) -> str:
+            entry = item.get(key) or {}
+            if "S" in entry:
+                return entry.get("S") or ""
+            if "NULL" in entry:
+                return ""
+            return next(iter(entry.values()), "") if entry else ""
+
+        return [
+            {
+                "bug_id": value(item, "bug_id"),
+                "title": value(item, "title"),
+                "portal": value(item, "portal"),
+                "section": value(item, "section"),
+                "priority": self._normalize_issue_priority(value(item, "priority")),
+                "status": self._normalize_issue_status(value(item, "status")),
+                "description": value(item, "description"),
+                "reported_by": value(item, "reported_by"),
+                "created_by_role": "admin",
+                "created_by_key": value(item, "reported_by"),
+                "created_at": value(item, "created_at"),
+                "updated_at": value(item, "updated_at"),
+                "closed_at": value(item, "closed_at") or None,
+                "aws_table_name": self._aws_issue_table_name(),
+                "aws_sync_status": "synced",
+                "aws_sync_message": "Loaded from DynamoDB issue log mirror.",
+                "last_synced_at": "",
+                "deleted_at": value(item, "deleted_at") or None,
+                "deleted_by_key": value(item, "deleted_by_key"),
+            }
+            for item in response.get("Items", [])
+            if value(item, "bug_id")
+        ]
+
+    def issue_log_backlog(self) -> dict:
+        issue_rows = rows(
+            self.conn,
+            """
+            SELECT *
+            FROM product_issue_logs
+            WHERE deleted_at IS NULL OR deleted_at = ''
+            """,
+        )
+        items_by_id = {item["bug_id"]: self._serialize_issue_log(item) for item in issue_rows}
+        for item in self._aws_issue_logs():
+            if item.get("deleted_at"):
+                continue
+            items_by_id.setdefault(item["bug_id"], item)
+        items = list(items_by_id.values())
+        priority_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+        status_order = {"open": 0, "triaged": 1, "in_progress": 2, "blocked": 3, "fixed": 4, "closed": 5}
+        items.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+        items.sort(key=lambda item: status_order.get(item.get("status"), 9))
+        items.sort(key=lambda item: priority_order.get(item.get("priority"), 9))
+        priority_counts = {priority: sum(1 for item in items if item.get("priority") == priority) for priority in ["P0", "P1", "P2", "P3"]}
+        status_counts = {status: sum(1 for item in items if item.get("status") == status) for status in ["open", "triaged", "in_progress", "blocked", "fixed", "closed"]}
+        return {
+            "items": items,
+            "priority_counts": priority_counts,
+            "status_counts": status_counts,
+            "aws_table_name": self._aws_issue_table_name(),
+            "aws_region": self._aws_issue_region(),
+        }
+
+    def create_issue_log(
+        self,
+        actor_email: str = "",
+        title: str = "",
+        portal: str = "",
+        section: str = "",
+        priority: str = "P2",
+        status: str = "open",
+        description: str = "",
+        reported_by: str = "",
+    ) -> dict:
+        actor = self._actor_identity("admin", actor_email)
+        cleaned_title = title.strip()
+        cleaned_portal = portal.strip()
+        cleaned_section = section.strip()
+        cleaned_description = description.strip()
+        if not cleaned_title or not cleaned_portal or not cleaned_section or not cleaned_description:
+            raise ValueError("title, portal, section, and description are required")
+        bug_id = self._bug_log_id()
+        normalized_priority = self._normalize_issue_priority(priority)
+        normalized_status = self._normalize_issue_status(status)
+        closed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if normalized_status == "closed" else None
+        self.conn.execute(
+            """
+            INSERT INTO product_issue_logs(
+              bug_id, title, portal, section, priority, status, description, reported_by,
+              created_by_role, created_by_key, closed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'admin', ?, ?)
+            """,
+            (
+                bug_id,
+                cleaned_title,
+                cleaned_portal,
+                cleaned_section,
+                normalized_priority,
+                normalized_status,
+                cleaned_description,
+                reported_by.strip() or actor["name"],
+                actor["key"],
+                closed_at,
+            ),
+        )
+        self.conn.commit()
+        current = one(self.conn, "SELECT * FROM product_issue_logs WHERE bug_id = ?", (bug_id,))
+        aws_sync = self._sync_issue_log_to_aws(current or {})
+        self.conn.execute(
+            """
+            UPDATE product_issue_logs
+            SET aws_table_name = ?, aws_sync_status = ?, aws_sync_message = ?, last_synced_at = ?
+            WHERE bug_id = ?
+            """,
+            (
+                aws_sync["aws_table_name"],
+                aws_sync["aws_sync_status"],
+                aws_sync["aws_sync_message"],
+                aws_sync["last_synced_at"],
+                bug_id,
+            ),
+        )
+        self.conn.commit()
+        saved = self._serialize_issue_log(one(self.conn, "SELECT * FROM product_issue_logs WHERE bug_id = ?", (bug_id,)))
+        self.record_operational_event(
+            "issue_log_created",
+            status="success" if saved.get("aws_sync_status") == "synced" else "fallback",
+            portal="admin",
+            endpoint="/api/admin/issue-log",
+            message=f"Admin logged issue {bug_id}: {saved['title']}.",
+            metadata={"priority": saved["priority"], "status": saved["status"], "aws_sync_status": saved["aws_sync_status"]},
+            actor_role="admin",
+            actor_key=actor["key"],
+        )
+        return saved
+
+    def update_issue_log(self, bug_id: str, priority: str = "", status: str = "", actor_email: str = "") -> dict:
+        actor = self._actor_identity("admin", actor_email)
+        existing = one(self.conn, "SELECT * FROM product_issue_logs WHERE bug_id = ?", (bug_id.strip(),))
+        if not existing:
+            raise ValueError("Issue log not found")
+        next_priority = self._normalize_issue_priority(priority) if priority.strip() else existing["priority"]
+        next_status = self._normalize_issue_status(status) if status.strip() else existing["status"]
+        closed_at = existing.get("closed_at")
+        if next_status == "closed" and not closed_at:
+            closed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        if next_status != "closed":
+            closed_at = None
+        self.conn.execute(
+            """
+            UPDATE product_issue_logs
+            SET priority = ?, status = ?, updated_at = CURRENT_TIMESTAMP, closed_at = ?
+            WHERE bug_id = ?
+            """,
+            (next_priority, next_status, closed_at, existing["bug_id"]),
+        )
+        self.conn.commit()
+        current = one(self.conn, "SELECT * FROM product_issue_logs WHERE bug_id = ?", (existing["bug_id"],))
+        aws_sync = self._sync_issue_log_to_aws(current or {})
+        self.conn.execute(
+            """
+            UPDATE product_issue_logs
+            SET aws_table_name = ?, aws_sync_status = ?, aws_sync_message = ?, last_synced_at = ?
+            WHERE bug_id = ?
+            """,
+            (
+                aws_sync["aws_table_name"],
+                aws_sync["aws_sync_status"],
+                aws_sync["aws_sync_message"],
+                aws_sync["last_synced_at"],
+                existing["bug_id"],
+            ),
+        )
+        self.conn.commit()
+        updated = self._serialize_issue_log(one(self.conn, "SELECT * FROM product_issue_logs WHERE bug_id = ?", (existing["bug_id"],)))
+        self.record_operational_event(
+            "issue_log_updated",
+            status="success" if updated.get("aws_sync_status") == "synced" else "fallback",
+            portal="admin",
+            endpoint="/api/admin/issue-log",
+            message=f"Admin updated issue {existing['bug_id']}: {updated['title']}.",
+            metadata={"priority": updated["priority"], "status": updated["status"], "aws_sync_status": updated["aws_sync_status"]},
+            actor_role="admin",
+            actor_key=actor["key"],
+        )
+        return updated
+
+    def remove_issue_log(self, bug_id: str, actor_email: str = "") -> dict:
+        actor = self._actor_identity("admin", actor_email)
+        existing = one(self.conn, "SELECT * FROM product_issue_logs WHERE bug_id = ?", (bug_id.strip(),))
+        if not existing or existing.get("deleted_at"):
+            raise ValueError("Issue log not found")
+        removed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        self.conn.execute(
+            """
+            UPDATE product_issue_logs
+            SET status = 'closed',
+                updated_at = CURRENT_TIMESTAMP,
+                closed_at = COALESCE(closed_at, ?),
+                deleted_at = ?,
+                deleted_by_key = ?
+            WHERE bug_id = ?
+            """,
+            (removed_at, removed_at, actor["key"], existing["bug_id"]),
+        )
+        self.conn.commit()
+        current = one(self.conn, "SELECT * FROM product_issue_logs WHERE bug_id = ?", (existing["bug_id"],))
+        aws_sync = self._sync_issue_log_to_aws(current or {})
+        self.conn.execute(
+            """
+            UPDATE product_issue_logs
+            SET aws_table_name = ?, aws_sync_status = ?, aws_sync_message = ?, last_synced_at = ?
+            WHERE bug_id = ?
+            """,
+            (
+                aws_sync["aws_table_name"],
+                aws_sync["aws_sync_status"],
+                aws_sync["aws_sync_message"],
+                aws_sync["last_synced_at"],
+                existing["bug_id"],
+            ),
+        )
+        self.conn.commit()
+        self.record_operational_event(
+            "issue_log_removed",
+            status="success" if aws_sync.get("aws_sync_status") == "synced" else "fallback",
+            portal="admin",
+            endpoint="/api/admin/issue-log",
+            message=f"Admin removed issue {existing['bug_id']}: {existing['title']}.",
+            metadata={"priority": existing["priority"], "status": "closed", "aws_sync_status": aws_sync.get("aws_sync_status", "pending")},
+            actor_role="admin",
+            actor_key=actor["key"],
+        )
+        return {"ok": True, "status": "removed", "bug_id": existing["bug_id"], "deleted_at": removed_at}
 
     def _serialize_support_ticket(self, ticket: dict | None) -> dict:
         if not ticket:

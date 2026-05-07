@@ -262,6 +262,64 @@ def admin_operations(_admin_user: dict = Depends(require_admin_user)) -> dict:
     return service().admin_operational_dashboard()
 
 
+@app.get("/api/admin/issue-log")
+def admin_issue_log(_admin_user: dict = Depends(require_admin_user)) -> dict:
+    return service().issue_log_backlog()
+
+
+@app.post("/api/admin/issue-log")
+def create_admin_issue_log(
+    title: str = Form(...),
+    portal: str = Form(...),
+    section: str = Form(...),
+    priority: str = Form("P2"),
+    status: str = Form("open"),
+    description: str = Form(...),
+    reported_by: str = Form(""),
+    actor_email: str = Form(""),
+    _admin_user: dict = Depends(require_admin_user),
+) -> dict:
+    try:
+        return service().create_issue_log(
+            actor_email=actor_email,
+            title=title,
+            portal=portal,
+            section=section,
+            priority=priority,
+            status=status,
+            description=description,
+            reported_by=reported_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.patch("/api/admin/issue-log/{bug_id}")
+def update_admin_issue_log(
+    bug_id: str,
+    priority: str = Form(""),
+    status: str = Form(""),
+    actor_email: str = Form(""),
+    _admin_user: dict = Depends(require_admin_user),
+) -> dict:
+    try:
+        return service().update_issue_log(bug_id, priority=priority, status=status, actor_email=actor_email)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.delete("/api/admin/issue-log/{bug_id}")
+def remove_admin_issue_log(
+    bug_id: str,
+    actor_email: str = Form(""),
+    _admin_user: dict = Depends(require_admin_user),
+) -> dict:
+    try:
+        return service().remove_issue_log(bug_id, actor_email=actor_email)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
 @app.get("/api/attorney/petition-generator")
 def attorney_petition_generator(client_id: str = "") -> dict:
     try:

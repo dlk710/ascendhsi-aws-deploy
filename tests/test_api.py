@@ -169,6 +169,75 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         service.admin_operational_dashboard.assert_not_called()
 
+    def test_admin_issue_log_uses_service(self):
+        service = Mock()
+        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
+        service.issue_log_backlog.return_value = {"items": [{"bug_id": "BUG-20260507-0001"}], "priority_counts": {"P0": 1}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/admin/issue-log", headers={"Authorization": "Bearer ssess_admin"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0]["bug_id"], "BUG-20260507-0001")
+
+    def test_admin_issue_log_rejects_non_admin_role(self):
+        service = Mock()
+        service.staff_session.return_value = {"display_name": "Ava Morales", "role": "leader"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/admin/issue-log", headers={"Authorization": "Bearer ssess_leader"})
+        self.assertEqual(response.status_code, 403)
+        service.issue_log_backlog.assert_not_called()
+
+    def test_create_admin_issue_log_uses_service(self):
+        service = Mock()
+        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
+        service.create_issue_log.return_value = {"bug_id": "BUG-20260507-0001", "status": "open"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post(
+                "/api/admin/issue-log",
+                headers={"Authorization": "Bearer ssess_admin"},
+                data={
+                    "title": "Issue Portal route missing",
+                    "portal": "Admin Portal",
+                    "section": "Issue Portal",
+                    "priority": "P1",
+                    "status": "open",
+                    "description": "Issue log API returns SPA HTML.",
+                    "reported_by": "Codex",
+                    "actor_email": "admin@ascendhsi.com",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["bug_id"], "BUG-20260507-0001")
+        service.create_issue_log.assert_called_once()
+
+    def test_update_admin_issue_log_uses_service(self):
+        service = Mock()
+        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
+        service.update_issue_log.return_value = {"bug_id": "BUG-20260507-0001", "status": "fixed"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.patch(
+                "/api/admin/issue-log/BUG-20260507-0001",
+                headers={"Authorization": "Bearer ssess_admin"},
+                data={"priority": "P1", "status": "fixed", "actor_email": "admin@ascendhsi.com"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "fixed")
+        service.update_issue_log.assert_called_once_with("BUG-20260507-0001", priority="P1", status="fixed", actor_email="admin@ascendhsi.com")
+
+    def test_remove_admin_issue_log_uses_service(self):
+        service = Mock()
+        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
+        service.remove_issue_log.return_value = {"ok": True, "status": "removed", "bug_id": "BUG-20260507-0001"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.request(
+                "DELETE",
+                "/api/admin/issue-log/BUG-20260507-0001",
+                headers={"Authorization": "Bearer ssess_admin"},
+                data={"actor_email": "admin@ascendhsi.com"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "removed")
+        service.remove_issue_log.assert_called_once_with("BUG-20260507-0001", actor_email="admin@ascendhsi.com")
+
     def test_attorney_petition_generator_uses_service(self):
         service = Mock()
         service.attorney_petition_generator.return_value = {"ok": True, "status": "success", "executive_summary": "Draft"}

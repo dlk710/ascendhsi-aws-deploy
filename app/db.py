@@ -293,6 +293,28 @@ CREATE TABLE IF NOT EXISTS operational_events (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS product_issue_logs (
+  bug_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  portal TEXT NOT NULL DEFAULT '',
+  section TEXT NOT NULL DEFAULT '',
+  priority TEXT NOT NULL DEFAULT 'P2',
+  status TEXT NOT NULL DEFAULT 'open',
+  description TEXT NOT NULL DEFAULT '',
+  reported_by TEXT NOT NULL DEFAULT '',
+  created_by_role TEXT NOT NULL DEFAULT 'admin',
+  created_by_key TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  closed_at TEXT,
+  aws_table_name TEXT NOT NULL DEFAULT '',
+  aws_sync_status TEXT NOT NULL DEFAULT 'pending',
+  aws_sync_message TEXT NOT NULL DEFAULT '',
+  last_synced_at TEXT,
+  deleted_at TEXT,
+  deleted_by_key TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
   thread_id TEXT NOT NULL,
@@ -548,6 +570,13 @@ def initialize(conn: ConnectionAdapter | sqlite3.Connection) -> None:
     ensure_column(conn, "operational_events", "actor_key", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "operational_events", "related_client_id", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "operational_events", "related_case_id", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "product_issue_logs", "closed_at", "TEXT")
+    ensure_column(conn, "product_issue_logs", "aws_table_name", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "product_issue_logs", "aws_sync_status", "TEXT NOT NULL DEFAULT 'pending'")
+    ensure_column(conn, "product_issue_logs", "aws_sync_message", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "product_issue_logs", "last_synced_at", "TEXT")
+    ensure_column(conn, "product_issue_logs", "deleted_at", "TEXT")
+    ensure_column(conn, "product_issue_logs", "deleted_by_key", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "tasks", "assigned_by_builder_id", "TEXT REFERENCES profile_builders(id)")
     ensure_column(conn, "tasks", "opportunity_id", "TEXT REFERENCES opportunity_library(id)")
     ensure_column(conn, "tasks", "criterion_code", "TEXT REFERENCES criteria(code)")
