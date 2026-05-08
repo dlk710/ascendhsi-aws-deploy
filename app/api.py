@@ -1245,6 +1245,7 @@ async def upload_evidence(
     duplicate_action: str = Form(""),
     ai_summary: str = Form(""),
     quality_score: int | None = Form(None),
+    folder_id: str = Form(""),
     file: UploadFile = File(...),
 ) -> dict:
     try:
@@ -1263,6 +1264,7 @@ async def upload_evidence(
             quality_score=quality_score,
             client_id=member["client_id"] if member else None,
             case_id=member["case_id"] if member else None,
+            folder_id=folder_id or None,
         )
     except DuplicateEvidenceError as exc:
         raise HTTPException(
@@ -1301,7 +1303,7 @@ def create_folder(criterion_code: str, name: str = Form(...), parent_id: str = F
 
 
 @app.patch("/api/folders/{folder_id}")
-def update_folder(folder_id: str, name: str = Form(""), color: str = Form(""), parent_id: str = Form(""), token: str = Header(alias="Authorization", default="")) -> dict:
+def update_folder(folder_id: str, name: str = Form(""), color: str = Form(""), parent_id: str | None = Form(None), token: str = Header(alias="Authorization", default="")) -> dict:
     try:
         member = optional_member_user(token)
         kwargs = {}
@@ -1309,7 +1311,8 @@ def update_folder(folder_id: str, name: str = Form(""), color: str = Form(""), p
             kwargs["name"] = name
         if color != "":
             kwargs["color"] = color
-        kwargs["parent_id"] = parent_id
+        if parent_id is not None:
+            kwargs["parent_id"] = parent_id
         return service().update_folder(
             folder_id,
             client_id=member["client_id"] if member else None,

@@ -65,7 +65,7 @@ const CONTRIBUTION_CATEGORY_OPTIONS = ["Work-related", "Research", "Grant work",
 const MEMBER_VIEW_TYPES = new Set(["home", "workspace", "profile", "critical_roles", "original_contributions", "planner", "intake", "messages"]);
 const BUILDER_SECTIONS = new Set(["home", "members", "opportunities", "messages"]);
 const ATTORNEY_SECTIONS = new Set(["home", "dossier", "petition", "endeavor", "recommendations", "batch", "evidence", "messages"]);
-const LEADER_EXEC_SECTIONS = new Set(["home", "members", "risks", "capacity", "timeline", "backlog", "oversight", "opportunities", "batch", "messages"]);
+const LEADER_EXEC_SECTIONS = new Set(["home", "invite", "members", "risks", "capacity", "timeline", "backlog", "oversight", "opportunities", "batch", "messages"]);
 const ADMIN_SECTIONS = new Set(["home", "health", "costs", "support", "issues", "debug", "messages"]);
 const LEADER_PERSPECTIVES = new Set(["leader", "builder", "attorney"]);
 const SIDEBAR_WIDTH_KEY = "ascend_sidebar_width";
@@ -491,7 +491,7 @@ const HELP_MANUAL_SECTIONS = {
       summary: "Leaders invite members by email and can optionally assign a Profile Builder and Attorney at invite time or later.",
       can: ["Create member invites.", "Assign builder and attorney now or later.", "Track registration status."],
       cannot: ["Require assignments before invitation.", "Assume invitation email delivery is complete unless email integration is configured."],
-      steps: ["Open Leader Home or Assignment Oversight.", "Enter member name, email, domain, title, and employer.", "Optionally choose builder and attorney.", "Create invite.", "Track registration and rebalance later."],
+      steps: ["Open Invite Member or Assignment Oversight.", "Enter member name, email, domain, title, and employer.", "Optionally choose builder and attorney.", "Create invite.", "Track registration and rebalance later."],
       keywords: ["leader", "invite", "registration", "assign builder", "assign attorney", "routing"],
     },
     {
@@ -1113,6 +1113,161 @@ function folderColorName(value) {
   return Object.keys(FOLDER_COLORS).find((name) => FOLDER_COLORS[name] === value) || "Emerald";
 }
 
+function normalizeFolderId(value) {
+  return value || "";
+}
+
+function workspaceFolderMap(workspace) {
+  return new Map((workspace?.folders || []).map((folder) => [folder.id, folder]));
+}
+
+function workspaceFolderDepth(folder, folderMap) {
+  let depth = 0;
+  let current = folderMap.get(folder?.parent_id || "");
+  while (current && depth < 12) {
+    depth += 1;
+    current = folderMap.get(current.parent_id || "");
+  }
+  return depth;
+}
+
+function workspaceFolderLabel(workspace, folderId) {
+  if (!folderId) return "Root";
+  const folder = workspaceFolderMap(workspace).get(folderId);
+  return folder?.path || folder?.name || "Selected folder";
+}
+
+function workspaceBreadcrumb(workspace, folderId) {
+  const folderMap = workspaceFolderMap(workspace);
+  const trail = [];
+  let current = folderMap.get(folderId || "");
+  while (current) {
+    trail.unshift(current);
+    current = folderMap.get(current.parent_id || "");
+  }
+  return trail;
+}
+
+function workspaceFolderMatches(folder, query) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return [folder.name, folder.path].some((value) => String(value || "").toLowerCase().includes(normalized));
+}
+
+function workspaceFileMatches(file, query) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return [file.file_name, file.title, file.description, file.ai_summary, file.document_type, file.folder_path]
+    .some((value) => String(value || "").toLowerCase().includes(normalized));
+}
+
+function buildDriveRows(workspace, selectedFolderId, query = "") {
+  if (!workspace) return [];
+  const folderId = normalizeFolderId(selectedFolderId);
+  const searchActive = Boolean(query.trim());
+  const folders = (workspace.folders || [])
+    .filter((folder) => (searchActive ? workspaceFolderMatches(folder, query) : normalizeFolderId(folder.parent_id) === folderId))
+    .map((folder) => ({
+      id: `folder:${folder.id}`,
+      kind: "folder",
+      entityId: folder.id,
+      label: folder.name,
+      documentType: "Folder",
+      subtitle: `${folder.file_count || 0} files, ${folder.child_folder_count || 0} folders`,
+      timestamp: folder.updated_at ? `Updated ${formatDateTime(folder.updated_at)}` : folder.path || "Folder",
+      parentId: normalizeFolderId(folder.parent_id),
+      folderId: folder.id,
+      path: folder.path || folder.name,
+      color: folder.color || FOLDER_COLORS.Emerald,
+      href: null,
+    }));
+  const files = (workspace.files || [])
+    .filter((file) => (searchActive ? workspaceFileMatches(file, query) : normalizeFolderId(file.folder_id) === folderId))
+    .map((file) => ({
+      id: `file:${file.id}`,
+      kind: "file",
+      entityId: file.id,
+      label: file.file_name,
+      documentType: file.document_type || "Other",
+      subtitle: cleanSummary(file.ai_summary || file.description),
+      timestamp: formatUploadedAt(file.created_at),
+      folderId: normalizeFolderId(file.folder_id),
+      path: file.folder_path || "Root",
+      color: criterionAccent(file.criterion_code),
+      href: file.open_url || file.drive_web_url || null,
+    }));
+  return [...folders, ...files].sort((left, right) => {
+    if (left.kind !== right.kind) return left.kind === "folder" ? -1 : 1;
+    return compareText(left.label, right.label);
+  });
+}
+
+function workspaceDragPayload(item) {
+  return {
+    kind: item.kind,
+    entityId: item.entityId,
+    label: item.label,
+    folderId: normalizeFolderId(item.folderId),
+    parentId: normalizeFolderId(item.parentId),
+  };
+}
+
+function readWorkspaceDragPayload(event) {
+  const raw = event.dataTransfer.getData("application/json");
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function readDirectoryEntries(reader) {
+  return new Promise((resolve, reject) => {
+    reader.readEntries(resolve, reject);
+  });
+}
+
+function fileFromEntry(entry) {
+  return new Promise((resolve) => {
+    entry.file((file) => resolve(file), () => resolve(null));
+  });
+}
+
+async function walkDroppedEntry(entry, prefix, files) {
+  if (entry.isFile) {
+    const file = await fileFromEntry(entry);
+    if (file) files.push({ file, relativePath: `${prefix}${file.name}` });
+    return;
+  }
+  if (!entry.isDirectory) return;
+  const reader = entry.createReader();
+  let batch = await readDirectoryEntries(reader);
+  while (batch.length) {
+    for (const child of batch) {
+      await walkDroppedEntry(child, `${prefix}${entry.name}/`, files);
+    }
+    batch = await readDirectoryEntries(reader);
+  }
+}
+
+async function collectDroppedFiles(dataTransfer) {
+  const entries = Array.from(dataTransfer?.items || [])
+    .map((item) => (typeof item.webkitGetAsEntry === "function" ? item.webkitGetAsEntry() : null))
+    .filter(Boolean);
+  if (entries.length) {
+    const files = [];
+    for (const entry of entries) {
+      await walkDroppedEntry(entry, "", files);
+    }
+    return files;
+  }
+  return Array.from(dataTransfer?.files || []).map((file) => ({
+    file,
+    relativePath: file.webkitRelativePath || file.name,
+  }));
+}
+
 function buildActionItems(criteria, evidenceItems) {
   const now = new Date();
   const due = (days) => {
@@ -1463,6 +1618,56 @@ function AssignmentFlowGuide() {
   );
 }
 
+function LeaderInvitePanel({ form, builders = [], attorneys = [], busy, onFieldChange, onSubmit, showFlow = true }) {
+  return (
+    <section className="panel leader-invite-panel">
+      <div className="section-kicker">Member Intake</div>
+      <h3 className="section-title">Invite A New Member</h3>
+      <p className="section-intro">Send the member registration path by email, then optionally route the case to a Profile Builder and Attorney now or leave assignment open for later.</p>
+      {showFlow ? <AssignmentFlowGuide /> : null}
+      <form className="stacked-form leader-invite-form" onSubmit={onSubmit}>
+        <div className="leader-invite-grid">
+          <label>First name<input value={form.first_name} onChange={(event) => onFieldChange("first_name", event.target.value)} /></label>
+          <label>Last name<input value={form.last_name} onChange={(event) => onFieldChange("last_name", event.target.value)} /></label>
+          <label>Email<input type="email" value={form.email} onChange={(event) => onFieldChange("email", event.target.value)} /></label>
+          <label>Domain<select value={form.industry_domain} onChange={(event) => onFieldChange("industry_domain", event.target.value)}>{DOMAIN_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+          <label>Primary field<input value={form.primary_field} onChange={(event) => onFieldChange("primary_field", event.target.value)} placeholder="For example: Clinical AI, Claims Analytics, Biotechnology" /></label>
+          <label>Current title<input value={form.current_title} onChange={(event) => onFieldChange("current_title", event.target.value)} /></label>
+          <label>Current employer<input value={form.current_employer} onChange={(event) => onFieldChange("current_employer", event.target.value)} /></label>
+          <label>Profile builder (optional)<select value={form.builder_id} onChange={(event) => onFieldChange("builder_id", event.target.value)}><option value="">Assign later</option>{builders.map((builder) => <option key={builder.id} value={builder.id}>{builder.display_name}</option>)}</select></label>
+          <label>Attorney (optional)<select value={form.attorney_id} onChange={(event) => onFieldChange("attorney_id", event.target.value)}><option value="">Assign later</option>{attorneys.map((attorney) => <option key={attorney.id} value={attorney.id}>{attorney.display_name}</option>)}</select></label>
+        </div>
+        <div className="form-actions">
+          <button className="primary compact-btn" type="submit" disabled={busy}>{busy ? "Preparing..." : "Create Invite And Route"}</button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function LeaderRecentInvitesPanel({ invites = [] }) {
+  return (
+    <section className="panel">
+      <div className="section-kicker">Registration Flow</div>
+      <h3 className="section-title">Recent Member Invites</h3>
+      <p className="section-intro">Quick confirmation of who has been invited, who has registered, and where the next assignment handoff should happen.</p>
+      <div className="task-mini-list">
+        {invites.length ? invites.map((item) => (
+          <article key={item.id} className="task-mini-item">
+            <strong>{item.display_name}</strong>
+            <p>{item.email}</p>
+            <div className="task-mini-meta">
+              <span>{item.status === "registered" ? "Registered" : "Invite sent"}</span>
+              <span>{item.invite_sent_at ? `Invited ${item.invite_sent_at}` : "Invite pending"}</span>
+              <span>{item.registered_at ? `Registered ${item.registered_at}` : "Awaiting registration"}</span>
+            </div>
+          </article>
+        )) : <p className="empty-state">No member invites yet.</p>}
+      </div>
+    </section>
+  );
+}
+
 function emptyLeaderInviteForm() {
   return {
     first_name: "",
@@ -1739,6 +1944,8 @@ function NavIcon({ name }) {
       return <svg {...commonProps}><path d="M3 11.5 12 4l9 7.5" /><path d="M6.5 10.5V20h11V10.5" /></svg>;
     case "members":
       return <svg {...commonProps}><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" /><path d="M16 12a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" /><path d="M3.5 19a4.5 4.5 0 0 1 9 0" /><path d="M13.5 19a3.5 3.5 0 0 1 7 0" /></svg>;
+    case "invite":
+      return <svg {...commonProps}><path d="M4 7h16v10H4z" /><path d="m4.5 7.5 7.5 5 7.5-5" /><path d="M18 4.5v5" /><path d="M15.5 7h5" /></svg>;
     case "batch":
       return <svg {...commonProps}><rect x="4" y="5" width="16" height="4" rx="1.5" /><rect x="4" y="10" width="16" height="4" rx="1.5" /><rect x="4" y="15" width="16" height="4" rx="1.5" /></svg>;
     case "opportunities":
@@ -1816,6 +2023,7 @@ function SupportActionIcon({ name }) {
 function SidebarNav({ items, value, onChange }) {
   function iconForItem(itemValue) {
     if (itemValue === "home") return "home";
+    if (itemValue === "invite") return "invite";
     if (itemValue === "members") return "members";
     if (itemValue === "batch") return "batch";
     if (itemValue === "opportunities") return "opportunities";
@@ -2133,11 +2341,107 @@ function CriterionCard({ item, onOpen }) {
   );
 }
 
-function WorkspaceCard({ item, onDragStart, onOpenFolder, onDeleteFile }) {
+function WorkspaceBreadcrumb({ workspace, selectedFolderId, onSelect, onDropItem }) {
+  const trail = workspaceBreadcrumb(workspace, selectedFolderId);
+  function dropOn(event, folderId) {
+    event.preventDefault();
+    const payload = readWorkspaceDragPayload(event);
+    if (payload) onDropItem(payload, folderId);
+  }
   return (
-    <article className={`board-item ${item.kind}`} draggable onDragStart={(event) => onDragStart(event, item)}>
-      <button className="drag-handle" type="button" aria-label="Drag item">⋮⋮</button>
-      <div className="board-item-body">
+    <nav className="workspace-breadcrumb" aria-label="Evidence folder path">
+      <button
+        type="button"
+        className={!selectedFolderId ? "active" : ""}
+        onClick={() => onSelect("")}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => dropOn(event, "")}
+      >
+        Root
+      </button>
+      {trail.map((folder) => (
+        <React.Fragment key={folder.id}>
+          <span>/</span>
+          <button
+            type="button"
+            className={selectedFolderId === folder.id ? "active" : ""}
+            onClick={() => onSelect(folder.id)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => dropOn(event, folder.id)}
+          >
+            {folder.name}
+          </button>
+        </React.Fragment>
+      ))}
+    </nav>
+  );
+}
+
+function WorkspaceFolderTree({ workspace, selectedFolderId, onSelect, onDropItem }) {
+  const folders = [...(workspace?.folders || [])].sort((left, right) => compareText(left.path || left.name, right.path || right.name));
+  const folderMap = workspaceFolderMap(workspace);
+  function dropOn(event, folderId) {
+    event.preventDefault();
+    const payload = readWorkspaceDragPayload(event);
+    if (payload) onDropItem(payload, folderId);
+  }
+  return (
+    <div className="workspace-folder-tree">
+      <button
+        className={`tree-item drive-tree-item ${!selectedFolderId ? "active" : ""}`}
+        type="button"
+        onClick={() => onSelect("")}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => dropOn(event, "")}
+      >
+        <span className="folder-dot root" />
+        <span>Root</span>
+      </button>
+      {folders.map((folder) => {
+        const depth = workspaceFolderDepth(folder, folderMap);
+        return (
+          <button
+            key={folder.id}
+            className={`tree-item drive-tree-item ${selectedFolderId === folder.id ? "active" : ""}`}
+            style={{ "--folder-depth": depth }}
+            type="button"
+            title={folder.path}
+            onClick={() => onSelect(folder.id)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => dropOn(event, folder.id)}
+          >
+            <span className="folder-dot" style={{ background: folder.color }} />
+            <span>{folder.name}</span>
+            <small>{folder.file_count || 0}</small>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function WorkspaceItemRow({ item, folderOptions, onDragStart, onOpenFolder, onDeleteFile, onDeleteFolder, onMoveItem }) {
+  const currentFolderId = item.kind === "folder" ? normalizeFolderId(item.parentId) : normalizeFolderId(item.folderId);
+  const moveOptions = folderOptions.filter((option) => item.kind !== "folder" || option.value !== item.entityId);
+  function handleDrop(event) {
+    event.preventDefault();
+    if (item.kind !== "folder") return;
+    const payload = readWorkspaceDragPayload(event);
+    if (payload) onMoveItem(payload, item.entityId);
+  }
+  return (
+    <article
+      className={`drive-row drive-row-${item.kind}`}
+      draggable
+      onDragStart={(event) => onDragStart(event, item)}
+      onDragOver={item.kind === "folder" ? (event) => event.preventDefault() : undefined}
+      onDrop={item.kind === "folder" ? handleDrop : undefined}
+    >
+      <button className="drag-handle drive-drag-handle" type="button" aria-label={`Drag ${item.label}`}>⋮⋮</button>
+      <div className="drive-kind" aria-hidden="true">
+        <span className={`drive-icon ${item.kind}`} style={{ "--folder-color": item.color }} />
+      </div>
+      <div className="drive-name-cell">
         {item.kind === "folder" ? (
           <button className="board-folder-link" type="button" onClick={() => onOpenFolder(item.entityId)}>{item.label}</button>
         ) : item.href ? (
@@ -2145,69 +2449,52 @@ function WorkspaceCard({ item, onDragStart, onOpenFolder, onDeleteFile }) {
         ) : (
           <strong>{item.label}</strong>
         )}
-        {item.documentType ? <span className="document-type-badge">{item.documentType}</span> : null}
-        <span>{item.timestamp}</span>
-        <p>{item.subtitle}</p>
+        <span>{item.kind === "folder" ? item.path : item.subtitle}</span>
       </div>
-      {item.kind === "file" ? <button className="icon-action" type="button" onClick={() => onDeleteFile(item)}>Delete</button> : null}
+      <span className="drive-type">{item.documentType}</span>
+      <span className="drive-date">{item.timestamp}</span>
+      <label className="drive-move-select">
+        <span>Move to</span>
+        <select
+          value={currentFolderId}
+          onChange={(event) => onMoveItem(item, event.target.value)}
+          aria-label={`Move ${item.label} to folder`}
+        >
+          {moveOptions.map((option) => <option key={option.value || "root"} value={option.value}>{option.label}</option>)}
+        </select>
+      </label>
+      <button
+        className="icon-action drive-delete-action"
+        type="button"
+        onClick={() => (item.kind === "folder" ? onDeleteFolder(item) : onDeleteFile(item))}
+      >
+        Delete
+      </button>
     </article>
   );
 }
 
-function WorkspaceColumn({ container, active, onDropItem, onDragStart, onOpenFolder, onDeleteFile }) {
-  function handleDrop(event) {
+function WorkspaceDriveDropZone({ targetFolderId, disabled, children, onMoveItem, onUploadFiles }) {
+  async function handleDrop(event) {
     event.preventDefault();
-    const raw = event.dataTransfer.getData("application/json");
-    if (!raw) return;
-    try {
-      onDropItem(JSON.parse(raw), container.id);
-    } catch (_error) {
+    if (disabled) return;
+    const payload = readWorkspaceDragPayload(event);
+    if (payload) {
+      onMoveItem(payload, targetFolderId);
       return;
     }
+    const droppedFiles = await collectDroppedFiles(event.dataTransfer);
+    if (droppedFiles.length) onUploadFiles(droppedFiles, targetFolderId);
   }
   return (
-    <section className={`drop-container ${active ? "active" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
-      <header>
-        <span className="folder-dot" style={{ background: container.color }} />
-        <strong>{container.label}</strong>
-      </header>
-      {container.items.length ? container.items.map((item) => (
-        <WorkspaceCard key={item.id} item={item} onDragStart={onDragStart} onOpenFolder={onOpenFolder} onDeleteFile={onDeleteFile} />
-      )) : <p className="empty-state">Drop files or folders here.</p>}
+    <section
+      className="workspace-drive-dropzone"
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={handleDrop}
+    >
+      {children}
     </section>
   );
-}
-
-function buildBoard(workspace) {
-  if (!workspace) return [];
-  const containers = [{ id: null, label: "Root", color: "#51606f", items: [] }];
-  workspace.folders.forEach((folder) => containers.push({ id: folder.id, label: folder.name, color: folder.color, items: [] }));
-  const byId = new Map(containers.map((container) => [container.id, container]));
-  workspace.folders.forEach((folder) => {
-    const parent = byId.get(folder.parent_id || null) || byId.get(null);
-    parent.items.push({
-      id: `folder:${folder.id}`,
-      kind: "folder",
-      entityId: folder.id,
-      label: folder.name,
-      subtitle: `${folder.file_count} files • ${folder.child_folder_count} subfolders`,
-      timestamp: folder.path || "Folder",
-    });
-  });
-  workspace.files.forEach((file) => {
-    const parent = byId.get(file.folder_id || null) || byId.get(null);
-    parent.items.push({
-      id: `file:${file.id}`,
-      kind: "file",
-      entityId: file.id,
-      label: file.file_name,
-      documentType: file.document_type || "Other",
-      subtitle: cleanSummary(file.ai_summary || file.description),
-      timestamp: formatUploadedAt(file.created_at),
-      href: file.open_url || file.drive_web_url || null,
-    });
-  });
-  return containers;
 }
 
 function buildAttorneyDashboard(detail) {
@@ -3276,6 +3563,7 @@ function App() {
   const [newFolderColor, setNewFolderColor] = useState("Emerald");
   const [selectedFolderId, setSelectedFolderId] = useState("");
   const [folderForm, setFolderForm] = useState({ name: "", color: "Emerald" });
+  const [workspaceUploadBusy, setWorkspaceUploadBusy] = useState(false);
   const [plannerForm, setPlannerForm] = useState(emptyPlannerForm());
   const [editingPlannerId, setEditingPlannerId] = useState("");
   const [plannerBusy, setPlannerBusy] = useState(false);
@@ -3337,6 +3625,7 @@ function App() {
   const routeSyncRef = useRef({ initialized: false, applying: false, lastUrl: "" });
   const routeNoticeRef = useRef(null);
   const sidebarWidthRef = useRef(sidebarWidth);
+  const workspaceFileInputRef = useRef(null);
 
   useEffect(() => {
     sidebarWidthRef.current = sidebarWidth;
@@ -3421,7 +3710,8 @@ function App() {
     return items;
   }, [criteriaByCode, evidenceItems, intakeSort]);
   const folderOptions = useMemo(() => [{ value: "", label: "Root" }, ...((workspace?.folders || []).map((folder) => ({ value: folder.id, label: folder.path })))], [workspace]);
-  const board = useMemo(() => buildBoard(workspace), [workspace]);
+  const selectedWorkspaceFolder = useMemo(() => (selectedFolderId ? (workspace?.folders || []).find((folder) => folder.id === selectedFolderId) || null : null), [workspace, selectedFolderId]);
+  const driveRows = useMemo(() => buildDriveRows(workspace, selectedFolderId, workspaceQuery), [workspace, selectedFolderId, workspaceQuery]);
   const plannerFolderOptions = useMemo(
     () => [{ value: "", label: "No folder link" }, ...plannerFolders.map((folder) => ({ value: folder.id, label: folder.path }))],
     [plannerFolders],
@@ -3499,6 +3789,7 @@ function App() {
         if (portalSection === "messages") return "Messages";
         return "Builder Home";
       }
+      if (portalSection === "invite") return "Invite Member";
       if (portalSection === "members") return "Member Review";
       if (portalSection === "risks") return "Risk & Bottlenecks";
       if (portalSection === "capacity") return "Team Capacity";
@@ -4713,6 +5004,9 @@ function App() {
     if (folder) setFolderForm({ name: folder.name, color: folderColorName(folder.color) });
   }, [workspace, selectedFolderId]);
   useEffect(() => {
+    if (view.type === "workspace") setNewFolderParent(selectedFolderId || "");
+  }, [view.type, selectedFolderId]);
+  useEffect(() => {
     loadPlannerFolders(plannerForm.criterion_code);
   }, [plannerForm.criterion_code]);
   useEffect(() => {
@@ -5006,7 +5300,7 @@ function App() {
     if (picker) picker.value = "";
   }
 
-  function buildUploadForm({ criterionCode, documentType, title, description, aiSummary, qualityScore, duplicateAction = "" }) {
+  function buildEvidenceUploadForm({ file, criterionCode, documentType, title, description, aiSummary = "", qualityScore = 45, duplicateAction = "", folderId = "" }) {
     const formData = new FormData();
     formData.set("criterion_code", criterionCode);
     formData.set("document_type", documentType);
@@ -5015,8 +5309,13 @@ function App() {
     formData.set("ai_summary", aiSummary);
     formData.set("quality_score", String(qualityScore));
     formData.set("duplicate_action", duplicateAction);
-    formData.set("file", selectedFile);
+    formData.set("folder_id", folderId || "");
+    formData.set("file", file);
     return formData;
+  }
+
+  function buildUploadForm(options) {
+    return buildEvidenceUploadForm({ ...options, file: selectedFile });
   }
 
   async function refreshAfterSave() {
@@ -5628,13 +5927,13 @@ function App() {
     if (!view.criterionCode || !newFolderName.trim()) return;
     const formData = new FormData();
     formData.set("name", newFolderName.trim());
-    formData.set("parent_id", newFolderParent);
+    formData.set("parent_id", newFolderParent || selectedFolderId || "");
     formData.set("color", FOLDER_COLORS[newFolderColor]);
     const result = await sendForm(`/api/criteria/${view.criterionCode}/folders`, formData);
     if (result.ok) {
       setMessage({ type: "success", text: "Folder created." });
       setNewFolderName("");
-      setNewFolderParent("");
+      setNewFolderParent(selectedFolderId || "");
       setNewFolderColor("Emerald");
       loadWorkspace(view.criterionCode, workspaceQuery);
     } else {
@@ -5648,7 +5947,6 @@ function App() {
     const formData = new FormData();
     formData.set("name", folderForm.name.trim());
     formData.set("color", FOLDER_COLORS[folderForm.color]);
-    formData.set("parent_id", "");
     const result = await sendForm(`/api/folders/${selectedFolderId}`, formData, "PATCH");
     if (result.ok) {
       setMessage({ type: "success", text: "Folder updated." });
@@ -5660,13 +5958,18 @@ function App() {
 
   async function deleteFolder() {
     if (!selectedFolderId) return;
-    if (!confirmDeleteAction("Delete this folder? Files and subfolders will stay available.", "This folder will be removed, but the evidence will remain available. Continue?")) return;
-    const response = await fetch(`${API_URL}/api/folders/${selectedFolderId}`, { method: "DELETE", headers: { ...authHeaders() } });
+    await deleteFolderById(selectedFolderId, workspaceFolderLabel(workspace, selectedFolderId));
+  }
+
+  async function deleteFolderById(folderId, label = "this folder") {
+    if (!folderId) return;
+    if (!confirmDeleteAction(`Delete folder "${label}"? Files and subfolders will stay available.`, "This folder will be removed, but the evidence will remain available and move up one level. Continue?")) return;
+    const response = await fetch(`${API_URL}/api/folders/${folderId}`, { method: "DELETE", headers: { ...authHeaders() } });
     const payload = await response.json();
     const body = payload.detail || payload;
     if (response.ok) {
       setMessage({ type: "success", text: "Folder deleted. Files and subfolders were kept." });
-      setSelectedFolderId("");
+      if (selectedFolderId === folderId) setSelectedFolderId("");
       loadWorkspace(view.criterionCode, workspaceQuery);
     } else {
       setMessage({ type: "error", text: body.error || "Could not delete folder." });
@@ -5687,25 +5990,114 @@ function App() {
   }
 
   function handleDragStart(event, item) {
-    event.dataTransfer.setData("application/json", JSON.stringify(item));
+    event.dataTransfer.setData("application/json", JSON.stringify(workspaceDragPayload(item)));
     event.dataTransfer.effectAllowed = "move";
   }
 
   async function moveDraggedItem(item, targetFolderId) {
     if (!view.criterionCode) return;
+    const normalizedTarget = normalizeFolderId(targetFolderId);
+    if (item.kind === "folder" && item.entityId === normalizedTarget) {
+      setMessage({ type: "error", text: "A folder cannot be moved into itself." });
+      return;
+    }
+    const currentParent = item.kind === "folder" ? normalizeFolderId(item.parentId) : normalizeFolderId(item.folderId);
+    if (currentParent === normalizedTarget) {
+      setMessage({ type: "success", text: "Item is already in that folder." });
+      return;
+    }
     if (item.kind === "file") {
       const formData = new FormData();
-      formData.set("folder_id", targetFolderId || "");
+      formData.set("folder_id", normalizedTarget);
       const result = await sendForm(`/api/evidence/${item.entityId}/folder`, formData, "PATCH");
       if (!result.ok) return setMessage({ type: "error", text: result.payload.error || "Could not move file." });
     } else {
       const formData = new FormData();
-      formData.set("parent_id", targetFolderId || "");
+      formData.set("parent_id", normalizedTarget);
       const result = await sendForm(`/api/folders/${item.entityId}`, formData, "PATCH");
       if (!result.ok) return setMessage({ type: "error", text: result.payload.error || "Could not move folder." });
     }
     setMessage({ type: "success", text: "Workspace updated." });
     loadWorkspace(view.criterionCode, workspaceQuery);
+  }
+
+  async function ensureWorkspaceFolderPath(parts, baseFolderId, folderCache) {
+    let parentId = normalizeFolderId(baseFolderId);
+    for (const rawPart of parts) {
+      const name = rawPart.trim();
+      if (!name) continue;
+      const existing = folderCache.find((folder) => normalizeFolderId(folder.parent_id) === parentId && folder.name.trim().toLowerCase() === name.toLowerCase());
+      if (existing) {
+        parentId = existing.id;
+        continue;
+      }
+      const formData = new FormData();
+      formData.set("name", name);
+      formData.set("parent_id", parentId);
+      formData.set("color", FOLDER_COLORS.Emerald);
+      const result = await sendForm(`/api/criteria/${view.criterionCode}/folders`, formData);
+      if (!result.ok) throw new Error(result.payload.error || `Could not create folder ${name}.`);
+      folderCache.push(result.payload);
+      parentId = result.payload.id;
+    }
+    return parentId;
+  }
+
+  async function uploadWorkspaceFiles(filePayloads, targetFolderId = selectedFolderId) {
+    const payloads = (filePayloads || []).filter((item) => item?.file);
+    if (!payloads.length || !view.criterionCode) {
+      setMessage({ type: "error", text: "Drop files or folders that contain files into the workspace." });
+      return;
+    }
+    setWorkspaceUploadBusy(true);
+    setMessage(null);
+    const folderCache = [...(workspace?.folders || [])];
+    const failures = [];
+    let uploaded = 0;
+    try {
+      for (const item of payloads) {
+        const file = item.file;
+        const relativePath = item.relativePath || file.webkitRelativePath || file.name;
+        const pathParts = relativePath.split("/").filter(Boolean);
+        const parentParts = pathParts.length > 1 ? pathParts.slice(0, -1) : [];
+        const destinationFolderId = await ensureWorkspaceFolderPath(parentParts, targetFolderId, folderCache);
+        const title = file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ").trim() || "Uploaded evidence";
+        const folderLabel = workspaceFolderLabel({ folders: folderCache }, destinationFolderId);
+        const result = await sendForm("/api/evidence", buildEvidenceUploadForm({
+          file,
+          criterionCode: view.criterionCode,
+          documentType: inferDocumentType(`${file.name} ${relativePath}`),
+          title,
+          description: `Uploaded from the Evidence Workspace into ${folderLabel}. Original path: ${relativePath}.`,
+          aiSummary: `Member uploaded this evidence into ${folderLabel}.`,
+          qualityScore: 45,
+          folderId: destinationFolderId,
+        }));
+        if (result.ok) {
+          uploaded += 1;
+        } else {
+          failures.push(result.payload.message || result.payload.error || `${file.name} could not be uploaded.`);
+        }
+      }
+      await refreshAfterSave();
+      if (uploaded && !failures.length) {
+        setMessage({ type: "success", text: `${uploaded} file${uploaded === 1 ? "" : "s"} uploaded into ${workspaceFolderLabel(workspace, targetFolderId)}.` });
+      } else if (uploaded) {
+        setMessage({ type: "error", text: `${uploaded} file${uploaded === 1 ? "" : "s"} uploaded. ${failures.length} file${failures.length === 1 ? "" : "s"} need review: ${failures.slice(0, 2).join(" ")}` });
+      } else {
+        setMessage({ type: "error", text: failures[0] || "No files were uploaded." });
+      }
+    } catch (error) {
+      setMessage({ type: "error", text: error.message || "Could not upload the dropped folder or files." });
+    } finally {
+      setWorkspaceUploadBusy(false);
+      if (workspaceFileInputRef.current) workspaceFileInputRef.current.value = "";
+    }
+  }
+
+  async function handleWorkspaceFileSelection(event) {
+    const files = Array.from(event.target.files || []).map((file) => ({ file, relativePath: file.webkitRelativePath || file.name }));
+    await uploadWorkspaceFiles(files, selectedFolderId);
   }
 
   function setBuilderTaskField(field, value) {
@@ -6145,6 +6537,7 @@ function App() {
     ];
     const leaderSidebarItems = [
       { value: "home", label: "Executive Overview" },
+      { value: "invite", label: "Invite Member" },
       { value: "members", label: "Member Review" },
       { value: "risks", label: "Risk & Bottlenecks" },
       { value: "capacity", label: "Team Capacity" },
@@ -6230,7 +6623,26 @@ function App() {
             </div>
           ) : null}
 
-          {portalSection === "messages" ? (
+          {isLeaderExecutiveView && portalSection === "invite" ? (
+            <React.Fragment>
+              <header className="hero">
+                <p className="eyebrow">Invite Member</p>
+                <h1>Start a new member journey.</h1>
+                <p>Create the member registration invite, capture the basics needed for routing, and optionally assign a Profile Builder or Attorney now.</p>
+              </header>
+              <section className="builder-layout">
+                <LeaderInvitePanel
+                  form={leaderInviteForm}
+                  builders={leaderBuilders}
+                  attorneys={leaderAttorneys}
+                  busy={builderBusy}
+                  onFieldChange={setLeaderInviteField}
+                  onSubmit={submitLeaderInvite}
+                />
+                <LeaderRecentInvitesPanel invites={leaderInvites} />
+              </section>
+            </React.Fragment>
+          ) : portalSection === "messages" ? (
             <React.Fragment>
               <header className="hero">
                 <p className="eyebrow">Messages</p>
@@ -6382,6 +6794,11 @@ function App() {
                 <p className="eyebrow">Assignment Oversight</p>
                 <h1>Routing and workload, one view.</h1>
                 <p>Invite members, optionally route them to a Profile Builder or Attorney immediately, and rebalance assignments later without crowding the Leader home page.</p>
+                <div className="hero-chips">
+                  <button className="primary compact-btn" type="button" onClick={() => setPortalSection("invite")}>Invite Member</button>
+                  <span className="hero-chip">Builder optional</span>
+                  <span className="hero-chip">Attorney optional</span>
+                </div>
               </header>
               <AssignmentFlowGuide />
 
@@ -6444,24 +6861,9 @@ function App() {
                 </div>
               </section>
 
-              <section className="panel" style={{ marginTop: "18px" }}>
-                <div className="section-kicker">Registration Flow</div>
-                <h3 className="section-title">Recent Member Invites</h3>
-                <p className="section-intro">Quick confirmation of who has been invited, who has registered, and where the next assignment handoff should happen.</p>
-                <div className="task-mini-list">
-                  {leaderInvites.length ? leaderInvites.map((item) => (
-                    <article key={item.id} className="task-mini-item">
-                      <strong>{item.display_name}</strong>
-                      <p>{item.email}</p>
-                      <div className="task-mini-meta">
-                        <span>{item.status === "registered" ? "Registered" : "Invite sent"}</span>
-                        <span>{item.invite_sent_at ? `Invited ${item.invite_sent_at}` : "Invite pending"}</span>
-                        <span>{item.registered_at ? `Registered ${item.registered_at}` : "Awaiting registration"}</span>
-                      </div>
-                    </article>
-                  )) : <p className="empty-state">No member invites yet.</p>}
-                </div>
-              </section>
+              <div style={{ marginTop: "18px" }}>
+                <LeaderRecentInvitesPanel invites={leaderInvites} />
+              </div>
             </React.Fragment>
           ) : portalSection === "members" ? (
             <React.Fragment>
@@ -6714,24 +7116,14 @@ function App() {
               </section>
 
               <section className="builder-layout" style={{ marginTop: "18px" }}>
-                <section className="panel">
-                  <div className="section-kicker">Member Intake</div>
-                  <h3 className="section-title">Invite A New Member</h3>
-                  <p className="section-intro">Send the member registration path by email, then optionally route the case to a Profile Builder and Attorney now or leave assignment open for later.</p>
-                  <AssignmentFlowGuide />
-                  <form className="stacked-form" onSubmit={submitLeaderInvite}>
-                    <label>First name<input value={leaderInviteForm.first_name} onChange={(event) => setLeaderInviteField("first_name", event.target.value)} /></label>
-                    <label>Last name<input value={leaderInviteForm.last_name} onChange={(event) => setLeaderInviteField("last_name", event.target.value)} /></label>
-                    <label>Email<input type="email" value={leaderInviteForm.email} onChange={(event) => setLeaderInviteField("email", event.target.value)} /></label>
-                    <label>Domain<select value={leaderInviteForm.industry_domain} onChange={(event) => setLeaderInviteField("industry_domain", event.target.value)}>{DOMAIN_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
-                    <label>Primary field<input value={leaderInviteForm.primary_field} onChange={(event) => setLeaderInviteField("primary_field", event.target.value)} placeholder="For example: Clinical AI, Claims Analytics, Biotechnology" /></label>
-                    <label>Current title<input value={leaderInviteForm.current_title} onChange={(event) => setLeaderInviteField("current_title", event.target.value)} /></label>
-                    <label>Current employer<input value={leaderInviteForm.current_employer} onChange={(event) => setLeaderInviteField("current_employer", event.target.value)} /></label>
-                    <label>Profile builder (optional)<select value={leaderInviteForm.builder_id} onChange={(event) => setLeaderInviteField("builder_id", event.target.value)}><option value="">Assign later</option>{leaderBuilders.map((builder) => <option key={builder.id} value={builder.id}>{builder.display_name}</option>)}</select></label>
-                    <label>Attorney (optional)<select value={leaderInviteForm.attorney_id} onChange={(event) => setLeaderInviteField("attorney_id", event.target.value)}><option value="">Assign later</option>{leaderAttorneys.map((attorney) => <option key={attorney.id} value={attorney.id}>{attorney.display_name}</option>)}</select></label>
-                    <div className="form-actions"><button className="primary compact-btn" type="submit" disabled={builderBusy}>{builderBusy ? "Preparing..." : "Create Invite And Route"}</button></div>
-                  </form>
-                </section>
+                <LeaderInvitePanel
+                  form={leaderInviteForm}
+                  builders={leaderBuilders}
+                  attorneys={leaderAttorneys}
+                  busy={builderBusy}
+                  onFieldChange={setLeaderInviteField}
+                  onSubmit={submitLeaderInvite}
+                />
 
                 <section className="panel">
                   <div className="section-kicker">Capacity Snapshot</div>
@@ -9358,11 +9750,26 @@ function App() {
               <div>
                 <div className="section-kicker">Evidence Workspace</div>
                 <h2>{selectedCriterion?.name || "Criterion workspace"}</h2>
-                <p>Drag folders and files between columns to reorganize this criterion without leaving the page.</p>
+                <p>Create folders, upload files, and drag items into the right location without leaving this page.</p>
               </div>
               <button className="ghost compact-btn" type="button" onClick={() => setView({ type: "home", criterionCode: "" })}>Back</button>
             </div>
-            <div className="workspace-toolbar"><input className="search-input" value={workspaceQuery} onChange={(event) => setWorkspaceQuery(event.target.value)} placeholder={`Search folders and files in ${selectedCriterion?.name || "this criterion"}`} /></div>
+            <div className="workspace-toolbar drive-toolbar">
+              <input
+                ref={workspaceFileInputRef}
+                className="hidden-file-input"
+                type="file"
+                multiple
+                onChange={handleWorkspaceFileSelection}
+              />
+              <input className="search-input" value={workspaceQuery} onChange={(event) => setWorkspaceQuery(event.target.value)} placeholder={`Search folders and files in ${selectedCriterion?.name || "this criterion"}`} />
+              <div className="drive-toolbar-actions">
+                <button className="primary compact-btn" type="button" disabled={workspaceUploadBusy} onClick={() => workspaceFileInputRef.current?.click()}>
+                  {workspaceUploadBusy ? "Uploading..." : "Upload files"}
+                </button>
+                <button className="ghost compact-btn" type="button" onClick={() => setNewFolderName("")}>New folder</button>
+              </div>
+            </div>
             {workspace?.document_type_counts?.length ? (
               <div className="document-type-strip">
                 {workspace.document_type_counts.map((item) => (
@@ -9374,9 +9781,8 @@ function App() {
               <aside className="workspace-sidebar">
                 <section className="panel">
                   <div className="panel-header"><h3>Folders</h3><span>{workspace?.folders?.length || 0}</span></div>
-                  <p className="mini-note">Current location: {selectedFolderId ? (workspace?.folders.find((folder) => folder.id === selectedFolderId)?.path || "Root") : "Root"}</p>
-                  <button className={`tree-item ${!selectedFolderId ? "active" : ""}`} type="button" onClick={() => setSelectedFolderId("")}><span className="folder-dot root" />Root</button>
-                  {(workspace?.folders || []).map((folder) => <button key={folder.id} className={`tree-item ${selectedFolderId === folder.id ? "active" : ""}`} type="button" onClick={() => setSelectedFolderId(folder.id)}><span className="folder-dot" style={{ background: folder.color }} />{folder.path}</button>)}
+                  <p className="mini-note">Current location: {workspaceFolderLabel(workspace, selectedFolderId)}</p>
+                  <WorkspaceFolderTree workspace={workspace} selectedFolderId={selectedFolderId} onSelect={setSelectedFolderId} onDropItem={moveDraggedItem} />
                 </section>
                 <section className="panel">
                   <div className="panel-header"><h3>Create Folder</h3><span>Color coded</span></div>
@@ -9401,10 +9807,48 @@ function App() {
               <section className="workspace-board panelless">
                 {workspaceBusy || !workspace ? <div className="loading">Loading workspace...</div> : (
                   <React.Fragment>
-                    <p className="mini-note workspace-note">Each column is a folder location. Drag items across columns, and the portal will save the new structure.</p>
-                    <div className="board-grid">
-                      {board.map((container) => <WorkspaceColumn key={container.id || "root"} container={container} active={selectedFolderId === (container.id || "")} onDragStart={handleDragStart} onOpenFolder={(folderId) => setSelectedFolderId(folderId)} onDeleteFile={deleteFile} onDropItem={moveDraggedItem} />)}
+                    <WorkspaceBreadcrumb workspace={workspace} selectedFolderId={selectedFolderId} onSelect={setSelectedFolderId} onDropItem={moveDraggedItem} />
+                    <div className="drive-current-folder">
+                      <div>
+                        <strong>{workspaceQuery.trim() ? "Search results" : (selectedWorkspaceFolder?.name || "Root")}</strong>
+                        <span>{driveRows.length} item{driveRows.length === 1 ? "" : "s"} shown. Drag files or folders onto a folder row, the breadcrumb, the folder tree, or the empty space below.</span>
+                      </div>
+                      <button className="ghost compact-btn" type="button" disabled={workspaceUploadBusy} onClick={() => workspaceFileInputRef.current?.click()}>Add files here</button>
                     </div>
+                    <WorkspaceDriveDropZone
+                      targetFolderId={selectedFolderId}
+                      disabled={workspaceUploadBusy}
+                      onMoveItem={moveDraggedItem}
+                      onUploadFiles={uploadWorkspaceFiles}
+                    >
+                      <div className="drive-table">
+                        <div className="drive-table-head">
+                          <span>Name</span>
+                          <span>Type</span>
+                          <span>Updated</span>
+                          <span>Move</span>
+                          <span>Action</span>
+                        </div>
+                        {driveRows.map((item) => (
+                          <WorkspaceItemRow
+                            key={item.id}
+                            item={item}
+                            folderOptions={folderOptions}
+                            onDragStart={handleDragStart}
+                            onOpenFolder={setSelectedFolderId}
+                            onDeleteFile={deleteFile}
+                            onDeleteFolder={(folderItem) => deleteFolderById(folderItem.entityId, folderItem.path || folderItem.label)}
+                            onMoveItem={moveDraggedItem}
+                          />
+                        ))}
+                      </div>
+                      {!driveRows.length ? (
+                        <div className="drive-empty-state">
+                          <strong>This folder is empty.</strong>
+                          <span>Drop files or folders here, or use Upload files to add evidence to {workspaceFolderLabel(workspace, selectedFolderId)}.</span>
+                        </div>
+                      ) : null}
+                    </WorkspaceDriveDropZone>
                   </React.Fragment>
                 )}
               </section>

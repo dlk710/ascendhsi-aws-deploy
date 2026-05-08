@@ -649,6 +649,33 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["folder_id"], "fld_1")
 
+    def test_upload_evidence_passes_folder_id_to_service(self):
+        service = Mock()
+        service.member_session.return_value = {"client_id": "client_1", "case_id": "case_1"}
+        service.upload_evidence.return_value = {"evidence_id": "ev_1", "file_name": "invite.pdf"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post(
+                "/api/evidence",
+                headers={"Authorization": "Bearer tok_1"},
+                data={
+                    "criterion_code": "judging",
+                    "document_type": "Invitation",
+                    "title": "Reviewer invitation",
+                    "folder_id": "fld_1",
+                },
+                files={"file": ("invite.pdf", b"hello", "application/pdf")},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(service.upload_evidence.call_args.kwargs["folder_id"], "fld_1")
+
+    def test_update_folder_without_parent_preserves_parent(self):
+        service = Mock()
+        service.update_folder.return_value = {"id": "fld_1", "name": "Invitations"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.patch("/api/folders/fld_1", data={"name": "Invitations", "color": "#2f7d67"})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("parent_id", service.update_folder.call_args.kwargs)
+
     def test_planner_items_returns_payload(self):
         service = Mock()
         service.planner_items.return_value = [{"id": "pln_1", "member_role": "Reviewer"}]
