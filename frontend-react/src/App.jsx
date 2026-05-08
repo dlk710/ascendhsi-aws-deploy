@@ -4381,19 +4381,29 @@ function App() {
     setLoading(true);
     setMessage(null);
     try {
-      const [opsData, issueData, costData, builderData, membersData, criteriaData] = await Promise.all([
+      const [opsData, issueData, costData, membersData, criteriaData] = await Promise.all([
         getJson("/api/admin/operations"),
         getJson("/api/admin/issue-log"),
         getJson("/api/admin/costs"),
-        getJson("/api/builder/dashboard"),
         getJson("/api/builder/members"),
         getJson("/api/criteria"),
       ]);
-      const roster = membersData.length ? membersData : (builderData.members || []);
+      const roster = membersData.length ? membersData : [];
+      const readinessTotal = roster.reduce((sum, item) => sum + Number(item.readiness_score || 0), 0);
+      const activeTasks = roster.reduce((sum, item) => sum + Number(item.open_task_count || 0), 0);
+      const adminBuilderSummary = {
+        metrics: {
+          member_count: roster.length,
+          active_tasks: activeTasks,
+          avg_readiness: roster.length ? Math.round(readinessTotal / roster.length) : 0,
+          opportunity_count: 0,
+        },
+        members: roster,
+      };
       setAdminDashboard(opsData);
       setAdminIssueLog(issueData);
       setAdminCosts(costData);
-      setBuilderDashboard(builderData);
+      setBuilderDashboard(adminBuilderSummary);
       setBuilderMembers(roster);
       setCriteriaList(criteriaData);
       const activeMemberId = memberId || roster[0]?.client_id || "";
