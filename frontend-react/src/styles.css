@@ -124,208 +124,298 @@ input::placeholder, textarea::placeholder {
   gap: 18px;
   align-items: start;
 }
-.visa-compass-card {
+.visa-compass-launch-card {
   min-width: 0;
-  overflow: hidden;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 18px;
   border: 1px solid rgba(223, 214, 199, 0.92);
   border-radius: 16px;
-  background:
-    linear-gradient(135deg, rgba(25, 63, 52, 0.96) 0%, rgba(47, 125, 103, 0.9) 42%, rgba(248, 242, 231, 0.98) 42.2%, #fffdfa 100%);
+  background: linear-gradient(145deg, #fffdfa 0%, #fbf6ed 48%, #edf4ef 100%);
   box-shadow: var(--shadow);
 }
-.visa-compass-top {
-  display: flex;
-  gap: 18px;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: 24px 24px 16px;
-  color: #fffdfa;
-}
-.visa-compass-top h2 {
-  margin: 0 0 8px;
-  font-size: clamp(1.75rem, 3vw, 2.6rem);
-  letter-spacing: -0.04em;
-}
-.visa-compass-top p {
+.visa-compass-launch-card h2 {
   margin: 0;
-  max-width: 560px;
-  color: rgba(255, 253, 250, 0.84);
-  line-height: 1.45;
+  color: var(--green-dark);
+  font-size: 1.42rem;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
 }
-.visa-compass-top > span {
-  display: inline-grid;
-  place-items: center;
-  min-width: 58px;
-  height: 58px;
-  border: 1px solid rgba(255, 253, 250, 0.34);
-  border-radius: 50%;
-  color: #f0dfb8;
-  font-weight: 950;
+.visa-compass-launch-card p:not(.eyebrow) {
+  margin: 0;
+  max-width: 440px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.38;
 }
-.visa-progress {
-  height: 7px;
-  background: rgba(255, 253, 250, 0.28);
+.visa-compass-launch-card small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
 }
-.visa-progress span {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #f0dfb8 0%, #c6a15b 100%);
-  transition: width 180ms ease;
-}
-.visa-question-panel,
-.visa-lead-panel,
-.visa-result-panel {
-  margin: 0 12px 12px;
-  padding: 18px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: rgba(255, 253, 250, 0.96);
-}
-.visa-step-row,
-.visa-compass-actions,
-.visa-result-hero,
-.visa-result-grid {
+.visa-compass-launch-btn {
+  width: 100%;
   display: flex;
-  gap: 10px;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 1px solid rgba(31, 111, 91, 0.3);
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--green-dark) 0%, var(--green) 100%);
+  color: #fffdfa;
+  cursor: pointer;
+  box-shadow: 0 12px 28px rgba(18, 69, 55, 0.12);
 }
-.visa-step-row span,
-.visa-step-row strong {
-  color: var(--muted);
-  font-size: 0.72rem;
+.visa-compass-launch-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 32px rgba(18, 69, 55, 0.16);
+}
+.visa-compass-launch-btn span {
+  font-size: 0.9rem;
   font-weight: 900;
+}
+.visa-compass-launch-btn strong {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(240, 223, 184, 0.2);
+  color: #f0dfb8;
+  font-size: 0.66rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
-.visa-question-panel h3,
-.visa-lead-panel h3,
-.visa-result-panel h3 {
-  margin: 10px 0 7px;
-  color: var(--green-dark);
-  font-size: 1.16rem;
-}
-.visa-question-panel p,
-.visa-lead-panel p,
-.visa-result-panel p {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.42;
-  font-size: 0.86rem;
-}
-.visa-option-grid {
+.visa-chat-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
   display: grid;
-  gap: 8px;
-  margin-top: 14px;
+  place-items: center;
+  padding: 18px;
+  background: rgba(19, 36, 29, 0.48);
+  backdrop-filter: blur(5px);
 }
-.visa-option {
+.visa-chat-shell {
+  width: min(760px, 100%);
+  max-height: min(760px, calc(100vh - 36px));
+  overflow: hidden;
   display: grid;
-  gap: 4px;
-  width: 100%;
-  padding: 10px 12px;
-  text-align: left;
-  border: 1px solid var(--line);
-  border-left: 4px solid transparent;
-  border-radius: 10px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border: 1px solid rgba(223, 214, 199, 0.96);
+  border-radius: 18px;
   background: #fffdfa;
-  cursor: pointer;
+  box-shadow: 0 28px 80px rgba(18, 69, 55, 0.24);
 }
-.visa-option strong {
-  color: var(--green-dark);
-  font-size: 0.86rem;
+.visa-chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 16px 12px;
+  background: linear-gradient(135deg, #183227 0%, #2f7d67 65%, #ecdfc4 160%);
+  color: #fffdfa;
 }
-.visa-option span {
-  color: var(--muted);
-  font-size: 0.76rem;
-  line-height: 1.3;
+.visa-chat-header .eyebrow {
+  color: #f0dfb8;
 }
-.visa-option.active {
-  border-color: rgba(47, 125, 103, 0.42);
-  border-left-color: var(--green);
-  background: #f3f8f4;
+.visa-chat-header h2 {
+  margin: 0 0 3px;
+  font-size: 1.1rem;
+  letter-spacing: -0.02em;
 }
-.visa-compass-actions {
-  margin-top: 14px;
+.visa-chat-header span {
+  display: block;
+  max-width: 560px;
+  color: rgba(255, 253, 250, 0.78);
+  font-size: 0.74rem;
+  line-height: 1.35;
 }
-.visa-lead-form {
+.visa-chat-progress {
+  height: 5px;
+  background: #efe7d7;
+}
+.visa-chat-progress span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--gold) 0%, var(--green) 100%);
+  transition: width 180ms ease;
+}
+.visa-chat-body {
   display: grid;
   gap: 10px;
-  margin-top: 14px;
+  overflow-y: auto;
+  padding: 14px;
+  background: linear-gradient(180deg, #fbf7ee 0%, #fffdfa 100%);
 }
-.visa-lead-form label {
+.visa-chat-message {
+  max-width: 88%;
   display: grid;
   gap: 6px;
-  color: var(--green-dark);
-  font-size: 0.78rem;
-  font-weight: 900;
-}
-.visa-result-hero {
-  align-items: stretch;
-  margin-bottom: 10px;
-}
-.visa-result-hero span,
-.visa-result-hero strong,
-.visa-result-grid > div {
-  display: grid;
-  gap: 4px;
-  padding: 10px 12px;
+  padding: 11px 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #f7f1e7;
+  border-radius: 14px;
+  font-size: 0.78rem;
+  line-height: 1.38;
 }
-.visa-result-hero span {
+.visa-chat-message.assistant {
+  justify-self: start;
+  background: #fffdfa;
+  border-top-left-radius: 5px;
+}
+.visa-chat-message.user {
+  justify-self: end;
+  background: #e6f0eb;
+  border-color: #c6dbd0;
+  border-top-right-radius: 5px;
   color: var(--green-dark);
-  font-size: 1.15rem;
-  font-weight: 950;
 }
-.visa-result-hero strong {
+.visa-chat-message span {
   color: var(--gold);
-  font-weight: 950;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
-.visa-result-grid {
-  align-items: stretch;
-  margin-top: 14px;
-}
-.visa-result-grid > div {
-  flex: 1;
-}
-.visa-result-grid strong {
+.visa-chat-message h3 {
+  margin: 0;
   color: var(--green-dark);
-  font-size: 0.76rem;
+  font-size: 0.98rem;
+  line-height: 1.2;
 }
-.visa-result-grid span {
+.visa-chat-message p {
+  margin: 0;
   color: var(--muted);
   font-size: 0.78rem;
-  line-height: 1.32;
+  line-height: 1.4;
 }
-.visa-reason-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
+.visa-chat-options {
+  display: grid;
+  gap: 7px;
 }
-.visa-reason-list span {
-  padding: 6px 8px;
-  border: 1px solid rgba(47, 125, 103, 0.18);
-  border-radius: 999px;
-  background: #edf5ef;
+.visa-chat-option {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 10px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-left: 3px solid transparent;
+  border-radius: 10px;
+  background: rgba(255, 253, 250, 0.94);
+  cursor: pointer;
+}
+.visa-chat-option:hover {
+  border-color: rgba(47, 125, 103, 0.34);
+  background: #fffdfa;
+}
+.visa-chat-option strong {
   color: var(--green-dark);
+  font-size: 0.78rem;
+}
+.visa-chat-option span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.28;
+}
+.visa-chat-option.active {
+  border-color: rgba(47, 125, 103, 0.42);
+  border-left-color: var(--green);
+  background: #edf5f0;
+}
+.visa-chat-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+.visa-chat-actions > span {
+  color: var(--muted);
   font-size: 0.68rem;
   font-weight: 800;
 }
-.visa-disclaimer {
-  margin-top: 12px !important;
-  font-size: 0.72rem !important;
+.visa-chat-lead-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fffdfa;
 }
-.link-btn {
-  margin-top: 10px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+.visa-chat-lead-form label {
+  display: grid;
+  gap: 5px;
   color: var(--green-dark);
+  font-size: 0.68rem;
   font-weight: 900;
-  cursor: pointer;
+}
+.visa-chat-lead-form .banner,
+.visa-chat-lead-form .visa-chat-actions {
+  grid-column: 1 / -1;
+}
+.visa-chat-result-score {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.visa-chat-result-score strong {
+  color: var(--green-dark);
+  font-size: 1.05rem;
+}
+.visa-chat-result-score em {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #e1eee8;
+  color: var(--green-dark);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 900;
+}
+.visa-chat-result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.visa-chat-result-grid div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fffdfa;
+}
+.visa-chat-result-grid strong {
+  color: var(--green-dark);
+  font-size: 0.72rem;
+}
+.visa-chat-result-grid span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+.visa-chat-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.visa-chat-reasons span {
+  padding: 5px 8px;
+  border: 1px solid #d8e6df;
+  border-radius: 999px;
+  background: #edf5f0;
+  color: var(--green-dark);
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+.visa-chat-disclaimer {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
 }
 
 .shell { min-height: 100vh; display: grid; grid-template-columns: var(--sidebar-width, 256px) 10px minmax(0, 1fr); }
@@ -2293,7 +2383,7 @@ textarea { min-height: 150px; resize: vertical; }
   background: #e3efe9;
   border-color: #b3cbbf;
 }
-.builder-member-card strong { color: var(--green-dark); font-size: 15.36px; }
+.builder-member-card strong { color: var(--green-dark); }
 .builder-member-card span { color: var(--muted); }
 .attorney-shell {
   height: 100vh;
@@ -2323,7 +2413,7 @@ textarea { min-height: 150px; resize: vertical; }
   align-content: start;
 }
 .attorney-member-card strong {
-  font-size: 15.36px;
+  font-size: 0.95rem;
 }
 .attorney-member-card span {
   font-size: 0.84rem;
@@ -2377,7 +2467,7 @@ textarea { min-height: 150px; resize: vertical; }
   border-radius: 999px;
   padding: 6px 10px;
   font-size: 0.8rem;
-  font-weight: 700;
+  font-weight: 800;
   text-transform: capitalize;
   background: #efe7d7;
   color: var(--ink);
@@ -3860,9 +3950,18 @@ textarea { min-height: 150px; resize: vertical; }
   .landing-grid {
     grid-template-columns: 1fr;
   }
-  .visa-result-grid,
-  .visa-result-hero {
-    display: grid;
+  .visa-chat-shell {
+    max-height: calc(100vh - 18px);
+  }
+  .visa-chat-backdrop {
+    padding: 9px;
+  }
+  .visa-chat-lead-form,
+  .visa-chat-result-grid {
+    grid-template-columns: 1fr;
+  }
+  .visa-chat-message {
+    max-width: 100%;
   }
   .assistant-pop {
     left: 12px;

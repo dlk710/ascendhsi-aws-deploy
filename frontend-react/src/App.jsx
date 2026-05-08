@@ -747,6 +747,7 @@ function visaCompassResult(answers) {
 }
 
 function AscendVisaCompass() {
+  const [isOpen, setIsOpen] = useState(false);
   const [answers, setAnswers] = useState({});
   const [step, setStep] = useState(0);
   const [leadForm, setLeadForm] = useState({ name: "", email: "", phone: "" });
@@ -761,6 +762,12 @@ function AscendVisaCompass() {
   const isComplete = answeredCount === VISA_COMPASS_QUESTIONS.length;
   const result = visaCompassResult(answers);
   const progress = Math.round((answeredCount / VISA_COMPASS_QUESTIONS.length) * 100);
+  const currentAnswer = currentQuestion ? answers[currentQuestion.id] : "";
+  const selectedCurrentLabels = currentQuestion
+    ? currentQuestion.options
+      .filter((option) => Array.isArray(currentAnswer) ? currentAnswer.includes(option.value) : currentAnswer === option.value)
+      .map((option) => option.label)
+    : [];
 
   function chooseAnswer(question, value) {
     setLeadError("");
@@ -819,97 +826,122 @@ function AscendVisaCompass() {
   }
 
   return (
-    <section className="visa-compass-card">
-      <div className="visa-compass-top">
-        <div>
-          <p className="eyebrow">Free Assessment Tool</p>
-          <h2>Ascend Visa Compass</h2>
-          <p>Answer a few profile questions and see which immigration strategy may deserve attorney review first.</p>
-        </div>
-        <span>{progress}%</span>
-      </div>
-      <div className="visa-progress"><span style={{ width: `${progress}%` }} /></div>
+    <section className="visa-compass-launch-card">
+      <p className="eyebrow">Free Assessment Tool</p>
+      <h2>Find the best starting visa path.</h2>
+      <p>Use Ascend Visa Compass as a quick guided chat before you speak with the team.</p>
+      <button className="visa-compass-launch-btn" type="button" onClick={() => setIsOpen(true)}>
+        <span>Ascend Visa Compass</span>
+        <strong>Start assessment</strong>
+      </button>
+      <small>Email is requested before the final result so Ascend can follow up with the right guidance.</small>
 
-      {!isComplete ? (
-        <div className="visa-question-panel">
-          <div className="visa-step-row">
-            <span>{currentQuestion.eyebrow} of {VISA_COMPASS_QUESTIONS.length}</span>
-            <strong>{currentQuestion.type === "multi" ? "Select all that apply" : "Choose one"}</strong>
-          </div>
-          <h3>{currentQuestion.question}</h3>
-          <p>{currentQuestion.helper}</p>
-          <div className="visa-option-grid">
-            {currentQuestion.options.map((option) => {
-              const value = answers[currentQuestion.id];
-              const active = Array.isArray(value) ? value.includes(option.value) : value === option.value;
-              return (
-                <button
-                  key={option.value}
-                  className={`visa-option ${active ? "active" : ""}`}
-                  type="button"
-                  onClick={() => chooseAnswer(currentQuestion, option.value)}
-                >
-                  <strong>{option.label}</strong>
-                  <span>{option.detail}</span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="visa-compass-actions">
-            <button className="ghost compact-btn" type="button" disabled={step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>Back</button>
-            <button
-              className="primary compact-btn"
-              type="button"
-              disabled={!questionAnswered(currentQuestion)}
-              onClick={() => setStep((value) => Math.min(VISA_COMPASS_QUESTIONS.length - 1, value + 1))}
-            >
-              {step === VISA_COMPASS_QUESTIONS.length - 1 ? "Continue" : "Next"}
-            </button>
-          </div>
-        </div>
-      ) : !leadCaptured ? (
-        <div className="visa-lead-panel">
-          <p className="eyebrow">Almost done</p>
-          <h3>Where should Ascend send your assessment follow-up?</h3>
-          <p>Your final match is ready. Enter your email to unlock the result. Phone is optional.</p>
-          <form className="visa-lead-form" onSubmit={submitLead}>
-            <label>Name<input value={leadForm.name} onChange={(event) => setLeadForm((current) => ({ ...current, name: event.target.value }))} placeholder="Your name" /></label>
-            <label>Email required<input type="email" required value={leadForm.email} onChange={(event) => setLeadForm((current) => ({ ...current, email: event.target.value }))} placeholder="you@example.com" /></label>
-            <label>Phone optional<input value={leadForm.phone} onChange={(event) => setLeadForm((current) => ({ ...current, phone: event.target.value }))} placeholder="+1 555 000 0000" /></label>
-            {leadError ? <div className="banner error">{leadError}</div> : null}
-            <button className="primary" type="submit" disabled={leadBusy}>{leadBusy ? "Saving..." : "Show My Match"}</button>
-          </form>
-          <button className="link-btn" type="button" onClick={() => setStep(VISA_COMPASS_QUESTIONS.length - 1)}>Review answers</button>
-        </div>
-      ) : (
-        <div className="visa-result-panel">
-          <p className="eyebrow">Your first-pass match</p>
-          <div className="visa-result-hero">
-            <span>{result.match_label}</span>
-            <strong>{result.readiness_score}% signal fit</strong>
-          </div>
-          <h3>{result.title}</h3>
-          <p>{result.summary}</p>
-          <div className="visa-result-grid">
-            <div>
-              <strong>Runner-up path</strong>
-              <span>{result.runner_up.label} • {result.runner_up.title}</span>
+      {isOpen ? (
+        <div className="visa-chat-backdrop" role="presentation">
+          <section className="visa-chat-shell" role="dialog" aria-modal="true" aria-labelledby="visa-compass-title">
+            <div className="visa-chat-header">
+              <div>
+                <p className="eyebrow">Ascend Lead Navigator</p>
+                <h2 id="visa-compass-title">Ascend Visa Compass</h2>
+                <span>Answer a few questions. We will summarize the path that deserves attorney review first.</span>
+              </div>
+              <button className="icon-action" type="button" aria-label="Close Visa Compass" onClick={() => setIsOpen(false)}>x</button>
             </div>
-            <div>
-              <strong>Recommended next step</strong>
-              <span>{result.next}</span>
+            <div className="visa-chat-progress">
+              <span style={{ width: `${progress}%` }} />
             </div>
-          </div>
-          <div className="visa-reason-list">
-            {result.reasons.map((reason) => <span key={reason}>{reason}</span>)}
-          </div>
-          <p className="visa-disclaimer">This is a product intake screen, not legal advice. Ascend and an attorney should review your documents before any filing decision.</p>
-          <div className="visa-compass-actions">
-            <button className="ghost compact-btn" type="button" onClick={resetCompass}>Start over</button>
-            <button className="primary compact-btn" type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>Start Ascend Portal</button>
-          </div>
+
+            <div className="visa-chat-body">
+              {!isComplete ? (
+                <React.Fragment>
+                  <div className="visa-chat-message assistant">
+                    <span>{currentQuestion.eyebrow} of {VISA_COMPASS_QUESTIONS.length}</span>
+                    <h3>{currentQuestion.question}</h3>
+                    <p>{currentQuestion.helper}</p>
+                  </div>
+                  {selectedCurrentLabels.length ? (
+                    <div className="visa-chat-message user">
+                      <span>Your selection</span>
+                      <p>{selectedCurrentLabels.join(", ")}</p>
+                    </div>
+                  ) : null}
+                  <div className="visa-chat-options">
+                    {currentQuestion.options.map((option) => {
+                      const value = answers[currentQuestion.id];
+                      const active = Array.isArray(value) ? value.includes(option.value) : value === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          className={`visa-chat-option ${active ? "active" : ""}`}
+                          type="button"
+                          onClick={() => chooseAnswer(currentQuestion, option.value)}
+                        >
+                          <strong>{option.label}</strong>
+                          <span>{option.detail}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="visa-chat-actions">
+                    <button className="ghost compact-btn" type="button" disabled={step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>Back</button>
+                    <span>{progress}% complete</span>
+                    <button
+                      className="primary compact-btn"
+                      type="button"
+                      disabled={!questionAnswered(currentQuestion)}
+                      onClick={() => setStep((value) => Math.min(VISA_COMPASS_QUESTIONS.length - 1, value + 1))}
+                    >
+                      {step === VISA_COMPASS_QUESTIONS.length - 1 ? "Continue" : "Next"}
+                    </button>
+                  </div>
+                </React.Fragment>
+              ) : !leadCaptured ? (
+                <React.Fragment>
+                  <div className="visa-chat-message assistant">
+                    <span>Almost done</span>
+                    <h3>Your result is ready.</h3>
+                    <p>Enter your email to unlock the match. Phone is optional and helps Ascend follow up faster.</p>
+                  </div>
+                  <form className="visa-chat-lead-form" onSubmit={submitLead}>
+                    <label>Name<input value={leadForm.name} onChange={(event) => setLeadForm((current) => ({ ...current, name: event.target.value }))} placeholder="Your name" /></label>
+                    <label>Email required<input type="email" required value={leadForm.email} onChange={(event) => setLeadForm((current) => ({ ...current, email: event.target.value }))} placeholder="you@example.com" /></label>
+                    <label>Phone optional<input value={leadForm.phone} onChange={(event) => setLeadForm((current) => ({ ...current, phone: event.target.value }))} placeholder="+1 555 000 0000" /></label>
+                    {leadError ? <div className="banner error">{leadError}</div> : null}
+                    <div className="visa-chat-actions">
+                      <button className="ghost compact-btn" type="button" onClick={resetCompass}>Start over</button>
+                      <button className="primary compact-btn" type="submit" disabled={leadBusy}>{leadBusy ? "Saving..." : "Show My Match"}</button>
+                    </div>
+                  </form>
+                </React.Fragment>
+              ) : (
+                <React.Fragment>
+                  <div className="visa-chat-message assistant">
+                    <span>Your first-pass match</span>
+                    <div className="visa-chat-result-score">
+                      <strong>{result.match_label}</strong>
+                      <em>{result.readiness_score}% signal fit</em>
+                    </div>
+                    <h3>{result.title}</h3>
+                    <p>{result.summary}</p>
+                  </div>
+                  <div className="visa-chat-result-grid">
+                    <div><strong>Runner-up</strong><span>{result.runner_up.label} - {result.runner_up.title}</span></div>
+                    <div><strong>Next step</strong><span>{result.next}</span></div>
+                  </div>
+                  <div className="visa-chat-reasons">
+                    {result.reasons.map((reason) => <span key={reason}>{reason}</span>)}
+                  </div>
+                  <p className="visa-chat-disclaimer">This is intake guidance, not legal advice. Ascend and an attorney should review documents before any filing decision.</p>
+                  <div className="visa-chat-actions">
+                    <button className="ghost compact-btn" type="button" onClick={resetCompass}>Start over</button>
+                    <button className="primary compact-btn" type="button" onClick={() => setIsOpen(false)}>Done</button>
+                  </div>
+                </React.Fragment>
+              )}
+            </div>
+          </section>
         </div>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -3199,7 +3231,6 @@ function App() {
   const [helpManualQuery, setHelpManualQuery] = useState("");
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current_password: "", new_password: "", confirm_password: "" });
-  const [passwordMessage, setPasswordMessage] = useState(null);
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [profileTab, setProfileTab] = useState("identity");
   const [dashboard, setDashboard] = useState(null);
@@ -3674,13 +3705,13 @@ function App() {
       return {
         portal,
         perspective: leaderPerspective,
-        page: portalSection || "home",
+        section: portalSection || "home",
         memberId: selectedBuilderMemberId || "",
       };
     }
     return {
       portal,
-      page: portalSection || "home",
+      section: portalSection || "home",
       memberId: ["builder", "attorney", "admin"].includes(portal) ? (selectedBuilderMemberId || "") : "",
     };
   }
@@ -3723,26 +3754,22 @@ function App() {
       const nextPerspective = LEADER_PERSPECTIVES.has(snapshot.perspective) ? snapshot.perspective : "leader";
       setLeaderPerspective(nextPerspective);
       const validLeaderSections = nextPerspective === "attorney" ? ATTORNEY_SECTIONS : nextPerspective === "builder" ? BUILDER_SECTIONS : LEADER_EXEC_SECTIONS;
-      const requestedSection = snapshot.section || snapshot.page;
-      setPortalSection(validLeaderSections.has(requestedSection) ? requestedSection : "home");
+      setPortalSection(validLeaderSections.has(snapshot.section) ? snapshot.section : "home");
       setSelectedBuilderMemberId(snapshot.memberId || "");
       return;
     }
     if (role === "builder") {
-      const requestedSection = snapshot.section || snapshot.page;
-      setPortalSection(BUILDER_SECTIONS.has(requestedSection) ? requestedSection : "home");
+      setPortalSection(BUILDER_SECTIONS.has(snapshot.section) ? snapshot.section : "home");
       setSelectedBuilderMemberId(snapshot.memberId || "");
       return;
     }
     if (role === "attorney") {
-      const requestedSection = snapshot.section || snapshot.page;
-      setPortalSection(ATTORNEY_SECTIONS.has(requestedSection) ? requestedSection : "home");
+      setPortalSection(ATTORNEY_SECTIONS.has(snapshot.section) ? snapshot.section : "home");
       setSelectedBuilderMemberId(snapshot.memberId || "");
       return;
     }
     if (role === "admin") {
-      const requestedSection = snapshot.section || snapshot.page;
-      setPortalSection(ADMIN_SECTIONS.has(requestedSection) ? requestedSection : "home");
+      setPortalSection(ADMIN_SECTIONS.has(snapshot.section) ? snapshot.section : "home");
       setSelectedBuilderMemberId(snapshot.memberId || "");
     }
   }
@@ -4642,11 +4669,6 @@ function App() {
     if (authMember?.role === "leader") loadProductBacklog();
   }, [authMember?.role]);
   useEffect(() => {
-    if (portalSection !== "batch" && message?.type === "error") {
-      setMessage(null);
-    }
-  }, [portalSection]);
-  useEffect(() => {
     if (["builder", "leader", "attorney", "admin"].includes(authMember?.role)) return;
     if (!authMember) return;
     if (view.type === "workspace" && view.criterionCode) {
@@ -4939,32 +4961,20 @@ function App() {
     setMemberMenuOpen(false);
   }
 
-  function openPasswordDialog() {
-    setPasswordMessage(null);
-    setPasswordDialogOpen(true);
-    setMemberMenuOpen(false);
-  }
-
-  function closePasswordDialog() {
-    setPasswordDialogOpen(false);
-    setPasswordMessage(null);
-  }
-
   async function handlePasswordChange(event) {
     event.preventDefault();
-    setPasswordMessage(null);
     if (passwordForm.new_password !== passwordForm.confirm_password) {
-      setPasswordMessage({ type: "error", text: "New password and confirmation do not match." });
+      setMessage({ type: "error", text: "New password and confirmation do not match." });
       return;
     }
     if (isPreviewRole(authMember?.role)) {
       setMessage({ type: "success", text: "Password updated for preview mode." });
       setPasswordDialogOpen(false);
       setPasswordForm({ current_password: "", new_password: "", confirm_password: "" });
-      setPasswordMessage(null);
       return;
     }
     setPasswordBusy(true);
+    setMessage(null);
     try {
       const formData = new FormData();
       formData.set("current_password", passwordForm.current_password);
@@ -4974,9 +4984,8 @@ function App() {
         setMessage({ type: "success", text: "Password updated." });
         setPasswordDialogOpen(false);
         setPasswordForm({ current_password: "", new_password: "", confirm_password: "" });
-        setPasswordMessage(null);
       } else {
-        setPasswordMessage({ type: "error", text: result.payload.error || "Could not change password." });
+        setMessage({ type: "error", text: result.payload.error || "Could not change password." });
       }
     } finally {
       setPasswordBusy(false);
@@ -5163,18 +5172,6 @@ function App() {
     event.preventDefault();
     if (!authMember) return;
     const activeThread = selectedThread();
-    if (!messageComposer.body.trim()) {
-      setMessage({ type: "error", text: "Message body is required." });
-      return;
-    }
-    if (!activeThread && !messageComposer.subject.trim()) {
-      setMessage({ type: "error", text: "Subject is required." });
-      return;
-    }
-    if (!activeThread && (!messageComposer.recipient_role || !messageComposer.recipient_key)) {
-      setMessage({ type: "error", text: "Select a recipient before sending." });
-      return;
-    }
     setMessageBusy(true);
     setMessage(null);
     try {
@@ -5238,8 +5235,6 @@ function App() {
   }
 
   async function resetMemberIssueSession(clientId) {
-    const memberName = debugMember?.member?.display_name || clientId;
-    if (!window.confirm(`Reset active sessions for ${memberName}? This will require the member to sign in again.`)) return;
     setMessage(null);
     const response = await fetch(`${API_URL}/api/admin/members/${clientId}/reset-session`, { method: "POST", headers: { ...authHeaders() } });
     const body = await response.json();
@@ -5630,14 +5625,7 @@ function App() {
 
   async function createFolder(event) {
     event.preventDefault();
-    if (!view.criterionCode) {
-      setMessage({ type: "error", text: "Open an evidence criterion before creating a folder." });
-      return;
-    }
-    if (!newFolderName.trim()) {
-      setMessage({ type: "error", text: "Folder name is required before creating a folder." });
-      return;
-    }
+    if (!view.criterionCode || !newFolderName.trim()) return;
     const formData = new FormData();
     formData.set("name", newFolderName.trim());
     formData.set("parent_id", newFolderParent);
@@ -5730,10 +5718,7 @@ function App() {
 
   async function assignBuilderTask(event) {
     event.preventDefault();
-    if (!selectedBuilderMemberId) {
-      setMessage({ type: "error", text: "Please select a member before assigning a task." });
-      return;
-    }
+    if (!selectedBuilderMemberId) return;
     setBuilderBusy(true);
     setMessage(null);
     try {
@@ -5746,8 +5731,7 @@ function App() {
       formData.set("opportunity_id", builderTaskForm.opportunity_id);
       const result = await sendForm("/api/builder/tasks", formData);
       if (result.ok) {
-        const selectedMember = builderMembers.find((member) => member.client_id === selectedBuilderMemberId);
-        setMessage({ type: "success", text: `Task assigned to ${selectedMember?.display_name || "selected member"}.` });
+        setMessage({ type: "success", text: "Task assigned to member." });
         setBuilderTaskForm({ opportunity_id: "", title: "", description: "", criterion_code: "", due_date: "" });
         await reloadOperationalWorkspace(selectedBuilderMemberId);
       } else {
@@ -5939,7 +5923,7 @@ function App() {
             <input type="file" accept=".zip,application/zip" onChange={(event) => setBatchZipFile(event.target.files?.[0] || null)} />
           </label>
           <div className="form-actions">
-            <button className="primary compact-btn" type="submit" disabled={batchBusy}>
+            <button className="primary compact-btn" type="submit" disabled={batchBusy || !selectedBuilderMemberId}>
               {batchBusy ? "Preparing Queue..." : "Build Review Queue"}
             </button>
           </div>
@@ -5974,12 +5958,6 @@ function App() {
               <MetricCard label="Needs Review" value={batchSession.counts?.pending || 0} />
               <MetricCard label="Committed" value={batchSession.counts?.committed || 0} />
             </section>
-
-            {(batchSession.items || []).some((item) => item.analysis_source && item.analysis_source !== "openai") ? (
-              <div className="banner warning" style={{ marginTop: "18px" }}>
-                AI classification was unavailable or used fallback routing for one or more files. Please manually confirm category, document type, and folder before committing.
-              </div>
-            ) : null}
 
             {batchSession.skipped_files?.length ? (
               <section className="panel" style={{ marginTop: "18px" }}>
@@ -6226,7 +6204,7 @@ function App() {
               </button>
               {memberMenuOpen ? (
                 <div className="member-menu">
-                  <button type="button" onClick={openPasswordDialog}>Change Password</button>
+                  <button type="button" onClick={() => { setPasswordDialogOpen(true); setMemberMenuOpen(false); }}>Change Password</button>
                   <button type="button" onClick={openHelpManual}>Help Manual</button>
                   <button type="button" onClick={handleLogout}>Logout</button>
                 </div>
@@ -6236,14 +6214,13 @@ function App() {
 
           {message ? <div className={`banner ${message.type}`}>{message.text}</div> : null}
           {passwordDialogOpen ? (
-            <div className="modal-backdrop" onClick={closePasswordDialog}>
+            <div className="modal-backdrop" onClick={() => setPasswordDialogOpen(false)}>
               <section className="modal-card" onClick={(event) => event.stopPropagation()}>
                 <div className="panel-header">
                   <div><div className="section-kicker">Account</div><h3 className="section-title">Change Password</h3></div>
-                  <button className="ghost compact-btn" type="button" onClick={closePasswordDialog}>Close</button>
+                  <button className="ghost compact-btn" type="button" onClick={() => setPasswordDialogOpen(false)}>Close</button>
                 </div>
                 <form className="stacked-form" onSubmit={handlePasswordChange}>
-                  {passwordMessage ? <div className={`banner ${passwordMessage.type}`}>{passwordMessage.text}</div> : null}
                   <label>Current Password<input type="password" value={passwordForm.current_password} onChange={(event) => setPasswordForm((current) => ({ ...current, current_password: event.target.value }))} /></label>
                   <label>New Password<input type="password" value={passwordForm.new_password} onChange={(event) => setPasswordForm((current) => ({ ...current, new_password: event.target.value }))} /></label>
                   <label>Confirm New Password<input type="password" value={passwordForm.confirm_password} onChange={(event) => setPasswordForm((current) => ({ ...current, confirm_password: event.target.value }))} /></label>
@@ -6637,7 +6614,7 @@ function App() {
                     <label>Guidance for member<textarea value={builderTaskForm.description} onChange={(event) => setBuilderTaskField("description", event.target.value)} /></label>
                     <label>Evidence category<select value={builderTaskForm.criterion_code} onChange={(event) => setBuilderTaskField("criterion_code", event.target.value)}><option value="">Choose category</option>{criteriaList.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}</select></label>
                     <label>Due date<input type="date" value={builderTaskForm.due_date} onChange={(event) => setBuilderTaskField("due_date", event.target.value)} /></label>
-                    <div className="form-actions"><button className="primary compact-btn" type="submit" disabled={builderBusy}>{builderBusy ? "Assigning..." : "Assign To Member"}</button></div>
+                    <div className="form-actions"><button className="primary compact-btn" type="submit" disabled={builderBusy || !selectedBuilderMemberId}>{builderBusy ? "Assigning..." : "Assign To Member"}</button></div>
                   </form>
 
                   <div className="panel-divider" />
@@ -6928,7 +6905,7 @@ function App() {
               </button>
               {memberMenuOpen ? (
                 <div className="member-menu">
-                  <button type="button" onClick={openPasswordDialog}>Change Password</button>
+                  <button type="button" onClick={() => { setPasswordDialogOpen(true); setMemberMenuOpen(false); }}>Change Password</button>
                   <button type="button" onClick={openHelpManual}>Help Manual</button>
                   <button type="button" onClick={handleLogout}>Logout</button>
                 </div>
@@ -6938,14 +6915,13 @@ function App() {
 
           {message ? <div className={`banner ${message.type}`}>{message.text}</div> : null}
           {passwordDialogOpen ? (
-            <div className="modal-backdrop" onClick={closePasswordDialog}>
+            <div className="modal-backdrop" onClick={() => setPasswordDialogOpen(false)}>
               <section className="modal-card" onClick={(event) => event.stopPropagation()}>
                 <div className="panel-header">
                   <div><div className="section-kicker">Account</div><h3 className="section-title">Change Password</h3></div>
-                  <button className="ghost compact-btn" type="button" onClick={closePasswordDialog}>Close</button>
+                  <button className="ghost compact-btn" type="button" onClick={() => setPasswordDialogOpen(false)}>Close</button>
                 </div>
                 <form className="stacked-form" onSubmit={handlePasswordChange}>
-                  {passwordMessage ? <div className={`banner ${passwordMessage.type}`}>{passwordMessage.text}</div> : null}
                   <label>Current Password<input type="password" value={passwordForm.current_password} onChange={(event) => setPasswordForm((current) => ({ ...current, current_password: event.target.value }))} /></label>
                   <label>New Password<input type="password" value={passwordForm.new_password} onChange={(event) => setPasswordForm((current) => ({ ...current, new_password: event.target.value }))} /></label>
                   <label>Confirm New Password<input type="password" value={passwordForm.confirm_password} onChange={(event) => setPasswordForm((current) => ({ ...current, confirm_password: event.target.value }))} /></label>
@@ -7171,11 +7147,6 @@ function App() {
                 </div>
                 {petitionDraft ? (
                   <React.Fragment>
-                    {petitionDraft.source && petitionDraft.source !== "openai" ? (
-                      <div className="banner warning">
-                        AI petition generation is unavailable or returned fallback output. Treat this as a structured review template and validate every fact before using it.
-                      </div>
-                    ) : null}
                     <div className="metrics-grid">
                       <MetricCard label="Readiness" value={`${petitionDraft.member?.readiness_score || 0}%`} />
                       <MetricCard label="Evidence Items" value={petitionDraft.snapshot?.evidence_count || 0} />
@@ -7535,32 +7506,13 @@ function App() {
                 </button>
                 {memberMenuOpen ? (
                   <div className="member-menu">
-                    <button type="button" onClick={openPasswordDialog}>Change Password</button>
+                    <button type="button" onClick={() => { setPasswordDialogOpen(true); setMemberMenuOpen(false); }}>Change Password</button>
                     <button type="button" onClick={openHelpManual}>Help Manual</button>
                     <button type="button" onClick={handleLogout}>Logout</button>
                   </div>
                 ) : null}
               </div>
             </div>
-
-            {message ? <div className={`banner ${message.type}`}>{message.text}</div> : null}
-            {passwordDialogOpen ? (
-              <div className="modal-backdrop" onClick={closePasswordDialog}>
-                <section className="modal-card" onClick={(event) => event.stopPropagation()}>
-                  <div className="panel-header">
-                    <div><div className="section-kicker">Account</div><h3 className="section-title">Change Password</h3></div>
-                    <button className="ghost compact-btn" type="button" onClick={closePasswordDialog}>Close</button>
-                  </div>
-                  <form className="stacked-form" onSubmit={handlePasswordChange}>
-                    {passwordMessage ? <div className={`banner ${passwordMessage.type}`}>{passwordMessage.text}</div> : null}
-                    <label>Current Password<input type="password" value={passwordForm.current_password} onChange={(event) => setPasswordForm((current) => ({ ...current, current_password: event.target.value }))} /></label>
-                    <label>New Password<input type="password" value={passwordForm.new_password} onChange={(event) => setPasswordForm((current) => ({ ...current, new_password: event.target.value }))} /></label>
-                    <label>Confirm New Password<input type="password" value={passwordForm.confirm_password} onChange={(event) => setPasswordForm((current) => ({ ...current, confirm_password: event.target.value }))} /></label>
-                    <div className="form-actions"><button className="primary compact-btn" type="submit" disabled={passwordBusy}>{passwordBusy ? "Updating..." : "Update Password"}</button></div>
-                  </form>
-                </section>
-              </div>
-            ) : null}
 
             {portalSection === "messages" ? (
               <React.Fragment>
@@ -8120,7 +8072,7 @@ function App() {
                 <button type="button" onClick={() => { setView({ type: "planner", criterionCode: "" }); setMemberMenuOpen(false); }}>Event Planner</button>
                 <button type="button" onClick={() => { setView({ type: "intake", criterionCode: "" }); setMemberMenuOpen(false); }}>Evidence Intake</button>
                 <button type="button" onClick={() => { setView({ type: "messages", criterionCode: "" }); setMemberMenuOpen(false); }}>Messages</button>
-                <button type="button" onClick={openPasswordDialog}>Change Password</button>
+                <button type="button" onClick={() => { setPasswordDialogOpen(true); setMemberMenuOpen(false); }}>Change Password</button>
                 <button type="button" onClick={openHelpManual}>Help Manual</button>
                 <button type="button" onClick={handleLogout}>Logout</button>
               </div>
@@ -8153,17 +8105,16 @@ function App() {
 
         {message ? <div className={`banner ${message.type}`}>{message.text}</div> : null}
         {passwordDialogOpen ? (
-          <div className="modal-backdrop" onClick={closePasswordDialog}>
+          <div className="modal-backdrop" onClick={() => setPasswordDialogOpen(false)}>
             <section className="modal-card" onClick={(event) => event.stopPropagation()}>
               <div className="panel-header">
                 <div>
                   <div className="section-kicker">Account</div>
                   <h3 className="section-title">Change Password</h3>
                 </div>
-                <button className="ghost compact-btn" type="button" onClick={closePasswordDialog}>Close</button>
+                <button className="ghost compact-btn" type="button" onClick={() => setPasswordDialogOpen(false)}>Close</button>
               </div>
               <form className="stacked-form" onSubmit={handlePasswordChange}>
-                {passwordMessage ? <div className={`banner ${passwordMessage.type}`}>{passwordMessage.text}</div> : null}
                 <label>
                   Current Password
                   <input type="password" value={passwordForm.current_password} onChange={(event) => setPasswordForm((current) => ({ ...current, current_password: event.target.value }))} />
