@@ -6253,6 +6253,15 @@ function App() {
     }
     setPortalSection("home");
   }
+  function handlePortalSectionChange(nextSection) {
+    setMessage(null);
+    if (authMember.role === "leader" && nextSection === "invite") {
+      setLeaderPerspective("leader");
+      setPortalSection("invite");
+      return;
+    }
+    setPortalSection(nextSection);
+  }
   const messagePanel = (
     <ThreadedMessageCenter
       title="Conversation Threads"
@@ -6531,6 +6540,7 @@ function App() {
     const leaderMetrics = leaderInsights?.metrics || builderDashboard?.metrics || {};
     const builderSidebarItems = [
       { value: "home", label: "Builder Home" },
+      ...(authMember.role === "leader" ? [{ value: "invite", label: "Invite Member" }] : []),
       { value: "members", label: "Assigned Members" },
       { value: "opportunities", label: "Opportunities" },
       { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}` },
@@ -6564,7 +6574,7 @@ function App() {
           <SidebarNav
             items={isLeaderExecutiveView ? leaderSidebarItems : builderSidebarItems}
             value={portalSection}
-            onChange={setPortalSection}
+            onChange={handlePortalSectionChange}
           />
           <div className="side-card">
             <strong>Welcome {authMember.display_name}</strong>
@@ -7235,6 +7245,7 @@ function App() {
           <SidebarNav
             items={[
               { value: "home", label: "Attorney Home" },
+              ...(isLeaderAttorneyView ? [{ value: "invite", label: "Invite Member" }] : []),
               { value: "dossier", label: "Member Dossier" },
               { value: "petition", label: "Petition Generator" },
               { value: "endeavor", label: "Endeavor Letter Generator" },
@@ -7244,7 +7255,7 @@ function App() {
               { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}` },
             ]}
             value={portalSection}
-            onChange={setPortalSection}
+            onChange={handlePortalSectionChange}
           />
           <div className="side-card">
             <strong>Welcome {authMember.display_name}</strong>
