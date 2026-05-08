@@ -126,6 +126,36 @@ class LeaderPortalServiceTests(unittest.TestCase):
         login = self.service.login_member("mina.register@example.com", "SecurePass123", {})
         self.assertEqual(login["member"]["client_id"], result["client_id"])
 
+    def test_leader_invite_resends_pending_invite_for_existing_email(self):
+        with patch.object(self.service, "_send_member_registration_email", return_value={"status": "sent", "sent_at": "2026-05-08T00:00:00"}) as send_email:
+            first = self.service.leader_invite_member("Mina", "Retry", "mina.retry@example.com", industry_domain="Technology")
+            second = self.service.leader_invite_member("Mina", "Retry", "mina.retry@example.com", industry_domain="Technology")
+
+        self.assertTrue(second["resent"])
+        self.assertEqual(second["client_id"], first["client_id"])
+        self.assertEqual(second["invite_id"], first["invite_id"])
+        self.assertNotEqual(second["registration_link"], first["registration_link"])
+        self.assertEqual(send_email.call_count, 2)
+        invite_count = self.service.conn.execute(
+            "SELECT COUNT(*) FROM member_registration_invites WHERE LOWER(email) = 'mina.retry@example.com'"
+        ).fetchone()[0]
+        account_count = self.service.conn.execute(
+            "SELECT COUNT(*) FROM member_accounts WHERE LOWER(email) = 'mina.retry@example.com'"
+        ).fetchone()[0]
+        self.assertEqual(invite_count, 1)
+        self.assertEqual(account_count, 1)
+
+    def test_leader_invite_blocks_registered_existing_member_email(self):
+        with patch.object(self.service, "_send_member_registration_email", return_value={"status": "sent", "sent_at": "2026-05-08T00:00:00"}):
+            result = self.service.leader_invite_member("Mina", "Registered", "mina.registered@example.com", industry_domain="Technology")
+        token = parse_qs(urlparse(result["registration_link"]).query)["registration"][0]
+        self.service.register_invited_member(token, "SecurePass123", "", {})
+
+        with self.assertRaises(ValueError) as context:
+            self.service.leader_invite_member("Mina", "Registered", "mina.registered@example.com", industry_domain="Technology")
+
+        self.assertIn("registered member", str(context.exception).lower())
+
     def test_leader_can_access_attorney_evidence_view(self):
         sample = self.config.upload_root / "sample.txt"
         sample.parent.mkdir(parents=True, exist_ok=True)

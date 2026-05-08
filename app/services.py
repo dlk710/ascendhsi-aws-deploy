@@ -3097,20 +3097,6 @@ class EvidenceService:
         email = email.strip().lower()
         if not first_name or not last_name or not email:
             raise ValueError("first_name, last_name, and email are required")
-        existing_account = one(self.conn, "SELECT * FROM member_accounts WHERE LOWER(email) = ? OR LOWER(username) = ?", (email, email))
-        existing_profile = one(self.conn, "SELECT * FROM member_profiles WHERE LOWER(email) = ?", (email,))
-        if existing_account or existing_profile:
-            raise ValueError("A member with this email already exists")
-        client_id = f"client_{uuid.uuid4().hex[:10]}"
-        case_id = f"case_{uuid.uuid4().hex[:10]}"
-        account_id = f"acct_{uuid.uuid4().hex[:12]}"
-        invite_id = f"inv_{uuid.uuid4().hex[:12]}"
-        invite_token = secrets.token_urlsafe(32)
-        invite_token_hash = self._invite_token_hash(invite_token)
-        invite_expires_at = self._invite_expiry_at()
-        registration_link = self._member_registration_link(invite_token)
-        display_name = f"{first_name} {last_name}".strip()
-        domain = industry_domain.strip() or self._infer_domain({"industry_domain": "", "primary_field": primary_field, "current_employer": current_employer})
         selected_builder = None
         selected_attorney = None
         if builder_id.strip():
@@ -3121,6 +3107,46 @@ class EvidenceService:
             selected_attorney = one(self.conn, "SELECT * FROM attorneys WHERE id = ?", (attorney_id.strip(),))
             if not selected_attorney:
                 raise ValueError("Attorney not found")
+        existing_account = one(self.conn, "SELECT * FROM member_accounts WHERE LOWER(email) = ? OR LOWER(username) = ?", (email, email))
+        existing_profile = one(self.conn, "SELECT * FROM member_profiles WHERE LOWER(email) = ?", (email,))
+        existing_member = existing_account or existing_profile or {}
+        existing_invite = one(
+            self.conn,
+            """
+            SELECT *
+            FROM member_registration_invites
+            WHERE LOWER(email) = ?
+               OR (client_id = ? AND case_id = ?)
+            ORDER BY invite_sent_at DESC
+            LIMIT 1
+            """,
+            (email, existing_member.get("client_id", ""), existing_member.get("case_id", "")),
+        )
+        if existing_account or existing_profile or existing_invite:
+            if not existing_invite or existing_invite.get("status") == "registered" or existing_invite.get("registered_at"):
+                raise ValueError("A registered member with this email already exists")
+            return self._resend_pending_member_invite(
+                existing_invite,
+                first_name,
+                last_name,
+                email,
+                industry_domain,
+                primary_field,
+                current_title,
+                current_employer,
+                selected_builder,
+                selected_attorney,
+            )
+        client_id = f"client_{uuid.uuid4().hex[:10]}"
+        case_id = f"case_{uuid.uuid4().hex[:10]}"
+        account_id = f"acct_{uuid.uuid4().hex[:12]}"
+        invite_id = f"inv_{uuid.uuid4().hex[:12]}"
+        invite_token = secrets.token_urlsafe(32)
+        invite_token_hash = self._invite_token_hash(invite_token)
+        invite_expires_at = self._invite_expiry_at()
+        registration_link = self._member_registration_link(invite_token)
+        display_name = f"{first_name} {last_name}".strip()
+        domain = industry_domain.strip() or self._infer_domain({"industry_domain": "", "primary_field": primary_field, "current_employer": current_employer})
         self.conn.execute("INSERT INTO clients(id, display_name) VALUES (?, ?)", (client_id, display_name))
         self.conn.execute("INSERT INTO cases(id, client_id, readiness_score, status) VALUES (?, ?, ?, ?)", (case_id, client_id, 5, "intake"))
         self.conn.execute(
@@ -3213,6 +3239,164 @@ class EvidenceService:
         return {
             "ok": True,
             "invite_id": invite_id,
+            "client_id": client_id,
+            "case_id": case_id,
+            "display_name": display_name,
+            "email": email,
+            "industry_domain": domain,
+            "registration_status": "invited",
+            "registration_link": registration_link,
+            "token_expires_at": invite_expires_at,
+            "email_delivery_status": email_result.get("status", "failed"),
+            "email_error": email_result.get("error", ""),
+            "builder_id": selected_builder["id"] if selected_builder else "",
+            "builder_name": selected_builder["display_name"] if selected_builder else "",
+            "builder_email": selected_builder["email"] if selected_builder else "",
+            "attorney_id": selected_attorney["id"] if selected_attorney else "",
+            "attorney_name": selected_attorney["display_name"] if selected_attorney else "",
+            "attorney_email": selected_attorney["email"] if selected_attorney else "",
+        }
+
+    def _resend_pending_member_invite(
+        self,
+        invite: dict,
+        first_name: str,
+        last_name: str,
+        email: str,
+        industry_domain: str,
+        primary_field: str,
+        current_title: str,
+        current_employer: str,
+        selected_builder: dict | None,
+        selected_attorney: dict | None,
+    ) -> dict:
+        client_id = invite["client_id"]
+        case_id = invite["case_id"]
+        invite_token = secrets.token_urlsafe(32)
+        invite_token_hash = self._invite_token_hash(invite_token)
+        invite_expires_at = self._invite_expiry_at()
+        registration_link = self._member_registration_link(invite_token)
+        display_name = f"{first_name} {last_name}".strip()
+        domain = industry_domain.strip() or self._infer_domain({"industry_domain": "", "primary_field": primary_field, "current_employer": current_employer})
+        self.conn.execute("UPDATE clients SET display_name = ? WHERE id = ?", (display_name, client_id))
+        self.conn.execute(
+            """
+            UPDATE member_profiles
+            SET first_name = ?,
+                last_name = ?,
+                preferred_name = ?,
+                email = ?,
+                current_title = ?,
+                current_employer = ?,
+                industry_domain = ?,
+                primary_field = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE client_id = ? AND case_id = ?
+            """,
+            (first_name, last_name, first_name, email, current_title.strip(), current_employer.strip(), domain, primary_field.strip(), client_id, case_id),
+        )
+        self.conn.execute(
+            """
+            UPDATE member_accounts
+            SET username = ?,
+                email = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE client_id = ? AND case_id = ?
+            """,
+            (email, email, client_id, case_id),
+        )
+        self.conn.execute(
+            """
+            UPDATE member_registration_invites
+            SET email = ?,
+                status = 'invited',
+                token_hash = ?,
+                token_expires_at = ?,
+                email_delivery_status = 'pending',
+                email_error = '',
+                invite_sent_at = CURRENT_TIMESTAMP,
+                registered_at = NULL,
+                notes = ?
+            WHERE id = ?
+            """,
+            (
+                email,
+                invite_token_hash,
+                invite_expires_at,
+                "Registration link refreshed. Member should set a password and complete profile intake.",
+                invite["id"],
+            ),
+        )
+        if selected_builder:
+            active_builder = one(
+                self.conn,
+                "SELECT * FROM builder_member_assignments WHERE client_id = ? AND case_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1",
+                (client_id, case_id),
+            )
+            if active_builder:
+                self.conn.execute("UPDATE builder_member_assignments SET builder_id = ? WHERE id = ?", (selected_builder["id"], active_builder["id"]))
+            else:
+                self.conn.execute(
+                    """
+                    INSERT INTO builder_member_assignments(id, builder_id, client_id, case_id, status)
+                    VALUES (?, ?, ?, ?, 'active')
+                    """,
+                    (f"asg_{uuid.uuid4().hex[:12]}", selected_builder["id"], client_id, case_id),
+                )
+        if selected_attorney:
+            active_attorney = one(
+                self.conn,
+                "SELECT * FROM attorney_member_assignments WHERE client_id = ? AND case_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1",
+                (client_id, case_id),
+            )
+            if active_attorney:
+                self.conn.execute(
+                    "UPDATE attorney_member_assignments SET attorney_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (selected_attorney["id"], active_attorney["id"]),
+                )
+            else:
+                self.conn.execute(
+                    """
+                    INSERT INTO attorney_member_assignments(id, attorney_id, client_id, case_id, status)
+                    VALUES (?, ?, ?, ?, 'active')
+                    """,
+                    (f"aat_{uuid.uuid4().hex[:12]}", selected_attorney["id"], client_id, case_id),
+                )
+        self.conn.commit()
+        email_result = self._send_member_registration_email(email, display_name, registration_link)
+        self.conn.execute(
+            """
+            UPDATE member_registration_invites
+            SET email_delivery_status = ?,
+                email_sent_at = CASE WHEN ? = 'sent' THEN CURRENT_TIMESTAMP ELSE email_sent_at END,
+                email_error = ?
+            WHERE id = ?
+            """,
+            (email_result.get("status", "failed"), email_result.get("status", "failed"), email_result.get("error", ""), invite["id"]),
+        )
+        self.conn.commit()
+        self.record_operational_event(
+            "member_invite_resend",
+            status="success" if email_result.get("status") in {"sent", "not_configured", "disabled"} else "error",
+            portal="leader",
+            client_id=client_id,
+            case_id=case_id,
+            endpoint="/api/leader/invites",
+            message=f"Leader refreshed invite for {display_name}.",
+            metadata={
+                "email": email,
+                "industry_domain": domain,
+                "builder_id": selected_builder["id"] if selected_builder else "",
+                "attorney_id": selected_attorney["id"] if selected_attorney else "",
+                "email_delivery_status": email_result.get("status", "failed"),
+                "email_error": email_result.get("error", ""),
+                "resent": True,
+            },
+        )
+        return {
+            "ok": True,
+            "resent": True,
+            "invite_id": invite["id"],
             "client_id": client_id,
             "case_id": case_id,
             "display_name": display_name,

@@ -109,6 +109,19 @@ data "aws_iam_policy_document" "ecs_task_policy" {
 
     resources = ["*"]
   }
+
+  statement {
+    sid = "AllowInviteEmailSes"
+
+    actions = [
+      "ses:SendEmail",
+      "ses:SendRawEmail",
+    ]
+
+    resources = [
+      "arn:aws:ses:*:${local.account_id}:identity/*",
+    ]
+  }
 }
 
 resource "aws_iam_role" "ecs_task" {

@@ -5439,8 +5439,8 @@ function App() {
         ].filter(Boolean).join(" • ");
         const emailStatus = result.payload.email_delivery_status || "pending";
         const emailNote = emailStatus === "sent"
-          ? "Invitation email sent"
-          : `Invite created, but email was not sent yet (${emailStatus}${result.payload.email_error ? `: ${result.payload.email_error}` : ""}). Registration link: ${result.payload.registration_link || "not available"}`;
+          ? (result.payload.resent ? "Invitation email re-sent" : "Invitation email sent")
+          : `${result.payload.resent ? "Invite refreshed" : "Invite created"}, but email was not sent yet (${emailStatus}${result.payload.email_error ? `: ${result.payload.email_error}` : ""}). Registration link: ${result.payload.registration_link || "not available"}`;
         setMessage({
           type: emailStatus === "failed" ? "error" : "success",
           text: `${emailNote}. ${routed || "Assignments can be completed later"}.`,
