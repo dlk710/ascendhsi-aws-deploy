@@ -1916,6 +1916,14 @@ textarea { min-height: 150px; resize: vertical; }
   color: var(--muted);
   cursor: pointer;
 }
+.evidence-criterion-rail button.guided-form-criterion {
+  min-height: 42px;
+  background: linear-gradient(180deg, #fffdfa 0%, color-mix(in srgb, var(--category-accent, var(--green)) 7%, #fffdfa) 100%);
+}
+.evidence-criterion-rail button.guided-form-criterion:hover {
+  border-color: color-mix(in srgb, var(--category-accent, var(--green)) 42%, var(--line));
+  box-shadow: 0 6px 14px rgba(25, 63, 52, 0.08);
+}
 .evidence-criterion-rail button.active {
   background: color-mix(in srgb, var(--category-accent, var(--green)) 9%, white);
   color: var(--green-dark);
@@ -1928,6 +1936,21 @@ textarea { min-height: 150px; resize: vertical; }
   font-size: 0.7rem;
   font-weight: 850;
   text-align: left;
+}
+.evidence-criterion-rail button.guided-form-criterion span {
+  overflow: visible;
+  white-space: normal;
+  line-height: 1.15;
+}
+.evidence-criterion-action {
+  display: block;
+  margin-top: 2px;
+  color: color-mix(in srgb, var(--category-accent, var(--green)) 86%, #13241d);
+  font-size: 0.58rem;
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: 0.015em;
+  text-transform: uppercase;
 }
 .evidence-criterion-rail button strong {
   min-width: 18px;

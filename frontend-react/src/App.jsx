@@ -63,6 +63,18 @@ const EMPLOYMENT_TYPE_OPTIONS = ["W-2 / Full-time", "Contract", "Part-time", "Co
 const PROJECT_STATUS_OPTIONS = ["Active", "Completed", "Launched", "In planning", "On hold", "Other"];
 const CONTRIBUTION_CATEGORY_OPTIONS = ["Work-related", "Research", "Grant work", "Entrepreneurship", "External collaboration", "Nonprofit", "Other"];
 const MEMBER_VIEW_TYPES = new Set(["home", "workspace", "profile", "critical_roles", "original_contributions", "planner", "intake", "messages"]);
+const MEMBER_PAGE_ALIASES = {
+  "critical-role": "critical_roles",
+  "critical-role-projects": "critical_roles",
+  criticalRole: "critical_roles",
+  "original-contributions": "original_contributions",
+  "original-contribution": "original_contributions",
+  originalContribution: "original_contributions",
+};
+const GUIDED_MEMBER_CRITERION_FORM_LABELS = {
+  leading_critical_role: "Open Critical Role Form",
+  original_contributions: "Open Original Contributions Form",
+};
 const BUILDER_SECTIONS = new Set(["home", "members", "opportunities", "messages"]);
 const ATTORNEY_SECTIONS = new Set(["home", "dossier", "petition", "endeavor", "recommendations", "batch", "evidence", "messages"]);
 const LEADER_EXEC_SECTIONS = new Set(["home", "invite", "members", "risks", "capacity", "timeline", "backlog", "oversight", "opportunities", "batch", "messages"]);
@@ -2606,16 +2618,25 @@ function MemberEvidenceCoveragePanel({ criteria = [], evidence = [], criteriaByC
       <div className="evidence-register-layout">
         <aside className="evidence-criterion-rail" role="tablist" aria-label="Evidence criterion tabs">
           {criterionOptions.map((criterion) => (
-            <button
-              key={criterion.code}
-              type="button"
-              className={activeCriterion === criterion.code ? "active" : ""}
-              onClick={() => setActiveCriterion(criterion.code)}
-              style={{ "--category-accent": criterion.code === "all" ? "var(--green)" : criterionAccent(criterion.code) }}
-            >
-              <span>{criterion.name || criterion.code}</span>
-              <strong>{criterion.code === "all" ? rows.length : evidenceCounts[criterion.code] || 0}</strong>
-            </button>
+            (() => {
+              const guidedFormLabel = GUIDED_MEMBER_CRITERION_FORM_LABELS[criterion.code];
+              return (
+                <button
+                  key={criterion.code}
+                  type="button"
+                  className={`${activeCriterion === criterion.code ? "active" : ""} ${guidedFormLabel ? "guided-form-criterion" : ""}`}
+                  onClick={() => guidedFormLabel && onOpenCriterion ? onOpenCriterion(criterion.code) : setActiveCriterion(criterion.code)}
+                  style={{ "--category-accent": criterion.code === "all" ? "var(--green)" : criterionAccent(criterion.code) }}
+                  title={guidedFormLabel || `Show ${criterion.name || criterion.code} evidence`}
+                >
+                  <span>
+                    {criterion.name || criterion.code}
+                    {guidedFormLabel ? <em className="evidence-criterion-action">{guidedFormLabel}</em> : null}
+                  </span>
+                  <strong>{criterion.code === "all" ? rows.length : evidenceCounts[criterion.code] || 0}</strong>
+                </button>
+              );
+            })()
           ))}
         </aside>
         <div className="evidence-register-sheet">
@@ -4042,8 +4063,9 @@ function App() {
     }
     if (role === "member") {
       const requestedPage = String(snapshot.page || "").trim();
-      const hasKnownPage = MEMBER_VIEW_TYPES.has(requestedPage);
-      const nextPage = hasKnownPage ? requestedPage : (snapshot.criterion ? "workspace" : "home");
+      const normalizedPage = MEMBER_PAGE_ALIASES[requestedPage] || requestedPage;
+      const hasKnownPage = MEMBER_VIEW_TYPES.has(normalizedPage);
+      const nextPage = hasKnownPage ? normalizedPage : (snapshot.criterion ? "workspace" : "home");
       if (requestedPage && !hasKnownPage) {
         routeNoticeRef.current = {
           type: "error",
