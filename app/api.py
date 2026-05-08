@@ -309,6 +309,27 @@ def leader_invite_member(
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
+@app.get("/api/member/registration-invite")
+def member_registration_invite(token: str) -> dict:
+    try:
+        return service().member_registration_invite(token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.post("/api/member/register")
+def register_invited_member(
+    request: Request,
+    token: str = Form(...),
+    password: str = Form(...),
+    phone: str = Form(""),
+) -> dict:
+    try:
+        return service().register_invited_member(token, password, phone, _login_audit_context(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
 @app.patch("/api/leader/members/{client_id}/builder-assignment")
 def leader_assign_builder(client_id: str, builder_id: str = Form(...), _leader_user: dict = Depends(require_leader_user)) -> dict:
     try:

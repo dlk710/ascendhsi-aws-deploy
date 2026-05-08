@@ -10,6 +10,7 @@ import time
 import zipfile
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlencode
 import uuid
 
 import requests
@@ -3003,6 +3004,82 @@ class EvidenceService:
             """
         )
 
+    def _invite_token_hash(self, token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    def _invite_expiry_at(self) -> str:
+        raw_days = os.environ.get("ASCEND_INVITE_EXPIRY_DAYS", "14").strip()
+        try:
+            days = max(1, min(60, int(raw_days)))
+        except ValueError:
+            days = 14
+        return (datetime.utcnow() + timedelta(days=days)).isoformat(timespec="seconds")
+
+    def _public_app_base_url(self) -> str:
+        base_url = (
+            os.environ.get("ASCEND_PUBLIC_BASE_URL", "").strip()
+            or os.environ.get("ASCEND_FRONTEND_BASE_URL", "").strip()
+            or os.environ.get("ASCEND_APP_BASE_URL", "").strip()
+            or "http://127.0.0.1:3001"
+        )
+        return base_url.rstrip("/")
+
+    def _member_registration_link(self, token: str) -> str:
+        return f"{self._public_app_base_url()}/?{urlencode({'portal': 'member', 'registration': token})}"
+
+    def _send_member_registration_email(self, email: str, display_name: str, registration_link: str) -> dict:
+        if os.environ.get("ASCEND_EMAIL_ENABLED", "true").strip().lower() in {"0", "false", "no", "off"}:
+            return {"status": "disabled", "error": "Email delivery is disabled by ASCEND_EMAIL_ENABLED."}
+        sender = os.environ.get("ASCEND_INVITE_EMAIL_FROM", "").strip() or os.environ.get("ASCEND_EMAIL_FROM", "").strip()
+        if not sender:
+            return {"status": "not_configured", "error": "ASCEND_INVITE_EMAIL_FROM is not configured."}
+        provider = (os.environ.get("ASCEND_EMAIL_PROVIDER", "ses").strip() or "ses").lower()
+        if provider not in {"ses", "aws_ses"}:
+            return {"status": "not_configured", "error": f"Unsupported invite email provider: {provider}."}
+        subject = "Complete your Ascend member registration"
+        text_body = (
+            f"Hello {display_name},\n\n"
+            "You have been invited to Ascend HSI Member Portal.\n\n"
+            "Complete your registration and set your password using this secure link:\n"
+            f"{registration_link}\n\n"
+            "If you did not expect this invitation, please ignore this email.\n"
+        )
+        html_body = f"""
+        <div style="font-family: Arial, sans-serif; color: #17251f; line-height: 1.5;">
+          <h2 style="color: #193f34;">Complete your Ascend registration</h2>
+          <p>Hello {display_name},</p>
+          <p>You have been invited to the Ascend HSI Member Portal.</p>
+          <p><a href="{registration_link}" style="display: inline-block; background: #193f34; color: #fffdfa; padding: 10px 14px; border-radius: 8px; text-decoration: none;">Set password and register</a></p>
+          <p>If the button does not work, copy and paste this link into your browser:</p>
+          <p>{registration_link}</p>
+        </div>
+        """
+        try:
+            import boto3
+
+            region = os.environ.get("ASCEND_SES_REGION", "").strip() or os.environ.get("AWS_REGION", "").strip() or "us-east-1"
+            client = boto3.client("sesv2", region_name=region)
+            payload = {
+                "FromEmailAddress": sender,
+                "Destination": {"ToAddresses": [email]},
+                "Content": {
+                    "Simple": {
+                        "Subject": {"Data": subject, "Charset": "UTF-8"},
+                        "Body": {
+                            "Text": {"Data": text_body, "Charset": "UTF-8"},
+                            "Html": {"Data": html_body, "Charset": "UTF-8"},
+                        },
+                    }
+                },
+            }
+            reply_to = os.environ.get("ASCEND_INVITE_REPLY_TO", "").strip()
+            if reply_to:
+                payload["ReplyToAddresses"] = [reply_to]
+            response = client.send_email(**payload)
+            return {"status": "sent", "message_id": response.get("MessageId", ""), "sent_at": datetime.utcnow().isoformat(timespec="seconds")}
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc)[:500]}
+
     def leader_invite_member(
         self,
         first_name: str,
@@ -3028,6 +3105,10 @@ class EvidenceService:
         case_id = f"case_{uuid.uuid4().hex[:10]}"
         account_id = f"acct_{uuid.uuid4().hex[:12]}"
         invite_id = f"inv_{uuid.uuid4().hex[:12]}"
+        invite_token = secrets.token_urlsafe(32)
+        invite_token_hash = self._invite_token_hash(invite_token)
+        invite_expires_at = self._invite_expiry_at()
+        registration_link = self._member_registration_link(invite_token)
         display_name = f"{first_name} {last_name}".strip()
         domain = industry_domain.strip() or self._infer_domain({"industry_domain": "", "primary_field": primary_field, "current_employer": current_employer})
         selected_builder = None
@@ -3061,16 +3142,27 @@ class EvidenceService:
                 case_id,
                 email,
                 email,
-                self._hash_password(DEFAULT_MEMBER_PASSWORD),
+                self._hash_password(secrets.token_urlsafe(48)),
                 datetime.utcnow().isoformat(timespec="seconds"),
             ),
         )
         self.conn.execute(
             """
-            INSERT INTO member_registration_invites(id, client_id, case_id, email, invited_by, status, notes)
-            VALUES (?, ?, ?, ?, 'leader', 'invited', ?)
+            INSERT INTO member_registration_invites(
+              id, client_id, case_id, email, invited_by, status, token_hash, token_expires_at,
+              email_delivery_status, notes
+            )
+            VALUES (?, ?, ?, ?, 'leader', 'invited', ?, ?, 'pending', ?)
             """,
-            (invite_id, client_id, case_id, email, "Registration link prepared for email delivery. Member should register, set a password, and complete profile intake."),
+            (
+                invite_id,
+                client_id,
+                case_id,
+                email,
+                invite_token_hash,
+                invite_expires_at,
+                "Registration link prepared. Member should set a password and complete profile intake.",
+            ),
         )
         if selected_builder:
             self.conn.execute(
@@ -3089,9 +3181,21 @@ class EvidenceService:
                 (f"aat_{uuid.uuid4().hex[:12]}", selected_attorney["id"], client_id, case_id),
             )
         self.conn.commit()
+        email_result = self._send_member_registration_email(email, display_name, registration_link)
+        self.conn.execute(
+            """
+            UPDATE member_registration_invites
+            SET email_delivery_status = ?,
+                email_sent_at = CASE WHEN ? = 'sent' THEN CURRENT_TIMESTAMP ELSE email_sent_at END,
+                email_error = ?
+            WHERE id = ?
+            """,
+            (email_result.get("status", "failed"), email_result.get("status", "failed"), email_result.get("error", ""), invite_id),
+        )
+        self.conn.commit()
         self.record_operational_event(
             "member_invite",
-            status="success",
+            status="success" if email_result.get("status") in {"sent", "not_configured", "disabled"} else "error",
             portal="leader",
             client_id=client_id,
             case_id=case_id,
@@ -3102,6 +3206,8 @@ class EvidenceService:
                 "industry_domain": domain,
                 "builder_id": selected_builder["id"] if selected_builder else "",
                 "attorney_id": selected_attorney["id"] if selected_attorney else "",
+                "email_delivery_status": email_result.get("status", "failed"),
+                "email_error": email_result.get("error", ""),
             },
         )
         return {
@@ -3113,6 +3219,10 @@ class EvidenceService:
             "email": email,
             "industry_domain": domain,
             "registration_status": "invited",
+            "registration_link": registration_link,
+            "token_expires_at": invite_expires_at,
+            "email_delivery_status": email_result.get("status", "failed"),
+            "email_error": email_result.get("error", ""),
             "builder_id": selected_builder["id"] if selected_builder else "",
             "builder_name": selected_builder["display_name"] if selected_builder else "",
             "builder_email": selected_builder["email"] if selected_builder else "",
@@ -7172,6 +7282,104 @@ class EvidenceService:
             "role": "member",
             "last_login_at": account.get("last_login_at", ""),
         }
+
+    def member_registration_invite(self, token: str) -> dict:
+        token = token.strip()
+        if not token:
+            raise ValueError("Registration token is required")
+        invite = one(
+            self.conn,
+            """
+            SELECT invite.*, c.display_name, mp.first_name, mp.last_name, mp.current_title, mp.current_employer
+            FROM member_registration_invites invite
+            JOIN clients c ON c.id = invite.client_id
+            LEFT JOIN member_profiles mp ON mp.client_id = invite.client_id AND mp.case_id = invite.case_id
+            WHERE invite.token_hash = ?
+            """,
+            (self._invite_token_hash(token),),
+        )
+        if not invite:
+            raise ValueError("Registration link is invalid")
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        if invite.get("token_expires_at") and invite["token_expires_at"] < now:
+            raise ValueError("Registration link has expired")
+        return {
+            "ok": True,
+            "invite_id": invite["id"],
+            "display_name": invite.get("display_name", ""),
+            "first_name": invite.get("first_name", ""),
+            "last_name": invite.get("last_name", ""),
+            "email": invite.get("email", ""),
+            "current_title": invite.get("current_title", ""),
+            "current_employer": invite.get("current_employer", ""),
+            "status": invite.get("status", "invited"),
+            "token_expires_at": invite.get("token_expires_at", ""),
+        }
+
+    def register_invited_member(self, token: str, password: str, phone: str = "", audit_context: dict | None = None) -> dict:
+        token = token.strip()
+        if not token:
+            raise ValueError("Registration token is required")
+        if len(password or "") < 8:
+            raise ValueError("Password must be at least 8 characters")
+        invite = one(self.conn, "SELECT * FROM member_registration_invites WHERE token_hash = ?", (self._invite_token_hash(token),))
+        if not invite:
+            raise ValueError("Registration link is invalid")
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        if invite.get("token_expires_at") and invite["token_expires_at"] < now:
+            raise ValueError("Registration link has expired")
+        if invite.get("status") == "registered":
+            raise ValueError("This registration link has already been used")
+        account = one(
+            self.conn,
+            "SELECT * FROM member_accounts WHERE client_id = ? AND case_id = ? AND LOWER(email) = ?",
+            (invite["client_id"], invite["case_id"], invite["email"].strip().lower()),
+        )
+        if not account:
+            raise ValueError("Member account was not found for this invitation")
+        self.conn.execute(
+            """
+            UPDATE member_accounts
+            SET password_hash = ?,
+                last_password_changed_at = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (self._hash_password(password), datetime.utcnow().isoformat(timespec="seconds"), account["id"]),
+        )
+        if phone.strip():
+            self.conn.execute(
+                "UPDATE member_profiles SET phone = ?, updated_at = CURRENT_TIMESTAMP WHERE client_id = ? AND case_id = ?",
+                (phone.strip(), invite["client_id"], invite["case_id"]),
+            )
+        self.conn.execute(
+            """
+            UPDATE member_registration_invites
+            SET status = 'registered',
+                registered_at = COALESCE(registered_at, CURRENT_TIMESTAMP)
+            WHERE id = ?
+            """,
+            (invite["id"],),
+        )
+        token_value = f"sess_{secrets.token_urlsafe(24)}"
+        self.conn.execute("INSERT INTO member_sessions(token, account_id) VALUES (?, ?)", (token_value, account["id"]))
+        logged_at, metadata = self._mark_account_login("member_accounts", account["id"], audit_context)
+        self.conn.commit()
+        metadata["last_login_at"] = logged_at
+        self.record_operational_event(
+            "member_registration",
+            status="success",
+            portal="member",
+            client_id=invite["client_id"],
+            case_id=invite["case_id"],
+            endpoint="/api/member/register",
+            message="Member completed invited registration.",
+            metadata=metadata,
+            actor_role="member",
+            actor_key=invite["client_id"],
+        )
+        account = one(self.conn, "SELECT * FROM member_accounts WHERE id = ?", (account["id"],)) or account
+        return {"ok": True, "status": "registered", "token": token_value, "member": self._member_payload(account), "next_page": "profile"}
 
     def login_member(self, username: str, password: str, audit_context: dict | None = None) -> dict:
         username = username.strip().lower()

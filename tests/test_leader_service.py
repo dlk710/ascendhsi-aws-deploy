@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 from app.config import AppConfig
@@ -99,6 +100,31 @@ class LeaderPortalServiceTests(unittest.TestCase):
         member = next(item for item in self.service.leader_dashboard()["members"] if item["client_id"] == result["client_id"])
         self.assertEqual(member["builder_id"], builder_id)
         self.assertEqual(member["attorney_id"], attorney_id)
+
+    def test_leader_invite_sends_registration_link_and_member_registers(self):
+        with patch.object(self.service, "_send_member_registration_email", return_value={"status": "sent", "sent_at": "2026-05-08T00:00:00"}) as send_email:
+            result = self.service.leader_invite_member(
+                "Mina",
+                "Register",
+                "mina.register@example.com",
+                industry_domain="Technology",
+            )
+
+        self.assertEqual(result["email_delivery_status"], "sent")
+        self.assertIn("registration=", result["registration_link"])
+        send_email.assert_called_once()
+        token = parse_qs(urlparse(result["registration_link"]).query)["registration"][0]
+        invite = self.service.member_registration_invite(token)
+        self.assertEqual(invite["email"], "mina.register@example.com")
+
+        with self.assertRaises(ValueError):
+            self.service.login_member("mina.register@example.com", DEFAULT_MEMBER_PASSWORD, {})
+
+        registration = self.service.register_invited_member(token, "SecurePass123", "555-0100", {})
+        self.assertEqual(registration["status"], "registered")
+        self.assertEqual(registration["member"]["email"], "mina.register@example.com")
+        login = self.service.login_member("mina.register@example.com", "SecurePass123", {})
+        self.assertEqual(login["member"]["client_id"], result["client_id"])
 
     def test_leader_can_access_attorney_evidence_view(self):
         sample = self.config.upload_root / "sample.txt"

@@ -961,6 +961,7 @@ function readPortalRoute() {
     memberId: params.get("member") || "",
     criterion: params.get("criterion") || "",
     folderId: params.get("folder") || "",
+    registrationToken: params.get("registration") || params.get("invite") || "",
   };
 }
 
@@ -1658,6 +1659,7 @@ function LeaderRecentInvitesPanel({ invites = [] }) {
             <p>{item.email}</p>
             <div className="task-mini-meta">
               <span>{item.status === "registered" ? "Registered" : "Invite sent"}</span>
+              <span>Email: {item.email_delivery_status || "pending"}</span>
               <span>{item.invite_sent_at ? `Invited ${item.invite_sent_at}` : "Invite pending"}</span>
               <span>{item.registered_at ? `Registered ${item.registered_at}` : "Awaiting registration"}</span>
             </div>
@@ -3577,6 +3579,10 @@ function App() {
   const [leaderInsights, setLeaderInsights] = useState(null);
   const [leaderPerspective, setLeaderPerspective] = useState("leader");
   const [leaderInviteForm, setLeaderInviteForm] = useState(emptyLeaderInviteForm());
+  const [registrationToken, setRegistrationToken] = useState(initialRoute.registrationToken || "");
+  const [registrationInfo, setRegistrationInfo] = useState(null);
+  const [registrationForm, setRegistrationForm] = useState({ password: "", confirm_password: "", phone: "" });
+  const [registrationBusy, setRegistrationBusy] = useState(false);
   const [productBacklog, setProductBacklog] = useState({ items: [], priority_counts: {}, status_counts: {} });
   const [featureRequestForm, setFeatureRequestForm] = useState(emptyFeatureRequestForm());
   const [featureRequestBusy, setFeatureRequestBusy] = useState(false);
@@ -3968,7 +3974,7 @@ function App() {
 
   function buildRouteUrl(snapshot) {
     const url = new URL(window.location.href);
-    ["portal", "page", "section", "perspective", "member", "criterion", "folder"].forEach((key) => url.searchParams.delete(key));
+    ["portal", "page", "section", "perspective", "member", "criterion", "folder", "registration", "invite"].forEach((key) => url.searchParams.delete(key));
     if (snapshot.portal) url.searchParams.set("portal", snapshot.portal);
     if (snapshot.page) url.searchParams.set("page", snapshot.page);
     if (snapshot.section) url.searchParams.set("section", snapshot.section);
@@ -3976,13 +3982,14 @@ function App() {
     if (snapshot.memberId) url.searchParams.set("member", snapshot.memberId);
     if (snapshot.criterion) url.searchParams.set("criterion", snapshot.criterion);
     if (snapshot.folderId) url.searchParams.set("folder", snapshot.folderId);
+    if (snapshot.registrationToken) url.searchParams.set("registration", snapshot.registrationToken);
     return url.toString();
   }
 
   function currentRouteSnapshot() {
     const portal = normalizePortalRole(authMember?.role) || normalizePortalRole(authMode) || "member";
     if (!authMember) {
-      return { portal };
+      return { portal: registrationToken ? "member" : portal, registrationToken };
     }
     if (portal === "member") {
       return {
@@ -4026,6 +4033,12 @@ function App() {
     const role = options.role || authenticatedRole || requestedPortal || normalizePortalRole(authMode) || "member";
     if (!authMember && requestedPortal) {
       setAuthMode(requestedPortal);
+    }
+    if (snapshot.registrationToken) {
+      setRegistrationToken(snapshot.registrationToken);
+      setAuthMode("member");
+    } else if (!authMember) {
+      setRegistrationToken("");
     }
     if (role === "member") {
       const requestedPage = String(snapshot.page || "").trim();
@@ -4957,6 +4970,12 @@ function App() {
     loadMessageCenterData(authMember);
   }, [authMember]);
   useEffect(() => {
+    if (!authMember && registrationToken) {
+      setAuthMode("member");
+      loadRegistrationInvite(registrationToken);
+    }
+  }, [authMember, registrationToken]);
+  useEffect(() => {
     if (authMember?.role === "leader") loadProductBacklog();
   }, [authMember?.role]);
   useEffect(() => {
@@ -4992,7 +5011,7 @@ function App() {
       window.history.pushState({}, "", nextUrl);
     }
     routeSyncRef.current.lastUrl = nextUrl;
-  }, [authReady, authMode, authMember?.role, view.type, view.criterionCode, selectedFolderId, portalSection, leaderPerspective, selectedBuilderMemberId]);
+  }, [authReady, authMode, authMember?.role, registrationToken, view.type, view.criterionCode, selectedFolderId, portalSection, leaderPerspective, selectedBuilderMemberId]);
   useEffect(() => {
     if (!authReady || loading || !routeNoticeRef.current) return;
     setMessage(routeNoticeRef.current);
@@ -5418,9 +5437,13 @@ function App() {
           result.payload.builder_name ? `Builder: ${result.payload.builder_name}` : "",
           result.payload.attorney_name ? `Attorney: ${result.payload.attorney_name}` : "",
         ].filter(Boolean).join(" • ");
+        const emailStatus = result.payload.email_delivery_status || "pending";
+        const emailNote = emailStatus === "sent"
+          ? "Invitation email sent"
+          : `Invite created, but email was not sent yet (${emailStatus}${result.payload.email_error ? `: ${result.payload.email_error}` : ""}). Registration link: ${result.payload.registration_link || "not available"}`;
         setMessage({
-          type: "success",
-          text: `Invitation prepared for ${result.payload.display_name}. Registration link is ready for email delivery${routed ? `; ${routed}` : "; assignments can be completed later"}.`,
+          type: emailStatus === "failed" ? "error" : "success",
+          text: `${emailNote}. ${routed || "Assignments can be completed later"}.`,
         });
         setLeaderInviteForm(emptyLeaderInviteForm());
         await loadLeaderPortal(result.payload.client_id);
@@ -5429,6 +5452,54 @@ function App() {
       }
     } finally {
       setBuilderBusy(false);
+    }
+  }
+
+  async function loadRegistrationInvite(token) {
+    if (!token) return;
+    setRegistrationBusy(true);
+    setMessage(null);
+    try {
+      const invite = await getJson("/api/member/registration-invite", { token });
+      setRegistrationInfo(invite);
+    } catch (error) {
+      setRegistrationInfo(null);
+      setMessage({ type: "error", text: error.error || "Registration link is invalid or expired." });
+    } finally {
+      setRegistrationBusy(false);
+    }
+  }
+
+  async function submitRegistration(event) {
+    event.preventDefault();
+    setMessage(null);
+    if (registrationForm.password !== registrationForm.confirm_password) {
+      setMessage({ type: "error", text: "Passwords do not match." });
+      return;
+    }
+    setRegistrationBusy(true);
+    try {
+      const formData = new FormData();
+      formData.set("token", registrationToken);
+      formData.set("password", registrationForm.password);
+      formData.set("phone", registrationForm.phone);
+      const result = await sendForm("/api/member/register", formData);
+      if (!result.ok) {
+        setMessage({ type: "error", text: result.payload.error || "Could not complete registration." });
+        return;
+      }
+      persistAuth(result.payload.token, result.payload.member);
+      setAuthMode("member");
+      setAuthMember(result.payload.member);
+      setRegistrationToken("");
+      setRegistrationInfo(null);
+      setRegistrationForm({ password: "", confirm_password: "", phone: "" });
+      await loadHome();
+      setView({ type: "profile", criterionCode: "" });
+      setProfileTab("identity");
+      setMessage({ type: "success", text: "Registration complete. Please review and complete your member profile." });
+    } finally {
+      setRegistrationBusy(false);
     }
   }
 
@@ -6179,6 +6250,45 @@ function App() {
   }
 
   if (!authMember) {
+    if (registrationToken) {
+      return (
+        <main className="login-page">
+          <div className="landing-grid">
+            <section className="login-hero">
+              <img className="brand-logo login-logo" src={LOGO_URL} alt="Ascend HSI logo" />
+              <p className="eyebrow">Member Registration</p>
+              <h1>Complete your Ascend access.</h1>
+              <p>Set your password to activate your Member Portal account, then finish your profile intake.</p>
+              {message ? <div className={`banner ${message.type}`}>{message.text}</div> : null}
+              {registrationInfo ? (
+                <div className="side-card" style={{ color: "var(--ink)", background: "#fffdfa", borderColor: "var(--line)" }}>
+                  <strong>{registrationInfo.display_name || "Invited member"}</strong>
+                  <p>{registrationInfo.email}</p>
+                  <p>{registrationInfo.current_title || "Profile title pending"}{registrationInfo.current_employer ? ` • ${registrationInfo.current_employer}` : ""}</p>
+                </div>
+              ) : null}
+              <form className="login-card" onSubmit={submitRegistration}>
+                <label>
+                  Phone number
+                  <input value={registrationForm.phone} onChange={(event) => setRegistrationForm((current) => ({ ...current, phone: event.target.value }))} placeholder="Optional, can be completed later" />
+                </label>
+                <label>
+                  Password
+                  <input type="password" value={registrationForm.password} onChange={(event) => setRegistrationForm((current) => ({ ...current, password: event.target.value }))} placeholder="Create a secure password" required />
+                </label>
+                <label>
+                  Confirm password
+                  <input type="password" value={registrationForm.confirm_password} onChange={(event) => setRegistrationForm((current) => ({ ...current, confirm_password: event.target.value }))} placeholder="Re-enter password" required />
+                </label>
+                <button className="primary" type="submit" disabled={registrationBusy}>{registrationBusy ? "Completing..." : "Complete Registration"}</button>
+                <button className="ghost" type="button" onClick={() => { setRegistrationToken(""); setMessage(null); }}>Back to sign in</button>
+              </form>
+            </section>
+            <AscendVisaCompass />
+          </div>
+        </main>
+      );
+    }
     const selectedPortal = portalMeta(authMode);
     const loginChoices = devLoginOptions(authMode);
     return (

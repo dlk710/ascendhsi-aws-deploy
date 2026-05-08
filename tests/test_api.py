@@ -83,6 +83,26 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(args[:2], ("vas@ascend.com", "secret123"))
         self.assertIn("client_ip", args[2])
 
+    def test_registration_invite_lookup_uses_service(self):
+        service = Mock()
+        service.member_registration_invite.return_value = {"ok": True, "email": "sam@example.com"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/member/registration-invite", params={"token": "invite_token"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["email"], "sam@example.com")
+        service.member_registration_invite.assert_called_once_with("invite_token")
+
+    def test_invited_member_registration_uses_service(self):
+        service = Mock()
+        service.register_invited_member.return_value = {"ok": True, "token": "sess_new", "member": {"display_name": "Sam"}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post("/api/member/register", data={"token": "invite_token", "password": "secret123", "phone": "555-1234"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["token"], "sess_new")
+        args = service.register_invited_member.call_args.args
+        self.assertEqual(args[:3], ("invite_token", "secret123", "555-1234"))
+        self.assertIn("client_ip", args[3])
+
     def test_change_password_uses_service(self):
         service = Mock()
         service.change_member_password.return_value = {"ok": True, "status": "password_updated"}

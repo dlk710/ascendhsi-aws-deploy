@@ -259,6 +259,11 @@ CREATE TABLE IF NOT EXISTS member_registration_invites (
   email TEXT NOT NULL,
   invited_by TEXT NOT NULL DEFAULT 'leader',
   status TEXT NOT NULL DEFAULT 'invited',
+  token_hash TEXT NOT NULL DEFAULT '',
+  token_expires_at TEXT NOT NULL DEFAULT '',
+  email_delivery_status TEXT NOT NULL DEFAULT 'pending',
+  email_sent_at TEXT,
+  email_error TEXT NOT NULL DEFAULT '',
   invite_sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   registered_at TEXT,
   notes TEXT NOT NULL DEFAULT ''
@@ -774,6 +779,11 @@ def initialize(conn: ConnectionAdapter | sqlite3.Connection) -> None:
     ensure_column(conn, "tasks", "due_date", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "support_tickets", "priority", "TEXT NOT NULL DEFAULT 'normal'")
     ensure_column(conn, "support_tickets", "is_blocking", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "member_registration_invites", "token_hash", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "member_registration_invites", "token_expires_at", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "member_registration_invites", "email_delivery_status", "TEXT NOT NULL DEFAULT 'pending'")
+    ensure_column(conn, "member_registration_invites", "email_sent_at", "TEXT")
+    ensure_column(conn, "member_registration_invites", "email_error", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "criteria", "display_order", "INTEGER NOT NULL DEFAULT 0")
     conn.commit()
 

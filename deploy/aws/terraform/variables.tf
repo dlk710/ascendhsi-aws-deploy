@@ -117,6 +117,36 @@ variable "openai_api_key" {
   default     = ""
 }
 
+variable "invite_email_provider" {
+  description = "Email provider for member registration invites. Currently supports ses."
+  type        = string
+  default     = "ses"
+}
+
+variable "invite_email_from" {
+  description = "Verified sender email identity used for member registration invites."
+  type        = string
+  default     = ""
+}
+
+variable "invite_email_reply_to" {
+  description = "Optional reply-to email for member registration invites."
+  type        = string
+  default     = ""
+}
+
+variable "invite_email_region" {
+  description = "AWS SES region used for member registration invite emails."
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "invite_expiry_days" {
+  description = "Number of days a member registration invite remains valid."
+  type        = number
+  default     = 14
+}
+
 variable "db_name" {
   description = "PostgreSQL database name."
   type        = string
