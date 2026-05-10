@@ -4611,6 +4611,32 @@ textarea { min-height: 150px; resize: vertical; }
 .support-attachment-links a:hover {
   text-decoration: underline;
 }
+.environment-badge {
+  position: fixed;
+  right: 18px;
+  bottom: 86px;
+  z-index: 45;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: calc(100vw - 36px);
+  padding: 7px 10px;
+  border: 1px solid rgba(184, 147, 77, 0.38);
+  border-radius: 999px;
+  background: rgba(255, 253, 248, 0.94);
+  color: var(--green-dark);
+  box-shadow: 0 14px 34px rgba(31, 63, 52, 0.13);
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+.environment-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--gold), var(--green-mid));
+  box-shadow: 0 0 0 3px rgba(61, 132, 110, 0.13);
+}
 
 @media (max-width: 1100px) {
   .landing-grid {

@@ -1,6 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-const API_URL = (window.ASCEND_RUNTIME_CONFIG?.apiUrl || window.ASCEND_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+const RUNTIME_HAS_API_URL = Boolean(
+  window.ASCEND_RUNTIME_CONFIG
+    && Object.prototype.hasOwnProperty.call(window.ASCEND_RUNTIME_CONFIG, "apiUrl")
+);
+const API_URL = String(
+  RUNTIME_HAS_API_URL
+    ? window.ASCEND_RUNTIME_CONFIG.apiUrl
+    : (window.ASCEND_API_URL || "http://127.0.0.1:8000")
+).replace(/\/$/, "");
+const IS_LOCAL_PORTAL = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+const ENVIRONMENT_LABEL = window.ASCEND_RUNTIME_CONFIG?.environmentLabel || (IS_LOCAL_PORTAL ? "Local UI -> AWS DEV API" : "");
+const SHOW_ENVIRONMENT_BADGE = Boolean(window.ASCEND_RUNTIME_CONFIG?.showEnvironmentBadge ?? IS_LOCAL_PORTAL);
 const LOGO_URL = "https://ascendhsi.com/wp-content/uploads/2024/08/Ascend-logo-no-bg.webp";
 const AUTH_TOKEN_KEY = "ascend_member_token";
 const AUTH_MEMBER_KEY = "ascend_member_info";
@@ -460,6 +471,16 @@ function formatLastLogin(value) {
 
 function LastLoginStamp({ user }) {
   return <span className="last-login-stamp">Last login: {formatLastLogin(user?.last_login_at)}</span>;
+}
+
+function EnvironmentBadge() {
+  if (!SHOW_ENVIRONMENT_BADGE || !ENVIRONMENT_LABEL) return null;
+  return (
+    <div className="environment-badge" aria-label={`Environment: ${ENVIRONMENT_LABEL}`}>
+      <span className="environment-dot" />
+      <strong>{ENVIRONMENT_LABEL}</strong>
+    </div>
+  );
 }
 
 const HELP_MANUAL_SECTIONS = {
@@ -10917,6 +10938,7 @@ function App() {
         )}
         </section>
       </main>
+      <EnvironmentBadge />
       {supportPanel}
       {helpManualDialog}
     </React.Fragment>

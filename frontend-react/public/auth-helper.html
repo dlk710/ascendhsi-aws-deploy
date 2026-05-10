@@ -44,7 +44,13 @@
     </main>
     <script src="/runtime-config.js"></script>
     <script>
-      const API_URL = window.ASCEND_RUNTIME_CONFIG?.apiUrl ?? window.ASCEND_API_URL ?? "http://127.0.0.1:8000";
+      const runtimeHasApiUrl = Boolean(
+        window.ASCEND_RUNTIME_CONFIG
+          && Object.prototype.hasOwnProperty.call(window.ASCEND_RUNTIME_CONFIG, "apiUrl")
+      );
+      const API_URL = String(
+        runtimeHasApiUrl ? window.ASCEND_RUNTIME_CONFIG.apiUrl : (window.ASCEND_API_URL || "http://127.0.0.1:8000")
+      ).replace(/\/$/, "");
       const AUTH_TOKEN_KEY = "ascend_member_token";
       const AUTH_MEMBER_KEY = "ascend_member_info";
 

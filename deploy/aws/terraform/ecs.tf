@@ -129,7 +129,7 @@ resource "aws_ecs_task_definition" "backend" {
         { name = "ASCEND_INVITE_REPLY_TO", value = var.invite_email_reply_to },
         { name = "ASCEND_SES_REGION", value = var.invite_email_region },
         { name = "ASCEND_INVITE_EXPIRY_DAYS", value = tostring(var.invite_expiry_days) },
-        { name = "ASCEND_BUG_LOG_TABLE", value = var.issue_log_table_name },
+        { name = "ASCEND_BUG_LOG_TABLE", value = local.issue_log_table_name },
         { name = "ASCEND_FRONTEND_BUCKET", value = aws_s3_bucket.frontend.id },
         { name = "ASCEND_CLOUDFRONT_DISTRIBUTION_ID", value = aws_cloudfront_distribution.frontend.id },
         { name = "ASCEND_ECS_CLUSTER", value = "${local.name_prefix}-cluster" },

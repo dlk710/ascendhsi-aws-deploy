@@ -1,8 +1,8 @@
 account_id                = "027903151318"
 aws_region                = "us-east-2"
 environment               = "dev"
-frontend_domain           = "app.ascendhsi.com"
-api_domain                = "api.ascendhsi.com"
+frontend_domain           = "dev-portal.ascendhsi.com"
+api_domain                = "dev-api.ascendhsi.com"
 storage_bucket_base_name  = "client_data"
 archive_bucket_base_name  = "client_data-archive"
 create_acm_certificates   = false

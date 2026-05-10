@@ -15,12 +15,17 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: aws-dev-backend
+  cancel-in-progress: false
+
 env:
   AWS_REGION: us-east-2
   AWS_ACCOUNT_ID: "027903151318"
   ECR_REPOSITORY: ascend-dev-backend
   ECS_CLUSTER: ascend-dev-cluster
   ECS_SERVICE: ascend-dev-backend
+  TARGET_DEV_URL: https://dev-portal.ascendhsi.com
   SMOKE_URL: https://dq5ab404dg57q.cloudfront.net/ready
 
 jobs:

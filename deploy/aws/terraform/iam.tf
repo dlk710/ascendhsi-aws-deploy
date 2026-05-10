@@ -94,7 +94,7 @@ data "aws_iam_policy_document" "ecs_task_policy" {
     ]
 
     resources = [
-      "arn:aws:dynamodb:${var.aws_region}:${local.account_id}:table/${var.issue_log_table_name}",
+      "arn:aws:dynamodb:${var.aws_region}:${local.account_id}:table/${local.issue_log_table_name}",
     ]
   }
 

@@ -12,10 +12,15 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: aws-dev-frontend
+  cancel-in-progress: false
+
 env:
   AWS_REGION: us-east-2
   FRONTEND_BUCKET: ascend-frontend-dev-027903151318
   CLOUDFRONT_DISTRIBUTION_ID: EV6WT9DUO1GQH
+  TARGET_DEV_URL: https://dev-portal.ascendhsi.com
   APP_URL: https://dq5ab404dg57q.cloudfront.net
 
 jobs:

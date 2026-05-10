@@ -134,13 +134,26 @@ The current dev deployment runs in AWS account `027903151318`, region `us-east-2
 - Observability: ALB/CloudFront logs in S3 with Athena workgroup `ascend-dev-observability`
 - Secrets: AWS Secrets Manager entries for database URL and OpenAI API key
 
-The public dev URL is:
+The target branded dev URL is:
+
+```text
+https://dev-portal.ascendhsi.com
+```
+
+Until DNS and SSL validation are completed for that custom domain, the CloudFront distribution URL remains the active fallback:
 
 ```text
 https://dq5ab404dg57q.cloudfront.net
 ```
 
 After frontend changes, build the React app, sync `frontend-react/dist/` to the frontend S3 bucket, and invalidate CloudFront.
+
+For local UX work against the AWS dev backend, use:
+
+```bash
+cd frontend-react
+pnpm run dev:aws
+```
 
 ## Continuation guidance
 
@@ -151,8 +164,9 @@ Start here when resuming work:
 3. `docs/solution-architecture.md`
 4. `docs/verification-notes.md`
 5. `docs/missing-features.md`
-6. `docs/context-threads/19-chat-change-inventory.md`
-7. `docs/context-threads/20-thread-to-file-map.md`
+6. `docs/team-dev-workflow.md`
+7. `docs/context-threads/19-chat-change-inventory.md`
+8. `docs/context-threads/20-thread-to-file-map.md`
 
 ## Demo helpers
 

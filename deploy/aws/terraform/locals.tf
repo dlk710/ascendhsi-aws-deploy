@@ -11,6 +11,7 @@ locals {
   archive_bucket_name        = "${local.archive_bucket_base}-${var.environment}-${local.account_id}"
   logs_bucket_name           = "${local.logs_bucket_base}-${var.environment}-${local.account_id}"
   athena_results_bucket      = "${local.athena_results_bucket_base}-${var.environment}-${local.account_id}"
+  issue_log_table_name       = var.issue_log_table_name != "" ? var.issue_log_table_name : "${local.name_prefix}-product-issue-logs"
   backend_image              = var.backend_image != "" ? var.backend_image : "${aws_ecr_repository.backend.repository_url}:latest"
   frontend_certificate       = var.create_acm_certificates ? aws_acm_certificate_validation.frontend[0].certificate_arn : var.frontend_certificate_arn
   api_certificate            = var.create_acm_certificates ? aws_acm_certificate_validation.api[0].certificate_arn : var.api_certificate_arn

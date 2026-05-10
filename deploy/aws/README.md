@@ -51,13 +51,26 @@ The current dev deployment is live in AWS account `027903151318`, region `us-eas
 - Athena workgroup: `ascend-dev-observability`
 - Athena database: `ascend_dev_observability`
 
-Current user-facing dev URL:
+Target user-facing dev URL:
+
+```text
+https://dev-portal.ascendhsi.com
+```
+
+Until DNS and SSL validation are completed for that custom domain, use the CloudFront fallback URL:
 
 ```text
 https://dq5ab404dg57q.cloudfront.net
 ```
 
 The ALB DNS name should be treated as an internal API origin for troubleshooting, not as the user-facing product-suite URL.
+
+For local UX iteration against the shared AWS dev backend:
+
+```bash
+cd frontend-react
+pnpm run dev:aws
+```
 
 ## Frontend Release Steps
 
