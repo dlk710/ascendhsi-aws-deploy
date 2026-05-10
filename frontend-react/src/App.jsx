@@ -80,6 +80,77 @@ const ATTORNEY_SECTIONS = new Set(["home", "dossier", "petition", "endeavor", "r
 const LEADER_EXEC_SECTIONS = new Set(["home", "invite", "members", "risks", "capacity", "timeline", "backlog", "oversight", "opportunities", "batch", "messages"]);
 const ADMIN_SECTIONS = new Set(["home", "health", "costs", "support", "issues", "debug", "messages"]);
 const LEADER_PERSPECTIVES = new Set(["leader", "builder", "attorney"]);
+const PATH_PORTALS = new Set(["builder", "leader", "attorney", "admin"]);
+const PORTAL_SECTION_ALIASES = {
+  builder: { profiles: "members" },
+};
+const PORTAL_SECTION_PATHS = {
+  builder: { members: "profiles" },
+};
+const SECTION_SUBTITLES = {
+  builder: {
+    home: "Assigned member momentum and profile-building actions",
+    members: "Search members, review evidence, and update profile-building status",
+    opportunities: "Create reusable EB1A opportunities and member tasks",
+    messages: "Keep builder collaboration in one thread view",
+  },
+  attorney: {
+    home: "Case queue, evidence readiness, and legal drafting priorities",
+    dossier: "Review full member profile, criteria, and evidence exports",
+    petition: "Generate petition strategy and drafting structure",
+    endeavor: "Create compact endeavor letter drafts",
+    recommendations: "Generate dependent and independent recommendation letters",
+    batch: "Review batch evidence before committing",
+    evidence: "Review uploaded evidence and attorney notes",
+    messages: "Attorney collaboration and member follow-up",
+  },
+  leader: {
+    home: "Executive-level movement across the EB1A operation",
+    invite: "Create member invitations and optional assignments",
+    members: "Review roster readiness and case progress",
+    risks: "See late members and bottlenecks before they become filing delays",
+    capacity: "Rebalance profile builder and attorney workloads",
+    timeline: "Track realistic petition delivery timelines",
+    backlog: "Capture product suite feature requests",
+    oversight: "Assign members to profile builders and attorneys",
+    opportunities: "Review strategic opportunities across members",
+    batch: "Monitor batch intake and evidence routing",
+    messages: "Lead team collaboration",
+  },
+  admin: {
+    home: "Operational monitoring for the product suite",
+    health: "Platform health, AWS stack, and response-time visibility",
+    costs: "AWS and OpenAI cost tracking",
+    support: "Support ticket triage",
+    issues: "Excel-style issue portal and bug backlog",
+    debug: "Debug console and activity logs",
+    messages: "Admin communications",
+  },
+};
+const ASSESSMENT_ROUTE_LABELS = {
+  home: "Customer-facing free assessment and lead capture",
+  questions: "Chat-style eligibility questions with saved answers",
+  lead: "Collect email and optional phone before showing final result",
+  results: "Show sample visa path result and next steps",
+  leads: "Marketing lead table for future follow-up",
+};
+
+const ISSUE_STATUS_OPTIONS = [
+  { value: "new", label: "New" },
+  { value: "triaged", label: "Triaged" },
+  { value: "in_progress", label: "In progress" },
+  { value: "testing", label: "Testing" },
+  { value: "fixed_local", label: "Fixed local" },
+  { value: "fixed", label: "Fixed" },
+  { value: "wont_do", label: "Won't do" },
+  { value: "duplicate", label: "Duplicate" },
+];
+
+const LEGACY_ISSUE_STATUS_LABELS = {
+  open: "New",
+  blocked: "Testing",
+  closed: "Fixed",
+};
 const SIDEBAR_WIDTH_KEY = "ascend_sidebar_width";
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 420;
@@ -191,6 +262,53 @@ const VISA_COMPASS_QUESTIONS = [
     ],
   },
 ];
+
+const ASSESSMENT_QUESTIONS = [
+  {
+    code: "outcome",
+    question: "What outcome are you trying to reach?",
+    type: "single",
+    options: ["Green card", "Work visa", "Long-term plan", "Just exploring"],
+  },
+  {
+    code: "profile",
+    question: "Which profile best describes you?",
+    type: "single",
+    options: ["Tech leader", "Researcher", "Executive", "Founder", "Creative", "Other"],
+  },
+  {
+    code: "recognition",
+    question: "Which recognition signals do you already have?",
+    type: "multi",
+    options: ["Awards", "Critical role", "Original contribution", "Judging", "Press", "Membership", "Patents", "High salary", "None"],
+  },
+  {
+    code: "impact",
+    question: "How broad is the impact of your work?",
+    type: "single",
+    options: ["Local", "Company", "Industry", "Global"],
+  },
+  {
+    code: "education",
+    question: "What education or expertise can you document?",
+    type: "single",
+    options: ["Advanced degree", "Bachelor's + experience", "Equivalent expertise"],
+  },
+  {
+    code: "support_path",
+    question: "What support path is available?",
+    type: "single",
+    options: ["Self-directed", "Employer-supported", "Co-founder", "Investor", "Other"],
+  },
+  {
+    code: "timing",
+    question: "How soon do you need a strategy?",
+    type: "single",
+    options: ["Now", "3-6 months", "6-12 months", "Just researching"],
+  },
+];
+
+const ASSESSMENT_STORAGE_KEY = "ascend_assessment_session_v1";
 
 const VISA_PATH_INFO = {
   eb1a: {
@@ -958,6 +1076,310 @@ function AscendVisaCompass() {
   );
 }
 
+function loadAssessmentState() {
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(ASSESSMENT_STORAGE_KEY) || "{}");
+    return {
+      answers: parsed.answers || {},
+      lead: parsed.lead || { name: "", email: "", phone: "", country: "", consent: false },
+      resultToken: parsed.resultToken || "",
+    };
+  } catch (_error) {
+    return { answers: {}, lead: { name: "", email: "", phone: "", country: "", consent: false }, resultToken: "" };
+  }
+}
+
+function persistAssessmentState(nextState) {
+  window.sessionStorage.setItem(ASSESSMENT_STORAGE_KEY, JSON.stringify(nextState));
+}
+
+function scoreAssessmentAnswers(answers) {
+  const recognition = answers.recognition || [];
+  const scores = { "EB-1A": 20, "EB-2 NIW": 20, "O-1": 18, "L-1": 12 };
+  const signals = Array.isArray(recognition) ? recognition.filter((item) => item !== "None") : [];
+  if (answers.outcome === "Green card") { scores["EB-1A"] += 18; scores["EB-2 NIW"] += 16; }
+  if (answers.outcome === "Work visa") scores["O-1"] += 18;
+  if (["Tech leader", "Executive", "Founder"].includes(answers.profile)) { scores["EB-1A"] += 12; scores["O-1"] += 8; }
+  if (answers.profile === "Researcher") scores["EB-2 NIW"] += 16;
+  if (signals.includes("Critical role")) scores["EB-1A"] += 12;
+  if (signals.includes("Original contribution")) { scores["EB-1A"] += 12; scores["EB-2 NIW"] += 10; }
+  if (signals.includes("Judging")) { scores["EB-1A"] += 8; scores["O-1"] += 6; }
+  if (signals.includes("Press") || signals.includes("Awards")) { scores["EB-1A"] += 8; scores["O-1"] += 8; }
+  if (["Industry", "Global"].includes(answers.impact)) { scores["EB-1A"] += 12; scores["EB-2 NIW"] += 12; }
+  if (answers.education === "Advanced degree") scores["EB-2 NIW"] += 14;
+  if (answers.support_path === "Employer-supported") scores["O-1"] += 8;
+  if (answers.support_path === "Investor") scores["L-1"] += 10;
+  const ranked = Object.entries(scores).sort((left, right) => right[1] - left[1]);
+  return {
+    topPath: ranked[0]?.[0] || "EB-1A",
+    score: Math.min(96, ranked[0]?.[1] || 50),
+    runnerUp: ranked[1]?.[0] || "EB-2 NIW",
+    signals,
+    nextStep: "Book a consultation so Ascend can review documents, evidence depth, and timing with the right strategy lens.",
+  };
+}
+
+function AssessmentPublicPortal({ initialPage = "home" }) {
+  const restored = loadAssessmentState();
+  const [page, setPage] = useState(["home", "questions", "lead", "results"].includes(initialPage) ? initialPage : "home");
+  const [answers, setAnswers] = useState(restored.answers);
+  const [lead, setLead] = useState(restored.lead);
+  const [resultToken, setResultToken] = useState(restored.resultToken);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const answeredCount = ASSESSMENT_QUESTIONS.filter((question) => {
+    const value = answers[question.code];
+    return Array.isArray(value) ? value.length : Boolean(value);
+  }).length;
+  const result = scoreAssessmentAnswers(answers);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const route = readPortalRoute();
+      if (route.portal === "assessment") setPage(["home", "questions", "lead", "results"].includes(route.page) ? route.page : "home");
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    persistAssessmentState({ answers, lead, resultToken });
+  }, [answers, lead, resultToken]);
+
+  function navigate(nextPage) {
+    setPage(nextPage);
+    window.history.pushState({}, "", `/assessment/${nextPage === "home" ? "" : nextPage}`.replace(/\/$/, ""));
+  }
+
+  function setAnswer(question, option) {
+    setError("");
+    setAnswers((current) => {
+      if (question.type === "multi") {
+        const existing = Array.isArray(current[question.code]) ? current[question.code] : [];
+        const next = existing.includes(option) ? existing.filter((item) => item !== option) : [...existing, option];
+        return { ...current, [question.code]: next };
+      }
+      return { ...current, [question.code]: option };
+    });
+  }
+
+  function resetAnswers() {
+    setAnswers({});
+    setLead({ name: "", email: "", phone: "", country: "", consent: false });
+    setResultToken("");
+    window.sessionStorage.removeItem(ASSESSMENT_STORAGE_KEY);
+    navigate("questions");
+  }
+
+  async function submitLead(event) {
+    event.preventDefault();
+    if (!lead.name.trim() || !lead.email.trim() || !lead.country.trim() || !lead.consent) {
+      setError("Full name, email, country, and consent are required before showing the result.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    const token = `result_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      const response = await sendJson("/api/marketing/leads/visa-compass", {
+        name: lead.name,
+        email: lead.email,
+        phone: lead.phone,
+        source_url: window.location.href,
+        answers,
+        result,
+        metadata: { country: lead.country, consent: lead.consent, tool: "Ascend Visa Compass" },
+      });
+      if (!response.ok) {
+        setError(response.payload?.error || "We could not save your assessment yet. Please try again before viewing the result.");
+        setBusy(false);
+        return;
+      }
+      setResultToken(token);
+      setBusy(false);
+      navigate("results");
+    } catch (_error) {
+      setError("We could not save your assessment yet. Please try again before viewing the result.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="assessment-shell">
+      <header className="assessment-header">
+        <PortalBrand onHome={() => navigate("home")} label="Go to assessment home" />
+        <div>
+          <span className="section-kicker">Ascend Visa Compass</span>
+          <strong>{ASSESSMENT_ROUTE_LABELS[page] || ASSESSMENT_ROUTE_LABELS.home}</strong>
+        </div>
+      </header>
+      {page === "questions" ? (
+        <React.Fragment>
+          <section className="hero assessment-hero">
+            <p className="eyebrow">Assessment Chat</p>
+            <h1>Chat-style eligibility questions.</h1>
+            <p>Answer the fixed assessment questions. Your answers stay in this browser session so refresh and back/forward keep context.</p>
+          </section>
+          <section className="assessment-grid">
+            <div className="panel">
+              <div className="section-kicker">Chat Preview</div>
+              <h3 className="section-title">Ascend asks, prospect answers</h3>
+              <div className="assessment-chat-log">
+                {ASSESSMENT_QUESTIONS.map((question, index) => {
+                  const answer = answers[question.code];
+                  const answerLabel = Array.isArray(answer) ? answer.join(", ") : answer;
+                  return (
+                    <React.Fragment key={question.code}>
+                      <article className={`assessment-message assistant ${index === answeredCount ? "active" : ""}`}>
+                        <span>Ascend</span>
+                        <p>{question.question}</p>
+                      </article>
+                      {answerLabel ? <article className="assessment-message user"><span>Prospect</span><p>{answerLabel}</p></article> : null}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="panel">
+              <div className="panel-header">
+                <div>
+                  <div className="section-kicker">Question Bank</div>
+                  <h3 className="section-title">{answeredCount} of {ASSESSMENT_QUESTIONS.length} answered</h3>
+                </div>
+                <span className="status-pill planned">{Math.round((answeredCount / ASSESSMENT_QUESTIONS.length) * 100)}%</span>
+              </div>
+              <div className="assessment-question-list">
+                {ASSESSMENT_QUESTIONS.map((question, index) => (
+                  <article key={question.code} className="assessment-question-card">
+                    <strong>{index + 1}. {question.question}</strong>
+                    <div className="assessment-options">
+                      {question.options.map((option) => {
+                        const value = answers[question.code];
+                        const active = Array.isArray(value) ? value.includes(option) : value === option;
+                        return <button key={option} className={active ? "active" : ""} type="button" onClick={() => setAnswer(question, option)}>{option}</button>;
+                      })}
+                    </div>
+                  </article>
+                ))}
+              </div>
+              <div className="form-actions">
+                <button className="primary compact-btn" type="button" disabled={answeredCount < 6} onClick={() => navigate("lead")}>Continue to lead capture</button>
+                <button className="ghost compact-btn" type="button" onClick={resetAnswers}>Reset answers</button>
+              </div>
+            </div>
+          </section>
+        </React.Fragment>
+      ) : page === "lead" ? (
+        <section className="assessment-grid">
+          <form className="panel stacked-form" onSubmit={submitLead}>
+            <div className="panel-header">
+              <div>
+                <div className="section-kicker">Lead Capture</div>
+                <h2 className="section-title">Collect contact before showing final result</h2>
+                <p className="section-intro">Email is required so Ascend can follow up. Phone is optional.</p>
+              </div>
+              <span className={`status-pill ${resultToken ? "completed" : "planned"}`}>{resultToken ? "Captured" : "Required before result"}</span>
+            </div>
+            <div className="profile-grid">
+              <label>Full name *<input value={lead.name} onChange={(event) => setLead((current) => ({ ...current, name: event.target.value }))} /></label>
+              <label>Email address *<input type="email" value={lead.email} onChange={(event) => setLead((current) => ({ ...current, email: event.target.value }))} /></label>
+              <label>Phone number (optional)<input value={lead.phone} onChange={(event) => setLead((current) => ({ ...current, phone: event.target.value }))} /></label>
+              <label>Current country *<input value={lead.country} onChange={(event) => setLead((current) => ({ ...current, country: event.target.value }))} /></label>
+            </div>
+            <label className="consent-line"><input type="checkbox" checked={Boolean(lead.consent)} onChange={(event) => setLead((current) => ({ ...current, consent: event.target.checked }))} /><span>I agree Ascend may contact me about my assessment result and EB1A planning.</span></label>
+            {error ? <div className="banner error">{error}</div> : null}
+            <div className="form-actions">
+              <button className="primary compact-btn" type="submit" disabled={busy}>{busy ? "Capturing..." : "Show My Assessment Result"}</button>
+              <button className="ghost compact-btn" type="button" onClick={() => navigate("questions")}>Back to questions</button>
+            </div>
+          </form>
+          <section className="panel">
+            <div className="section-kicker">UX Behavior</div>
+            <h3 className="section-title">Lead gate behavior</h3>
+            <div className="task-mini-list">
+              {["Email required before result", "Phone optional for faster follow-up", "Consent stored with timestamp-ready context"].map((item) => <article key={item} className="task-mini-item"><strong>{item}</strong><p>Built for a clear marketing funnel without hiding the assessment value.</p></article>)}
+            </div>
+          </section>
+        </section>
+      ) : page === "results" ? (
+        <section className="panel">
+          {!resultToken ? (
+            <div className="banner warning assessment-lock-banner">
+              <span>Result is locked in the real UX until email is captured.</span>
+              <button className="primary compact-btn" type="button" onClick={() => navigate("lead")}>Go to lead capture</button>
+            </div>
+          ) : (
+            <React.Fragment>
+              <div className="panel-header">
+                <div>
+                  <div className="section-kicker">Sample Result</div>
+                  <h2 className="section-title">Likely fit: {result.topPath}</h2>
+                  <p className="section-intro">The result is intentionally high-level and framed as intake guidance, not legal advice.</p>
+                </div>
+                <span className={`status-pill ${result.score >= 75 ? "completed" : result.score >= 55 ? "planned" : "in_progress"}`}>{result.score}% match</span>
+              </div>
+              <div className="metrics-grid">
+                <MetricCard label="Top path" value={result.topPath} />
+                <MetricCard label="Runner up" value={result.runnerUp} />
+                <MetricCard label="Signals" value={result.signals.length || "TBD"} />
+                <MetricCard label="Next step" value="Consult" />
+              </div>
+              <section className="panel panel-subsection">
+                <div className="section-kicker">Evidence signals detected</div>
+                <div className="hero-chips">{(result.signals.length ? result.signals : ["More evidence needed"]).map((signal) => <span key={signal} className="document-type-chip">{signal}</span>)}</div>
+                <p className="section-intro">{result.nextStep}</p>
+                <p className="mini-note">This is a high-level guide, not legal advice. An Ascend attorney will assess your specific situation.</p>
+              </section>
+              <div className="form-actions">
+                <a className="primary compact-btn" href="/contact?source=assessment">Book Consultation</a>
+                <button className="ghost compact-btn" type="button" onClick={resetAnswers}>Start Over</button>
+              </div>
+            </React.Fragment>
+          )}
+        </section>
+      ) : (
+        <React.Fragment>
+          <section className="hero assessment-hero">
+            <p className="eyebrow">Free Assessment Tool</p>
+            <h1>Ascend Visa Compass.</h1>
+            <p>A customer-facing, chatbot-style free assessment that captures qualified leads before showing personalized visa-path guidance.</p>
+            <div className="hero-chips">
+              <span className="hero-chip">Lead generation</span>
+              <span className="hero-chip">Email required</span>
+              <span className="hero-chip">Phone optional</span>
+              <span className="hero-chip">Visa-path match</span>
+            </div>
+          </section>
+          <section className="metrics-grid">
+            <MetricCard label="Starts today" value="Live" />
+            <MetricCard label="Completed" value={`${Math.round((answeredCount / ASSESSMENT_QUESTIONS.length) * 100)}%`} />
+            <MetricCard label="Leads captured" value={resultToken ? 1 : 0} />
+            <MetricCard label="Top path" value={result.topPath} />
+          </section>
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <div className="section-kicker">Experience Flow</div>
+                <h2 className="section-title">Questionnaire to lead capture to result</h2>
+                <p className="section-intro">This mirrors the intended marketing funnel: helpful assessment first, contact capture before final answer, then clear next step.</p>
+              </div>
+              <button className="primary compact-btn" type="button" onClick={() => navigate("questions")}>Start Assessment</button>
+            </div>
+            <div className="assessment-flow-grid">
+              {[
+                ["1. Ask questions", "Prospect answers seven guided questions in a chat-style flow."],
+                ["2. Capture lead", "Email is required before the final result; phone is optional."],
+                ["3. Show result", "The tool shows a high-level path match and suggested next step."],
+                ["4. Store lead", "Ascend stores the lead for future marketing and follow-up."],
+              ].map(([title, body]) => <article key={title} className="action-row"><strong>{title}</strong><p>{body}</p></article>)}
+            </div>
+          </section>
+        </React.Fragment>
+      )}
+    </main>
+  );
+}
+
 function confirmDeleteAction(primaryMessage, finalMessage = "This will move the item to archive storage. Do you want to continue?") {
   if (!window.confirm(primaryMessage)) return false;
   return window.confirm(finalMessage);
@@ -965,6 +1387,55 @@ function confirmDeleteAction(primaryMessage, finalMessage = "This will move the 
 
 function readPortalRoute() {
   const params = new URLSearchParams(window.location.search);
+  const pathParts = window.location.pathname.split("/").filter(Boolean);
+  if (pathParts[0] === "assessment") {
+    return {
+      portal: "assessment",
+      page: pathParts[1] || "home",
+      section: pathParts[1] || "home",
+      perspective: "",
+      memberId: "",
+      criterion: "",
+      folderId: "",
+      registrationToken: "",
+    };
+  }
+  if (pathParts[0] === "staff" && pathParts[1] === "assessment") {
+    return {
+      portal: "assessment",
+      page: "leads",
+      section: "leads",
+      perspective: "",
+      memberId: "",
+      criterion: "",
+      folderId: "",
+      registrationToken: "",
+    };
+  }
+  if (pathParts[0] === "member") {
+    return {
+      portal: "member",
+      page: pathParts[1] || params.get("page") || "home",
+      section: "",
+      perspective: "",
+      memberId: "",
+      criterion: params.get("criterion") || "",
+      folderId: params.get("folder") || "",
+      registrationToken: params.get("registration") || params.get("invite") || "",
+    };
+  }
+  if (PATH_PORTALS.has(pathParts[0])) {
+    return {
+      portal: pathParts[0],
+      page: "",
+      section: normalizePortalSection(pathParts[0], pathParts[1] || params.get("section") || "home"),
+      perspective: params.get("perspective") || "",
+      memberId: params.get("member") || "",
+      criterion: "",
+      folderId: "",
+      registrationToken: "",
+    };
+  }
   return {
     portal: params.get("portal") || "",
     page: params.get("page") || "",
@@ -975,6 +1446,36 @@ function readPortalRoute() {
     folderId: params.get("folder") || "",
     registrationToken: params.get("registration") || params.get("invite") || "",
   };
+}
+
+function memberPagePathSegment(page) {
+  return {
+    critical_roles: "critical-role",
+    original_contributions: "original-contributions",
+  }[page] || page || "home";
+}
+
+function firstNameFromDisplay(value) {
+  return String(value || "").trim().split(/\s+/)[0] || String(value || "");
+}
+
+function normalizePortalSection(portal, section) {
+  const raw = String(section || "home").trim() || "home";
+  return PORTAL_SECTION_ALIASES[portal]?.[raw] || raw;
+}
+
+function portalSectionPathSegment(portal, section) {
+  return PORTAL_SECTION_PATHS[portal]?.[section] || section || "home";
+}
+
+function subtitleForPortalSection(role, section, perspective = "") {
+  if (role === "leader" && perspective === "builder") {
+    return SECTION_SUBTITLES.builder[section] || SECTION_SUBTITLES.builder.home;
+  }
+  if (role === "leader" && perspective === "attorney") {
+    return SECTION_SUBTITLES.attorney[section] || SECTION_SUBTITLES.attorney.home;
+  }
+  return SECTION_SUBTITLES[role]?.[section] || "";
 }
 
 function memberViewForCriterion(code) {
@@ -995,6 +1496,7 @@ function criterionAccent(code) {
     high_salary: "#a46a2a",
     comparable_evidence: "#7a8a45",
     other: "#7c8792",
+    all: "#2f7d67",
   }[code || "other"] || "#7c8792";
 }
 
@@ -1053,6 +1555,11 @@ function formatCostAmount(value, currency = "USD") {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: currency || "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
 }
 
+function costPeriodValue(source, period, field = "actual") {
+  const row = (source?.recurring || []).find((item) => String(item.period || "").toLowerCase() === String(period || "").toLowerCase());
+  return Number(row?.[field] || 0);
+}
+
 function formatResponseMs(value) {
   const amount = Number(value || 0);
   if (!amount) return "N/A";
@@ -1076,6 +1583,16 @@ function healthStatusClass(status) {
   if (["healthy", "online", "success", "available", "configured", "synced"].includes(normalized)) return "completed";
   if (["degraded", "fallback", "needs_refresh", "warning"].includes(normalized)) return "planned";
   return "blocked";
+}
+
+function issueStatusLabel(value) {
+  const normalized = String(value || "new").toLowerCase();
+  return ISSUE_STATUS_OPTIONS.find((option) => option.value === normalized)?.label || LEGACY_ISSUE_STATUS_LABELS[normalized] || normalized.replaceAll("_", " ");
+}
+
+function activeIssueCount(backlog) {
+  const counts = backlog?.status_counts || {};
+  return ["new", "open", "triaged", "in_progress", "testing", "blocked", "fixed_local"].reduce((total, status) => total + Number(counts[status] || 0), 0);
 }
 
 function healthIcon(name) {
@@ -1716,7 +2233,7 @@ function emptyIssueLogForm() {
     portal: "Admin Portal",
     section: "Cost Explorer",
     priority: "P1",
-    status: "open",
+    status: "new",
     description: "",
     reported_by: "",
   };
@@ -2066,7 +2583,7 @@ function SidebarNav({ items, value, onChange }) {
           onClick={() => onChange(item.value)}
         >
           <span className="nav-icon-wrap">
-            <NavIcon name={iconForItem(item.value)} />
+            {item.icon ? item.icon : <NavIcon name={iconForItem(item.value)} />}
           </span>
           <span className="nav-label">{item.label}</span>
         </button>
@@ -2078,9 +2595,55 @@ function SidebarNav({ items, value, onChange }) {
 function PortalBrand({ onHome, label = "Go to portal home" }) {
   return (
     <button className="brand-home-button" type="button" onClick={onHome} aria-label={label}>
-      <img className="brand-logo" src={LOGO_URL} alt="Ascend HSI logo" />
-      <span className="brand">Ascend HSI</span>
+      <span className="brand-row">
+        <span className="brand-mark">A</span>
+        <span className="brand">ASCEND</span>
+      </span>
     </button>
+  );
+}
+
+function MagicRewriteTextarea({
+  className = "",
+  label,
+  required = false,
+  value,
+  placeholder,
+  help,
+  rewrite,
+  busy,
+  onChange,
+  onRewrite,
+  onShowOriginal,
+  onShowRewrite,
+  onRevert,
+}) {
+  const activeVersion = rewrite?.activeVersion || "";
+  return (
+    <label className={`magic-field ${className}`.trim()}>
+      <span className="magic-field-top">
+        <span>{label}{required ? " *" : ""}</span>
+        <button className="magic-rewrite-btn" type="button" onClick={onRewrite} disabled={busy} title="Rewrite with Ascend AI">
+          <span className="magic-orb">✦</span>
+          <span>{busy ? "Rewriting" : "AI rewrite"}</span>
+        </button>
+      </span>
+      <textarea value={value} onChange={(event) => onChange(event.target.value)} required={required} placeholder={placeholder} />
+      {help ? <span className="field-help">{help}</span> : null}
+      {rewrite ? (
+        <div className="magic-compare-panel">
+          <div>
+            <strong>AI rewrite ready</strong>
+            <span>{rewrite.source === "openai" ? "Generated with OpenAI" : "Structured fallback draft"}{rewrite.rationale ? ` • ${rewrite.rationale}` : ""}</span>
+          </div>
+          <div className="magic-compare-actions">
+            <button className={activeVersion === "original" ? "active" : ""} type="button" onClick={onShowOriginal}>Original</button>
+            <button className={activeVersion === "rewrite" ? "active" : ""} type="button" onClick={onShowRewrite}>AI draft</button>
+            <button type="button" onClick={onRevert}>Revert</button>
+          </div>
+        </div>
+      ) : null}
+    </label>
   );
 }
 
@@ -2606,7 +3169,8 @@ function MemberEvidenceCoveragePanel({ criteria = [], evidence = [], criteriaByC
       <div className="panel-header compact-panel-header">
         <div>
           <div className="section-kicker">Evidence By Criterion</div>
-          <h3 className="section-title">Uploaded evidence</h3>
+          <h3 className="section-title">Uploaded evidence and guided forms</h3>
+          <p className="section-intro">Click regular categories to filter evidence. Click the two guided criteria to open the member questionnaire forms.</p>
         </div>
         <div className="evidence-register-actions">
           <span>{rowsForActiveCriterion.length}</span>
@@ -2650,6 +3214,7 @@ function MemberEvidenceCoveragePanel({ criteria = [], evidence = [], criteriaByC
               <span>Evidence</span>
               <span>Uploaded</span>
               <span>Type</span>
+              <span>Action</span>
             </div>
             {rowsForActiveCriterion.map((item) => (
               <article
@@ -2669,11 +3234,71 @@ function MemberEvidenceCoveragePanel({ criteria = [], evidence = [], criteriaByC
                 <div className="evidence-register-cell">
                   <span>{item.documentType}</span>
                 </div>
+                <div className="evidence-register-cell">
+                  <button className="ghost compact-btn compact-link-btn" type="button" onClick={() => onOpenCriterion?.(item.criterion_code)}>
+                    Review
+                  </button>
+                </div>
               </article>
             ))}
           </div>
           {!rowsForActiveCriterion.length ? <p className="empty-state evidence-register-empty">No uploaded evidence in this criterion yet.</p> : null}
         </div>
+      </div>
+    </section>
+  );
+}
+
+function MemberGeneralWorkspacePanel({ criteria = [], evidence = [], criteriaByCode = {}, onOpenCriterion, onBack }) {
+  const rows = buildMemberEvidenceRegister(evidence, criteriaByCode);
+  const visibleCriteria = (criteria.length ? criteria : Object.values(criteriaByCode || {})).filter((criterion) => criterion.code);
+  const populatedCodes = Array.from(new Set(rows.map((item) => item.criterion_code || "other")));
+  const codes = Array.from(new Set(["all", ...visibleCriteria.map((item) => item.code), ...populatedCodes])).slice(0, 9);
+  const firstWorkspaceCriterion = visibleCriteria.find((item) => item.code && item.code !== "all")?.code || populatedCodes.find((code) => code && code !== "all") || "";
+  const columns = codes.map((code) => {
+    const files = code === "all" ? rows.slice(0, 4) : rows.filter((item) => (item.criterion_code || "other") === code).slice(0, 4);
+    return {
+      code,
+      name: code === "all" ? "Root" : (criteriaByCode[code]?.name || visibleCriteria.find((item) => item.code === code)?.name || String(code).replaceAll("_", " ")),
+      files,
+    };
+  });
+  return (
+    <section className="workspace-page member-drive-page">
+      <div className="workspace-top">
+        <div>
+          <div className="section-kicker">Evidence Workspace</div>
+          <h2>Drive-like evidence folders</h2>
+          <p>Organize files and folders by EB1A criterion.</p>
+        </div>
+        <button className="ghost compact-btn" type="button" onClick={onBack}>Back</button>
+      </div>
+      <div className="workspace-toolbar drive-toolbar">
+        <input className="search-input" value="" readOnly placeholder="Search folders and files across your evidence workspace" />
+        <div className="drive-toolbar-actions">
+          <button className="primary compact-btn" type="button" onClick={() => onOpenCriterion?.("all")}>Upload files</button>
+          <button className="ghost compact-btn" type="button" disabled={!firstWorkspaceCriterion} onClick={() => onOpenCriterion?.(firstWorkspaceCriterion)}>New subfolder</button>
+        </div>
+      </div>
+      <div className="workspace-columns">
+        {columns.map((column) => (
+          <section key={column.code} className="workspace-column" style={{ "--category-accent": criterionAccent(column.code) }}>
+            <div className="workspace-column-header">
+              <strong>{column.name}</strong>
+              <span>{column.files.length} file{column.files.length === 1 ? "" : "s"}</span>
+            </div>
+            <div className="workspace-file-list">
+              {column.files.map((item) => (
+                <article key={`${column.code}_${item.id || item.evidenceLabel}`} className="workspace-file-card">
+                  <strong>{item.evidenceLabel}</strong>
+                  <span>{item.documentType} • {formatDateTime(item.created_at)}</span>
+                  <button className="ghost compact-btn compact-link-btn" type="button" onClick={() => onOpenCriterion?.(item.criterion_code)}>Open criterion</button>
+                </article>
+              ))}
+              {!column.files.length ? <p className="empty-state">No files here yet. Use Evidence Intake to upload evidence into this category.</p> : null}
+            </div>
+          </section>
+        ))}
       </div>
     </section>
   );
@@ -2877,11 +3502,31 @@ function PetitionAccelerationPanel({ data, busy, compact = false }) {
   );
 }
 
-function FilingTimelinePanel({ data, busy = false, compact = false }) {
+function shortDisplayDate(value, fallback = "TBD") {
+  if (!value) return fallback;
+  const date = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString([], { month: "short", day: "2-digit", year: "numeric" });
+}
+
+function daysBetween(start, end) {
+  const startDate = new Date(String(start || "").replace(" ", "T"));
+  const endDate = new Date(String(end || "").replace(" ", "T"));
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return 0;
+  return Math.round((endDate.getTime() - startDate.getTime()) / 86400000);
+}
+
+function memberTimelineStatusMeta(status) {
+  if (["late", "red", "at_risk", "blocked"].includes(status)) return { label: "At Risk - needs action", className: "red" };
+  if (["amber", "watch", "planned"].includes(status)) return { label: "Watch - action helpful", className: "blue" };
+  return { label: "On Track", className: "green" };
+}
+
+function FilingTimelinePanel({ data, busy = false, compact = false, memberCommitment = false, dashboard = null, onOpenIntake = null }) {
   if (busy && !data) {
     return (
       <section className="panel filing-timeline-panel">
-        <div className="section-kicker">Petition Timeline</div>
+        <div className="section-kicker">{memberCommitment ? "Original Commitment Timeline" : "Petition Timeline"}</div>
         <h3 className="section-title">Loading filing timeline...</h3>
       </section>
     );
@@ -2889,14 +3534,85 @@ function FilingTimelinePanel({ data, busy = false, compact = false }) {
   if (!data) {
     return (
       <section className="panel filing-timeline-panel">
-        <div className="section-kicker">Petition Timeline</div>
-        <h3 className="section-title">Select a member to view timeline</h3>
+        <div className="section-kicker">{memberCommitment ? "Original Commitment Timeline" : "Petition Timeline"}</div>
+        <h3 className="section-title">{memberCommitment ? "Where you stand today" : "Select a member to view timeline"}</h3>
         <p className="empty-state">The timeline appears after member context is available.</p>
       </section>
     );
   }
   const stages = data.stages || [];
   const alerts = data.alerts || [];
+  if (memberCommitment) {
+    const targetDate = data.summary?.target_filing_date || data.target_filing_date || dashboard?.client?.target_filing_date || stages[stages.length - 1]?.end_date || "";
+    const onboardingDate = data.summary?.onboarding_date || data.onboarding_date || dashboard?.client?.onboarding_date || stages[0]?.start_date || "";
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const totalDays = Math.max(daysBetween(onboardingDate, targetDate), 1);
+    const elapsedDays = Math.max(daysBetween(onboardingDate, todayIso), 0);
+    const progress = Math.max(3, Math.min(100, Math.round((elapsedDays / totalDays) * 100)));
+    const daysRemaining = data.summary?.days_to_target ?? daysBetween(todayIso, targetDate);
+    const currentStage = stages.find((stage) => ["current", "in_progress", "active"].includes(stage.status)) || stages.find((stage) => stage.status !== "completed") || stages[0] || {};
+    const statusMeta = memberTimelineStatusMeta(data.status || data.risk_level || data.summary?.risk_level);
+    const stageRows = stages.length ? stages : [
+      { label: "Profile and evidence baseline", start_date: onboardingDate, end_date: targetDate, status: "current", description: "Finish profile confirmation, guided criteria forms, and initial uploads." },
+    ];
+    const actionText = alerts[0]?.message || "To get back on track: finish profile confirmation, submit Critical Role project details, and upload missing judging thank-you proof by May 15.";
+    const isAtRisk = statusMeta.className !== "green";
+    return (
+      <section className="panel filing-timeline-panel commitment-panel">
+        <div className="panel-header">
+          <div>
+            <div className="section-kicker">Original Commitment Timeline</div>
+            <h3 className="section-title">Where you stand today</h3>
+            <p className="section-intro">Transparent member-facing timeline comparing the original filing commitment against the current case position. This answers: what was promised, where am I now, and how long until filing?</p>
+          </div>
+          <span className={`status-pill ${statusMeta.className === "red" ? "blocked" : statusMeta.className === "blue" ? "planned" : "completed"}`}>{statusMeta.label}</span>
+        </div>
+        <div className="commitment-grid">
+          <div className="commitment-stat"><span>Original filing commitment</span><strong>{shortDisplayDate(targetDate)}</strong></div>
+          <div className="commitment-stat"><span>Current checkpoint</span><strong>{shortDisplayDate(todayIso)}</strong></div>
+          <div className="commitment-stat"><span>Current stage</span><strong>{currentStage.label || currentStage.stage || dashboard?.client?.stage || "Evidence baseline"}</strong></div>
+          <div className="commitment-stat"><span>Time remaining</span><strong>{Number.isFinite(Number(daysRemaining)) ? `${Math.max(0, Number(daysRemaining))} days to target filing` : "Target date pending"}</strong></div>
+        </div>
+        <div className="commitment-rail" style={{ "--progress": `${progress}%`, "--position": `${progress}%` }}>
+          <div className="commitment-marker">NOW</div>
+        </div>
+        <div className="commitment-caption">
+          <span>Onboarding: {shortDisplayDate(onboardingDate)}</span>
+          <span>Today: {shortDisplayDate(todayIso)}</span>
+          <span>Target filing: {shortDisplayDate(targetDate)}</span>
+        </div>
+        <div className="stage-grid">
+          <div className="stage-row header"><span>Stage</span><span>Original committed window</span><span>Current status</span><span>What this means for you</span></div>
+          {stageRows.map((stage, index) => {
+            const stageStatus = stage.status || (index === 0 ? "current" : "upcoming");
+            const accent = stage.accent || (["current", "in_progress", "active"].includes(stageStatus) ? "var(--green)" : stageStatus === "rfe" ? "var(--plum)" : index <= 2 ? "var(--amber)" : "var(--muted)");
+            return (
+              <article key={stage.key || stage.label || index} className="stage-row" style={{ "--accent": accent }}>
+                <strong>{stage.label || stage.stage || "Timeline stage"}</strong>
+                <span>{shortDisplayDate(stage.start_date || stage.window_start)} to {shortDisplayDate(stage.end_date || stage.window_end)}</span>
+                <span>{String(stageStatus).replaceAll("_", " ")}</span>
+                <span>{stage.description || stage.blurb || "This stage keeps the case moving toward the original filing commitment."}</span>
+              </article>
+            );
+          })}
+          {data.rfe_support ? (
+            <article className="stage-row" style={{ "--accent": "var(--plum)" }}>
+              <strong>{data.rfe_support.label || "RFE support if needed"}</strong>
+              <span>{shortDisplayDate(data.rfe_support.start_date)} to {shortDisplayDate(data.rfe_support.end_date)}</span>
+              <span>Contingency</span>
+              <span>Dotted support window only if USCIS requests more evidence.</span>
+            </article>
+          ) : null}
+        </div>
+        {isAtRisk ? (
+          <div className="banner warning commitment-action-banner">
+            <span>{actionText}</span>
+            <button className="ghost compact-btn" type="button" onClick={() => onOpenIntake?.()}>Upload evidence</button>
+          </div>
+        ) : null}
+      </section>
+    );
+  }
   return (
     <section className="panel filing-timeline-panel">
       <div className="panel-header">
@@ -3040,17 +3756,18 @@ function IssueLogPanel({ backlog, form, busy, onFormChange, onSubmit, onUpdate, 
         <div className="panel-header">
           <div>
             <div className="section-kicker">Issue Portal</div>
-            <h3 className="section-title">Bug log across the product suite</h3>
-            <p className="section-intro">Add, update, and remove issue rows with priority, status, owner, timestamps, and AWS DynamoDB sync state in one spreadsheet-style registry.</p>
+            <h3 className="section-title">Excel-style bug backlog</h3>
+            <p className="section-intro">Log issues with priority, status, reproduction notes, screenshots, and enough context for developers to retest quickly.</p>
           </div>
-          <span className="mini-note">AWS mirror: {backlog?.aws_table_name || "ascend_product_issue_logs"} • {backlog?.aws_region || "us-east-2"}</span>
+          <button className="primary compact-btn" type="button" onClick={() => document.querySelector(".issue-entry-row input")?.focus()}>Log Issue</button>
         </div>
+        <p className="mini-note">AWS mirror: {backlog?.aws_table_name || "ascend_product_issue_logs"} • {backlog?.aws_region || "us-east-2"}</p>
         <div className="admin-count-strip">
           {["P0", "P1", "P2", "P3"].map((priority) => (
             <span key={priority}><strong>{priority}</strong>{backlog?.priority_counts?.[priority] || 0}</span>
           ))}
-          {["open", "triaged", "in_progress", "blocked", "fixed", "closed"].map((status) => (
-            <span key={status}><strong>{status.replaceAll("_", " ")}</strong>{backlog?.status_counts?.[status] || 0}</span>
+          {ISSUE_STATUS_OPTIONS.slice(0, 6).map((status) => (
+            <span key={status.value}><strong>{status.label}</strong>{backlog?.status_counts?.[status.value] || (status.value === "new" ? backlog?.status_counts?.open : 0) || 0}</span>
           ))}
         </div>
 
@@ -3064,7 +3781,7 @@ function IssueLogPanel({ backlog, form, busy, onFormChange, onSubmit, onUpdate, 
             <option value="P0">P0</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
           </select>
           <select value={form.status} onChange={(event) => onFormChange("status", event.target.value)} aria-label="Status">
-            <option value="open">Open</option><option value="triaged">Triaged</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="fixed">Fixed</option><option value="closed">Closed</option>
+            {ISSUE_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
           <input value={form.reported_by} onChange={(event) => onFormChange("reported_by", event.target.value)} placeholder="Reporter" aria-label="Reported by" />
           <input value={form.description} onChange={(event) => onFormChange("description", event.target.value)} placeholder="Short description / reproduction notes" aria-label="Description" />
@@ -3072,28 +3789,29 @@ function IssueLogPanel({ backlog, form, busy, onFormChange, onSubmit, onUpdate, 
         </form>
 
         <div className="issue-log-table">
-          <div className="issue-log-row issue-log-head"><span>Bug ID</span><span>Issue</span><span>Portal / Section</span><span>Priority</span><span>Status</span><span>Reporter</span><span>Updated</span><span>AWS</span><span>Actions</span></div>
+          <div className="issue-log-row issue-log-head"><span>ID</span><span>Issue</span><span>Priority</span><span>Status</span><span>Repro</span></div>
           {items.map((item) => (
             <article key={item.bug_id} className={`issue-log-row priority-${item.priority?.toLowerCase()}`}>
               <div>
                 <strong>{item.bug_id}</strong>
-                <small>{item.created_at}</small>
+                <small>{item.updated_at || item.created_at}</small>
               </div>
               <div>
                 <strong>{item.title}</strong>
-                <small>{item.description}</small>
+                <small>{item.portal} / {item.section}</small>
               </div>
-              <span>{item.portal} / {item.section}</span>
               <select value={item.priority} onChange={(event) => onUpdate(item, { priority: event.target.value })}>
                 <option value="P0">P0</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
               </select>
               <select value={item.status} onChange={(event) => onUpdate(item, { status: event.target.value })}>
-                <option value="open">Open</option><option value="triaged">Triaged</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="fixed">Fixed</option><option value="closed">Closed</option>
+                {ISSUE_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                {["open", "blocked", "closed"].includes(item.status) ? <option value={item.status}>{issueStatusLabel(item.status)}</option> : null}
               </select>
-              <span>{item.reported_by || "Admin"}</span>
-              <span>{item.updated_at || item.created_at}</span>
-              <span className={`status-pill ${item.aws_sync_status === "synced" ? "completed" : item.aws_sync_status === "pending" ? "planned" : "blocked"}`}>{item.aws_sync_status || "pending"}</span>
-              <button className="danger compact-btn" type="button" onClick={() => onRemove(item)}>Remove</button>
+              <div>
+                <strong>{item.description}</strong>
+                <small>{item.reported_by || "Admin"} • AWS {item.aws_sync_status || "pending"}</small>
+                <button className="danger compact-btn" type="button" onClick={() => onRemove(item)}>Remove</button>
+              </div>
             </article>
           ))}
           {!items.length ? <p className="empty-state">No bug logs captured yet. Use the add row above to start the registry.</p> : null}
@@ -3125,7 +3843,7 @@ function RecommendationLetterPanel({
         <div className="endeavor-hero-row">
           <div>
             <h1>{workspace?.member?.display_name || "Selected member"} project-specific letters</h1>
-            <p>Generate, review, approve, and push independent or dependent letters tied to Critical Role or Original Contribution projects.</p>
+            <p>Select a member, project, recommender, and letter type before generating a document draft.</p>
           </div>
           <div className="endeavor-stat-strip" aria-label="Recommendation letter summary">
             <span><strong>{projects.length}</strong> projects</span>
@@ -3138,9 +3856,9 @@ function RecommendationLetterPanel({
       <section className="panel recommendation-panel">
         <div className="panel-header">
           <div>
-            <div className="section-kicker">Attorney Workspace</div>
-            <h3 className="section-title">Prompt, generated drafts, and review</h3>
-            <p className="section-intro">Keep inputs factual and project-specific. Approve only after attorney review, then push the final draft to the member.</p>
+            <div className="section-kicker">Recommendation Letters</div>
+            <h3 className="section-title">Independent and dependent letter generator</h3>
+            <p className="section-intro">Select a member, project, recommender, and letter type before generating a document draft.</p>
           </div>
           {selectedLetter ? <span className={`status-pill ${selectedLetter.status === "sent_to_member" ? "completed" : selectedLetter.status === "approved" ? "planned" : "in_progress"}`}>{selectedLetter.status?.replaceAll("_", " ")}</span> : null}
         </div>
@@ -3181,7 +3899,7 @@ function RecommendationLetterPanel({
               <label>Recommender title<input value={form.recommender_title} onChange={(event) => onFieldChange("recommender_title", event.target.value)} /></label>
               <label className="wide">Recommender organization<input value={form.recommender_organization} onChange={(event) => onFieldChange("recommender_organization", event.target.value)} /></label>
               <label>Relationship / credibility<textarea value={form.recommender_relationship} onChange={(event) => onFieldChange("recommender_relationship", event.target.value)} /></label>
-              <label>Facts to confirm<textarea value={form.facts_to_confirm} onChange={(event) => onFieldChange("facts_to_confirm", event.target.value)} /></label>
+              <label>Prompt facts<textarea value={form.facts_to_confirm} onChange={(event) => onFieldChange("facts_to_confirm", event.target.value)} placeholder="Emphasize project ownership, measurable impact, and why the member's role was not routine." /></label>
               <label>Independence guidance<textarea value={form.independence_guidance} onChange={(event) => onFieldChange("independence_guidance", event.target.value)} /></label>
               <label>Attorney strategy notes<textarea value={form.attorney_strategy_notes} onChange={(event) => onFieldChange("attorney_strategy_notes", event.target.value)} /></label>
             </div>
@@ -3190,7 +3908,7 @@ function RecommendationLetterPanel({
 
           <section className="recommendation-review-column">
           <div className="panel-header">
-            <div><div className="section-kicker">Generated</div><h3 className="section-title">Review and route</h3></div>
+            <div><div className="section-kicker">Generated Draft Preview</div><h3 className="section-title">Recommendation Letter Draft</h3></div>
           </div>
           <div className="recommendation-letter-list">
             {letters.map((item) => (
@@ -3558,6 +4276,8 @@ function App() {
   const [originalContributionForm, setOriginalContributionForm] = useState(emptyOriginalContributionForm());
   const [activeOriginalContributionId, setActiveOriginalContributionId] = useState("");
   const [originalContributionBusy, setOriginalContributionBusy] = useState(false);
+  const [memberRewriteDrafts, setMemberRewriteDrafts] = useState({});
+  const [memberRewriteBusyKey, setMemberRewriteBusyKey] = useState("");
   const [profileBusy, setProfileBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState(null);
@@ -3996,6 +4716,19 @@ function App() {
   function buildRouteUrl(snapshot) {
     const url = new URL(window.location.href);
     ["portal", "page", "section", "perspective", "member", "criterion", "folder", "registration", "invite"].forEach((key) => url.searchParams.delete(key));
+    if (snapshot.portal === "member" && snapshot.page && !snapshot.registrationToken) {
+      url.pathname = `/member/${memberPagePathSegment(snapshot.page)}`;
+      if (snapshot.criterion) url.searchParams.set("criterion", snapshot.criterion);
+      if (snapshot.folderId) url.searchParams.set("folder", snapshot.folderId);
+      return url.toString();
+    }
+    if (PATH_PORTALS.has(snapshot.portal) && snapshot.section && !snapshot.registrationToken) {
+      url.pathname = `/${snapshot.portal}/${portalSectionPathSegment(snapshot.portal, snapshot.section)}`;
+      if (snapshot.perspective && snapshot.portal === "leader" && snapshot.perspective !== "leader") url.searchParams.set("perspective", snapshot.perspective);
+      if (snapshot.memberId) url.searchParams.set("member", snapshot.memberId);
+      return url.toString();
+    }
+    url.pathname = "/";
     if (snapshot.portal) url.searchParams.set("portal", snapshot.portal);
     if (snapshot.page) url.searchParams.set("page", snapshot.page);
     if (snapshot.section) url.searchParams.set("section", snapshot.section);
@@ -4078,24 +4811,28 @@ function App() {
     }
     if (role === "leader") {
       const nextPerspective = LEADER_PERSPECTIVES.has(snapshot.perspective) ? snapshot.perspective : "leader";
+      const requestedSection = normalizePortalSection("leader", snapshot.section);
       setLeaderPerspective(nextPerspective);
       const validLeaderSections = nextPerspective === "attorney" ? ATTORNEY_SECTIONS : nextPerspective === "builder" ? BUILDER_SECTIONS : LEADER_EXEC_SECTIONS;
-      setPortalSection(validLeaderSections.has(snapshot.section) ? snapshot.section : "home");
+      setPortalSection(validLeaderSections.has(requestedSection) ? requestedSection : "home");
       setSelectedBuilderMemberId(snapshot.memberId || "");
       return;
     }
     if (role === "builder") {
-      setPortalSection(BUILDER_SECTIONS.has(snapshot.section) ? snapshot.section : "home");
+      const requestedSection = normalizePortalSection("builder", snapshot.section);
+      setPortalSection(BUILDER_SECTIONS.has(requestedSection) ? requestedSection : "home");
       setSelectedBuilderMemberId(snapshot.memberId || "");
       return;
     }
     if (role === "attorney") {
-      setPortalSection(ATTORNEY_SECTIONS.has(snapshot.section) ? snapshot.section : "home");
+      const requestedSection = normalizePortalSection("attorney", snapshot.section);
+      setPortalSection(ATTORNEY_SECTIONS.has(requestedSection) ? requestedSection : "home");
       setSelectedBuilderMemberId(snapshot.memberId || "");
       return;
     }
     if (role === "admin") {
-      setPortalSection(ADMIN_SECTIONS.has(snapshot.section) ? snapshot.section : "home");
+      const requestedSection = normalizePortalSection("admin", snapshot.section);
+      setPortalSection(ADMIN_SECTIONS.has(requestedSection) ? requestedSection : "home");
       setSelectedBuilderMemberId(snapshot.memberId || "");
     }
   }
@@ -5028,6 +5765,7 @@ function App() {
   }, [authMember, authMode, leaderPerspective]);
   useEffect(() => {
     if (!authReady) return;
+    if (readPortalRoute().portal === "assessment") return;
     const nextUrl = buildRouteUrl(currentRouteSnapshot());
     if (routeSyncRef.current.applying) {
       routeSyncRef.current.applying = false;
@@ -5693,11 +6431,13 @@ function App() {
   function openCriticalRoleProject(project) {
     setActiveCriticalRoleId(project.id || "");
     setCriticalRoleForm(hydrateCriticalRoleProject(project));
+    setMemberRewriteDrafts({});
   }
 
   function startNewCriticalRoleProject() {
     setActiveCriticalRoleId("");
     setCriticalRoleForm(emptyCriticalRoleProjectForm());
+    setMemberRewriteDrafts({});
   }
 
   function setOriginalContributionField(field, value) {
@@ -5707,11 +6447,129 @@ function App() {
   function openOriginalContribution(entry) {
     setActiveOriginalContributionId(entry.id || "");
     setOriginalContributionForm(hydrateOriginalContribution(entry));
+    setMemberRewriteDrafts({});
   }
 
   function startNewOriginalContribution() {
     setActiveOriginalContributionId("");
     setOriginalContributionForm(emptyOriginalContributionForm());
+    setMemberRewriteDrafts({});
+  }
+
+  function memberRewriteKey(formType, field) {
+    return `${formType}:${field}`;
+  }
+
+  function memberRewriteContext(formType) {
+    if (formType === "critical_role") {
+      return {
+        organization_name: criticalRoleForm.organization_name,
+        organization_unit: criticalRoleForm.organization_unit,
+        role_title: criticalRoleForm.role_title,
+        project_name: criticalRoleForm.project_name,
+        project_status: criticalRoleForm.project_status,
+        business_value_summary: criticalRoleForm.business_value_summary,
+        quantitative_metrics: criticalRoleForm.quantitative_metrics,
+      };
+    }
+    return {
+      contribution_title: originalContributionForm.contribution_title,
+      contribution_category: originalContributionForm.contribution_category,
+      field_of_expertise: originalContributionForm.field_of_expertise,
+      job_title: originalContributionForm.job_title,
+      organization_name: originalContributionForm.organization_name,
+      project_name: originalContributionForm.project_name,
+      impact_metrics: originalContributionForm.impact_metrics,
+      field_wide_impact: originalContributionForm.field_wide_impact,
+    };
+  }
+
+  function setMemberRewriteFieldValue(formType, field, value) {
+    if (formType === "critical_role") {
+      setCriticalRoleField(field, value);
+    } else {
+      setOriginalContributionField(field, value);
+    }
+  }
+
+  async function rewriteMemberField(formType, field, label, value) {
+    const key = memberRewriteKey(formType, field);
+    setMemberRewriteBusyKey(key);
+    setMessage(null);
+    try {
+      const result = await sendJson("/api/member/intake-field-rewrite", {
+        criterion_type: formType,
+        field_key: field,
+        field_label: label,
+        field_value: value || "",
+        form_context: memberRewriteContext(formType),
+      });
+      if (!result.ok) {
+        setMessage({ type: "error", text: result.payload.error || "Could not rewrite this field." });
+        return;
+      }
+      const rewrittenValue = result.payload.rewritten_value || "";
+      setMemberRewriteDrafts((current) => ({
+        ...current,
+        [key]: {
+          originalValue: value || "",
+          rewrittenValue,
+          activeVersion: "rewrite",
+          source: result.payload.source || "fallback",
+          rationale: result.payload.rationale || "",
+          generatedAt: result.payload.generated_at || "",
+        },
+      }));
+      setMemberRewriteFieldValue(formType, field, rewrittenValue);
+    } finally {
+      setMemberRewriteBusyKey("");
+    }
+  }
+
+  function applyMemberRewriteVersion(formType, field, version) {
+    const key = memberRewriteKey(formType, field);
+    const draft = memberRewriteDrafts[key];
+    if (!draft) return;
+    const nextValue = version === "original" ? draft.originalValue : draft.rewrittenValue;
+    setMemberRewriteFieldValue(formType, field, nextValue);
+    setMemberRewriteDrafts((current) => ({
+      ...current,
+      [key]: { ...draft, activeVersion: version },
+    }));
+  }
+
+  function revertMemberRewrite(formType, field) {
+    const key = memberRewriteKey(formType, field);
+    const draft = memberRewriteDrafts[key];
+    if (draft) setMemberRewriteFieldValue(formType, field, draft.originalValue);
+    setMemberRewriteDrafts((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function renderMemberMagicTextarea(formType, field, label, options = {}) {
+    const value = formType === "critical_role" ? criticalRoleForm[field] : originalContributionForm[field];
+    const key = memberRewriteKey(formType, field);
+    return (
+      <MagicRewriteTextarea
+        key={key}
+        className={options.className}
+        label={label}
+        required={options.required}
+        value={value || ""}
+        placeholder={options.placeholder}
+        help={options.help}
+        rewrite={memberRewriteDrafts[key]}
+        busy={memberRewriteBusyKey === key}
+        onChange={(nextValue) => setMemberRewriteFieldValue(formType, field, nextValue)}
+        onRewrite={() => rewriteMemberField(formType, field, label, value || "")}
+        onShowOriginal={() => applyMemberRewriteVersion(formType, field, "original")}
+        onShowRewrite={() => applyMemberRewriteVersion(formType, field, "rewrite")}
+        onRevert={() => revertMemberRewrite(formType, field)}
+      />
+    );
   }
 
   async function handleProfileSubmit(event) {
@@ -5727,7 +6585,7 @@ function App() {
       if (result.ok) {
         setProfile(result.payload);
         setProfileForm({ ...emptyProfileForm(), ...result.payload, profile_confirmed: Boolean(result.payload.profile_confirmed) });
-        setMessage({ type: "success", text: "Member profile updated." });
+        setMessage({ type: "success", text: "Profile saved." });
       } else {
         setMessage({ type: "error", text: result.payload.error || "Could not update member profile." });
       }
@@ -5760,7 +6618,7 @@ function App() {
           project_name: saved.project_name || "",
           organization_name: saved.organization_name || "",
         });
-        setMessage({ type: "success", text: mode === "submitted" ? "Critical role project submitted." : "Critical role project saved as draft." });
+        setMessage({ type: "success", text: mode === "submitted" ? "Project submitted." : "Draft saved." });
       } else {
         setMessage({ type: "error", text: result.payload.error || "Could not save critical role project." });
       }
@@ -5826,7 +6684,7 @@ function App() {
           contribution_title: saved.contribution_title || "",
           organization_name: saved.organization_name || "",
         });
-        setMessage({ type: "success", text: mode === "submitted" ? "Original contribution submitted." : "Original contribution saved as draft." });
+        setMessage({ type: "success", text: mode === "submitted" ? "Contribution submitted." : "Draft saved." });
       } else {
         setMessage({ type: "error", text: result.payload.error || "Could not save original contribution." });
       }
@@ -5925,8 +6783,12 @@ function App() {
 
   async function handleAnalyzeOrSave(event) {
     event.preventDefault();
-    if (!selectedFile || !memberContext.trim()) {
-      setMessage({ type: "error", text: "Please add a short note and choose a file." });
+    if (!selectedFile) {
+      setMessage({ type: "error", text: "Please choose a file before uploading evidence." });
+      return;
+    }
+    if (routeMode === "ai" && !memberContext.trim()) {
+      setMessage({ type: "error", text: "Please add a short note before using AI review." });
       return;
     }
     setUploadBusy(true);
@@ -5945,7 +6807,7 @@ function App() {
         if (result.status === 409 && result.payload.status === "duplicate") {
           setDuplicateState({ mode: "manual", duplicate: result.payload.duplicate });
         } else if (result.ok) {
-          setMessage({ type: "success", text: `Evidence saved. Evidence ID: ${result.payload.evidence_id}` });
+          setMessage({ type: "success", text: "Evidence uploaded." });
           resetIntake();
           await refreshAfterSave();
         } else {
@@ -6009,7 +6871,7 @@ function App() {
       if (result.status === 409 && result.payload.status === "duplicate") {
         setDuplicateState({ mode: routeMode, duplicate: result.payload.duplicate });
       } else if (result.ok) {
-        setMessage({ type: "success", text: `Evidence saved. Evidence ID: ${result.payload.evidence_id}` });
+        setMessage({ type: "success", text: "Evidence uploaded." });
         resetIntake();
         await refreshAfterSave();
       } else {
@@ -6276,6 +7138,11 @@ function App() {
   const waitingForAttorneyPortal = authMember?.role === "attorney" && (loading || !dashboard);
   const waitingForAdminPortal = authMember?.role === "admin" && (loading || !adminDashboard);
   const waitingForMemberPortal = authMember?.role === "member" && (loading || !dashboard);
+  const liveRoute = readPortalRoute();
+
+  if (liveRoute.portal === "assessment" && liveRoute.page !== "leads") {
+    return <AssessmentPublicPortal initialPage={liveRoute.page || "home"} />;
+  }
 
   if (!authReady || loading || waitingForBuilderPortal || waitingForLeaderPortal || waitingForAttorneyPortal || waitingForAdminPortal || waitingForMemberPortal) {
     return <main className="shell auth-shell"><div className="loading">Loading Ascend portal...</div></main>;
@@ -6384,7 +7251,7 @@ function App() {
   const isLeaderAttorneyView = authMember.role === "leader" && leaderPerspective === "attorney";
   const showingBuilderWorkspace = authMember.role === "builder" || isLeaderBuilderView;
   const builderLabel = showingBuilderWorkspace ? "Profile Builder" : "Leader";
-  const memberSection = view.type === "messages" ? "messages" : view.type === "profile" ? "profile" : view.type === "critical_roles" ? "critical_roles" : view.type === "original_contributions" ? "original_contributions" : view.type === "planner" ? "planner" : view.type === "intake" ? "intake" : "home";
+  const memberSection = view.type === "messages" ? "messages" : view.type === "profile" ? "profile" : view.type === "workspace" ? "workspace" : view.type === "critical_roles" ? "critical_roles" : view.type === "original_contributions" ? "original_contributions" : view.type === "planner" ? "planner" : view.type === "intake" ? "intake" : "home";
   function goToPortalHome() {
     setMessage(null);
     setMemberMenuOpen(false);
@@ -6681,31 +7548,31 @@ function App() {
     const builderInitials = (authMember.display_name || "B").split(" ").map((part) => part.slice(0, 1)).join("").slice(0, 2).toUpperCase();
     const leaderMetrics = leaderInsights?.metrics || builderDashboard?.metrics || {};
     const builderSidebarItems = [
-      { value: "home", label: "Builder Home" },
+      { value: "home", label: "Builder Home", icon: "H" },
       ...(authMember.role === "leader" ? [{ value: "invite", label: "Invite Member" }] : []),
-      { value: "members", label: "Assigned Members" },
-      { value: "opportunities", label: "Opportunities" },
-      { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}` },
+      { value: "members", label: "Profiles", icon: "P" },
+      { value: "opportunities", label: "Opportunities", icon: "O" },
+      { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}`, icon: "M" },
     ];
     const leaderSidebarItems = [
-      { value: "home", label: "Executive Overview" },
-      { value: "invite", label: "Invite Member" },
-      { value: "members", label: "Member Review" },
-      { value: "risks", label: "Risk & Bottlenecks" },
-      { value: "capacity", label: "Team Capacity" },
-      { value: "timeline", label: "Delivery Timeline" },
-      { value: "backlog", label: "Product Backlog" },
-      { value: "batch", label: "Batch Intake" },
-      { value: "opportunities", label: "Opportunities" },
-      { value: "oversight", label: "Assignment Oversight" },
-      { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}` },
+      { value: "home", label: "Executive Overview", icon: "H" },
+      { value: "invite", label: "Invite Member", icon: "I" },
+      { value: "members", label: "Member Review", icon: "R" },
+      { value: "risks", label: "Risk & Bottlenecks", icon: "B" },
+      { value: "capacity", label: "Team Capacity", icon: "C" },
+      { value: "timeline", label: "Delivery Timeline", icon: "T" },
+      { value: "backlog", label: "Product Backlog", icon: "P" },
+      { value: "oversight", label: "Assignment Oversight", icon: "A" },
+      { value: "opportunities", label: "Opportunities", icon: "O" },
+      { value: "batch", label: "Batch Intake", icon: "D" },
+      { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}`, icon: "M" },
     ];
     return (
       <React.Fragment>
         <main className="shell attorney-shell" style={shellStyle}>
           <aside className="sidebar attorney-sidebar">
           <PortalBrand onHome={goToPortalHome} label={`Go to ${isLeaderExecutiveView ? "leader" : isLeaderBuilderView ? "builder" : "profile builder"} home`} />
-          <div className="brand-sub">{isLeaderExecutiveView ? "Leader Workspace" : isLeaderBuilderView ? "Leader Acting As Builder" : "Profile Builder Workspace"}</div>
+          <div className="brand-sub">{isLeaderExecutiveView ? "Executive Workspace" : isLeaderBuilderView ? "Leader Acting As Builder" : "Profile Builder Workspace"}</div>
           {authMember.role === "leader" ? (
             <div className="side-card perspective-side-card">
               <strong>Assume Portal View</strong>
@@ -6719,14 +7586,24 @@ function App() {
             onChange={handlePortalSectionChange}
           />
           <div className="side-card">
-            <strong>Welcome {authMember.display_name}</strong>
-            <p>{isLeaderExecutiveView ? "See the full profile-building operation, rebalance assignments, and keep each case moving toward a stronger EB1A file." : "Work through the builder workspace with leadership visibility still intact."}</p>
+            <strong>{isLeaderExecutiveView ? "Leader snapshot" : "Builder load"}</strong>
+            <p>{isLeaderExecutiveView ? "Members count, late cases, and open backlog stay visible while leadership works." : "Assigned members, late cases, and tasks due this week stay visible while builders work."}</p>
           </div>
           <div className="side-card">
             <strong>At a glance</strong>
-            <p>Assigned members: {(isLeaderExecutiveView ? leaderMetrics.member_count : builderDashboard?.metrics.member_count) || 0}</p>
-            <p>Active tasks: {(isLeaderExecutiveView ? leaderMetrics.active_tasks : builderDashboard?.metrics.active_tasks) || 0}</p>
-            <p>Opportunity library: {builderDashboard?.metrics.opportunity_count || 0}</p>
+            {isLeaderExecutiveView ? (
+              <React.Fragment>
+                <p>Members count: {leaderMetrics.member_count || builderMembers.length || 0}</p>
+                <p>Late cases: {leaderMetrics.late_timeline_cases || 0}</p>
+                <p>Open backlog: {(productBacklog.items || []).filter((item) => !["shipped", "closed"].includes(String(item.status || "").toLowerCase())).length}</p>
+              </React.Fragment>
+            ) : (
+              <React.Fragment>
+                <p>Assigned: {builderDashboard?.metrics.member_count || builderMembers.length || 0}</p>
+                <p>Late: {builderDashboard?.metrics.late_count || builderMembers.filter((item) => item.timeline_summary?.late).length || 0}</p>
+                <p>Tasks due this week: {builderDashboard?.metrics.active_tasks || 0}</p>
+              </React.Fragment>
+            )}
           </div>
           <span className="side-note">{authMember.role === "leader" ? (isLeaderExecutiveView ? "Leader portal only" : "Leader operating in builder visibility mode") : "Profile builder portal only"}</span>
         </aside>
@@ -6735,8 +7612,8 @@ function App() {
           <div className="topbar">
             <div className="topbar-copy">
               <span className="topbar-label">{portalTitle}</span>
-              <div className="topbar-welcome">Welcome {authMember.display_name}.</div>
-              <strong>{isLeaderExecutiveView ? "See builder workloads, member momentum, and executive-level movement in one place." : "Guide each member toward the highest-value profile building work with leader-level visibility."}</strong>
+              <div className="topbar-welcome">Welcome {firstNameFromDisplay(authMember.display_name)}.</div>
+              <strong>{subtitleForPortalSection(authMember.role === "leader" ? "leader" : "builder", portalSection, leaderPerspective) || (isLeaderExecutiveView ? "Executive-level movement across the EB1A operation" : "Assigned member momentum and profile-building actions")}</strong>
             </div>
             <div className="member-menu-wrap">
               <button className="member-menu-trigger" type="button" onClick={() => setMemberMenuOpen((current) => !current)}>
@@ -6780,7 +7657,12 @@ function App() {
               <header className="hero">
                 <p className="eyebrow">Invite Member</p>
                 <h1>Start a new member journey.</h1>
-                <p>Create the member registration invite, capture the basics needed for routing, and optionally assign a Profile Builder or Attorney now.</p>
+                <p>Create a registration invite, optionally assign a profile builder and attorney, and let the member register from email.</p>
+                <div className="hero-chips">
+                  <span className="hero-chip">Real email path</span>
+                  <span className="hero-chip">Optional assignments</span>
+                  <span className="hero-chip">Registration token</span>
+                </div>
               </header>
               <section className="builder-layout">
                 <LeaderInvitePanel
@@ -6929,7 +7811,7 @@ function App() {
               <header className="hero">
                 <p className="eyebrow">Product Backlog</p>
                 <h1>Convert field feedback into shippable work.</h1>
-                <p>Leaders can capture product suite improvements with screenshots, priority, value, and acceptance criteria so development, testing, and deployment have one source of truth.</p>
+                <p>Capture enhancement requests with priority, screenshots, value, and acceptance criteria.</p>
               </header>
               <ProductBacklogPanel
                 backlog={productBacklog}
@@ -6945,7 +7827,7 @@ function App() {
               <header className="hero">
                 <p className="eyebrow">Assignment Oversight</p>
                 <h1>Routing and workload, one view.</h1>
-                <p>Invite members, optionally route them to a Profile Builder or Attorney immediately, and rebalance assignments later without crowding the Leader home page.</p>
+                <p>Leaders can assign or rebalance profile builders and attorneys from one readable table.</p>
                 <div className="hero-chips">
                   <button className="primary compact-btn" type="button" onClick={() => setPortalSection("invite")}>Invite Member</button>
                   <span className="hero-chip">Builder optional</span>
@@ -7020,8 +7902,8 @@ function App() {
           ) : portalSection === "members" ? (
             <React.Fragment>
               <header className="hero">
-                <p className="eyebrow">{isLeaderExecutiveView ? "Member Review" : "Assigned Members"}</p>
-                <h1>{isLeaderExecutiveView ? "Member progress, ready for review." : "Assigned members, easy to triage."}</h1>
+                <p className="eyebrow">{isLeaderExecutiveView ? "Member Review" : "Profiles"}</p>
+                <h1>{isLeaderExecutiveView ? "Member progress, ready for review." : "Search members, review evidence, and update profile-building status."}</h1>
                 <p>{isLeaderExecutiveView ? "Open a member to review readiness, criterion movement, and builder-issued work without mixing this into intake routing." : "Open a member to review readiness, criterion coverage, and where your next profile-building push should go."}</p>
               </header>
 
@@ -7051,9 +7933,9 @@ function App() {
                 </section>
 
                 <section className="panel">
-                  <div className="section-kicker">Member Detail</div>
+                  <div className="section-kicker">Selected Profile</div>
                   <h3 className="section-title">{builderMemberDetail?.member?.display_name || "Select a member"}</h3>
-                  <p className="section-intro">Clear view of profile position, criterion coverage, and tasks already in flight.</p>
+                  <p className="section-intro">Review profile facts, evidence coverage, and builder tasks before attorney handoff.</p>
                   {builderMemberDetail ? (
                     <React.Fragment>
                       <div className="builder-detail-grid">
@@ -7135,8 +8017,8 @@ function App() {
             <React.Fragment>
               <header className="hero">
                 <p className="eyebrow">Opportunities</p>
-                <h1>Reusable work, ready to push.</h1>
-                <p>Keep opportunity templates and member task assignment in one separate workspace so the home page stays focused on momentum and summary.</p>
+                <h1>Create a member task.</h1>
+                <p>Turn profile-building ideas into clear member tasks tied to EB1A criteria.</p>
               </header>
 
               <section className="builder-layout">
@@ -7160,12 +8042,12 @@ function App() {
 
                 <section className="panel">
                   <div className="section-kicker">Push Work</div>
-                  <h3 className="section-title">Assign Tasks To Member</h3>
-                  <p className="section-intro">Turn an opportunity or custom guidance into a clear next step for the assigned member.</p>
+                  <h3 className="section-title">Create a member task</h3>
+                  <p className="section-intro">Turn profile-building ideas into clear member tasks tied to EB1A criteria.</p>
                   <form className="stacked-form" onSubmit={assignBuilderTask}>
                     <label>Opportunity template<select value={builderTaskForm.opportunity_id} onChange={(event) => { setBuilderTaskField("opportunity_id", event.target.value); applyOpportunity(event.target.value); }}><option value="">Custom task</option>{builderOpportunities.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
-                    <label>Task title<input value={builderTaskForm.title} onChange={(event) => setBuilderTaskField("title", event.target.value)} /></label>
-                    <label>Guidance for member<textarea value={builderTaskForm.description} onChange={(event) => setBuilderTaskField("description", event.target.value)} /></label>
+                    <label>Task title<input value={builderTaskForm.title} onChange={(event) => setBuilderTaskField("title", event.target.value)} placeholder="Example: Upload IEEE reviewer thank you email" /></label>
+                    <label>Guidance for member<textarea value={builderTaskForm.description} onChange={(event) => setBuilderTaskField("description", event.target.value)} placeholder="Explain what the member should collect and why it matters." /></label>
                     <label>Evidence category<select value={builderTaskForm.criterion_code} onChange={(event) => setBuilderTaskField("criterion_code", event.target.value)}><option value="">Choose category</option>{criteriaList.map((criterion) => <option key={criterion.code} value={criterion.code}>{criterion.name}</option>)}</select></label>
                     <label>Due date<input type="date" value={builderTaskForm.due_date} onChange={(event) => setBuilderTaskField("due_date", event.target.value)} /></label>
                     <div className="form-actions"><button className="primary compact-btn" type="submit" disabled={builderBusy || !selectedBuilderMemberId}>{builderBusy ? "Assigning..." : "Assign To Member"}</button></div>
@@ -7189,21 +8071,21 @@ function App() {
             <React.Fragment>
 
               <header className="hero">
-                <p className="eyebrow">{isLeaderExecutiveView ? "Executive Overview" : "Builder Dashboard"}</p>
-                <h1>{isLeaderExecutiveView ? "Operations, one calm command center." : "Your members, one view."}</h1>
-                <p>{isLeaderExecutiveView ? "Track portfolio health, execution velocity, bottlenecks, risk concentration, and near-term completion outlook without losing the ability to drill into a case." : "See how each assigned member is progressing, identify who needs attention, and push the right profile-building opportunities into their queue."}</p>
+                <p className="eyebrow">{isLeaderExecutiveView ? "Leader Portal" : "Profile Builder Portal"}</p>
+                <h1>{isLeaderExecutiveView ? "See profile-building momentum in one executive view." : "Move assigned members toward attorney-ready evidence."}</h1>
+                <p>{isLeaderExecutiveView ? "Track readiness, invitation flow, late cases, assignment load, and petition delivery risk across the product suite." : "Review member readiness, create profile-building opportunities, and keep each case moving with clean next steps."}</p>
                 <div className="hero-chips">
-                  <span className="hero-chip">{isLeaderExecutiveView ? "Executive funnel" : "Assigned member roster"}</span>
-                  <span className="hero-chip">{isLeaderExecutiveView ? "Timeline trends" : "Opportunity library"}</span>
-                  <span className="hero-chip">{isLeaderExecutiveView ? "Drilldown watchlist" : `${builderLabel}-issued tasks`}</span>
+                  <span className="hero-chip">{isLeaderExecutiveView ? "Late-case alerts" : "Assigned roster"}</span>
+                  <span className="hero-chip">{isLeaderExecutiveView ? "Assignment oversight" : "Evidence gap review"}</span>
+                  <span className="hero-chip">{isLeaderExecutiveView ? "Timeline to filing" : "Opportunity tasks"}</span>
                 </div>
               </header>
 
               <section className="metrics-grid">
-                <MetricCard label={isLeaderExecutiveView ? "Active Cases" : "Assigned Members"} value={builderDashboard?.metrics.member_count || 0} />
-                <MetricCard label={isLeaderExecutiveView ? "Petition Ready" : "Active Tasks"} value={isLeaderExecutiveView ? (leaderMetrics.petition_ready_cases || 0) : (builderDashboard?.metrics.active_tasks || 0)} />
-                <MetricCard label={isLeaderExecutiveView ? "High Risk" : "Average Readiness"} value={isLeaderExecutiveView ? (leaderMetrics.at_risk_cases || 0) : `${builderDashboard?.metrics.avg_readiness || 0}%`} />
-                <MetricCard label={isLeaderExecutiveView ? "Late Cases" : "Opportunities"} value={isLeaderExecutiveView ? (leaderMetrics.late_timeline_cases || 0) : (builderDashboard?.metrics.opportunity_count || 0)} />
+                <MetricCard label={isLeaderExecutiveView ? "Active members" : "Assigned members"} value={builderDashboard?.metrics.member_count || builderMembers.length || 0} />
+                <MetricCard label={isLeaderExecutiveView ? "Late cases" : "Avg readiness"} value={isLeaderExecutiveView ? (leaderMetrics.late_timeline_cases || 0) : `${builderDashboard?.metrics.avg_readiness || 0}%`} />
+                <MetricCard label={isLeaderExecutiveView ? "Avg readiness" : "Tasks due"} value={isLeaderExecutiveView ? `${leaderMetrics.avg_readiness || 0}%` : (builderDashboard?.metrics.active_tasks || 0)} />
+                <MetricCard label={isLeaderExecutiveView ? "Open backlog" : "Late cases"} value={isLeaderExecutiveView ? ((productBacklog.items || []).filter((item) => !["shipped", "closed"].includes(String(item.status || "").toLowerCase())).length) : (builderDashboard?.metrics.late_count || builderMembers.filter((item) => item.timeline_summary?.late).length || 0)} />
               </section>
 
           {isLeaderExecutiveView ? (
@@ -7386,28 +8268,28 @@ function App() {
           ) : null}
           <SidebarNav
             items={[
-              { value: "home", label: "Attorney Home" },
+              { value: "home", label: "Attorney Home", icon: "H" },
               ...(isLeaderAttorneyView ? [{ value: "invite", label: "Invite Member" }] : []),
-              { value: "dossier", label: "Member Dossier" },
-              { value: "petition", label: "Petition Generator" },
-              { value: "endeavor", label: "Endeavor Letter Generator" },
-              { value: "recommendations", label: "Recommendation Letters" },
-              { value: "batch", label: "Batch Intake" },
-              { value: "evidence", label: "Evidence Review" },
-              { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}` },
+              { value: "dossier", label: "Member Dossier", icon: "D" },
+              { value: "petition", label: "Petition Generator", icon: "P" },
+              { value: "endeavor", label: "Endeavor Letter", icon: "E" },
+              { value: "recommendations", label: "Recommendations", icon: "R" },
+              { value: "batch", label: "Batch Intake", icon: "B" },
+              { value: "evidence", label: "Evidence Review", icon: "V" },
+              { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}`, icon: "M" },
             ]}
             value={portalSection}
             onChange={handlePortalSectionChange}
           />
           <div className="side-card">
-            <strong>Welcome {authMember.display_name}</strong>
-            <p>{isLeaderAttorneyView ? "Review the attorney workspace with leader-level visibility while keeping the legal workflow context intact." : "Move from portfolio triage to member-specific legal work without losing the case context that matters day to day."}</p>
+            <strong>Attorney queue</strong>
+            <p>Ready for review, letters pending, and drafts in progress remain visible while legal strategy work happens.</p>
           </div>
           <div className="side-card">
             <strong>At a glance</strong>
-            <p>Total cases: {builderMembers.length}</p>
-            <p>Open attorney work: {attorneyTotalOpenTasks}</p>
-            <p>Cases in deeper review: {attorneyDeeperReviewCases}</p>
+            <p>Ready for review: {attorneyDeeperReviewCases}</p>
+            <p>Letters pending: {recommendationWorkspace?.letters?.filter((item) => item.status !== "pushed").length || 0}</p>
+            <p>Drafts in progress: {(petitionDraft ? 1 : 0) + (endeavorDraft ? 1 : 0)}</p>
           </div>
           <span className="side-note">{isLeaderAttorneyView ? "Leader operating in attorney visibility mode" : "Attorney portal only"}</span>
         </aside>
@@ -7416,8 +8298,8 @@ function App() {
           <div className="topbar">
             <div className="topbar-copy">
               <span className="topbar-label">{isLeaderAttorneyView ? "Leader Portal • Attorney View" : "Attorney Portal"}</span>
-              <div className="topbar-welcome">Welcome {authMember.display_name}.</div>
-              <strong>Petition strategy with the full member picture in view.</strong>
+              <div className="topbar-welcome">Welcome {firstNameFromDisplay(authMember.display_name)}.</div>
+              <strong>{subtitleForPortalSection("attorney", portalSection)}</strong>
             </div>
             <div className="panel" style={{ minWidth: "280px", margin: 0 }}>
               <div className="section-kicker">Selected Member</div>
@@ -7488,23 +8370,21 @@ function App() {
           ) : portalSection === "home" ? (
             <React.Fragment>
               <header className="hero">
-                <p className="eyebrow">Attorney Caseboard</p>
-                <h1>Portfolio first, casework second.</h1>
-                <p>Use Attorney Home as the portfolio dashboard for assigned matters only. Review workload, case-stage distribution, evidence depth, and readiness signals here before moving into member-specific legal work elsewhere.</p>
+                <p className="eyebrow">Attorney Portal</p>
+                <h1>Turn member evidence into stronger EB1A drafting inputs.</h1>
+                <p>Review profiles, evidence, Critical Role and Original Contribution exports, then generate petition, endeavor, and recommendation letter drafts.</p>
                 <div className="hero-chips">
-                  <span className="hero-chip">Assigned case portfolio</span>
-                  <span className="hero-chip">Status-based triage</span>
-                  <span className="hero-chip">Attorney workload signals</span>
+                  <span className="hero-chip">Petition accelerator</span>
+                  <span className="hero-chip">Recommendation letters</span>
+                  <span className="hero-chip">Evidence review</span>
                 </div>
               </header>
 
               <section className="metrics-grid">
-                <MetricCard label="Total Cases" value={builderMembers.length} />
-                <MetricCard label="Open Tasks" value={attorneyTotalOpenTasks} />
-                <MetricCard label="Evidence Items" value={attorneyTotalEvidence} />
-                <MetricCard label="Avg Readiness" value={`${attorneyAverageReadiness}%`} />
-                <MetricCard label="Criteria Started" value={attorneyCriteriaStarted} />
-                <MetricCard label="Needs Attention" value={attorneyAttentionCases} />
+                <MetricCard label="Ready for legal review" value={attorneyDeeperReviewCases} />
+                <MetricCard label="Letters pending" value={recommendationWorkspace?.letters?.filter((item) => item.status !== "pushed").length || 0} />
+                <MetricCard label="Drafts in progress" value={(petitionDraft ? 1 : 0) + (endeavorDraft ? 1 : 0)} />
+                <MetricCard label="High-risk gaps" value={attorneyAttentionCases} />
               </section>
               {selectedBuilderMemberId ? <FilingTimelinePanel data={filingTimeline} busy={filingTimelineBusy} compact /> : null}
 
@@ -7598,7 +8478,7 @@ function App() {
               <header className="hero">
                 <p className="eyebrow">Member Dossier</p>
                 <h1>{builderMemberDetail?.member?.display_name || "Member"} summary.</h1>
-                <p>Review identity, professional positioning, and criterion-level strengths and gaps in one dedicated dossier page.</p>
+                <p>Attorney view of profile, evidence map, critical role exports, and original contribution exports.</p>
               </header>
               <FilingTimelinePanel data={filingTimeline} busy={filingTimelineBusy} compact />
 
@@ -7679,10 +8559,10 @@ function App() {
 
               <section className="panel" style={{ marginTop: "18px" }}>
                 <div className="panel-header">
-                  <div>
-                    <div className="section-kicker">Attorney Draft</div>
-                    <h3 className="section-title">Petition planning view</h3>
-                    <p className="section-intro">Generate an attorney-facing draft from the current case record, then use it to guide legal review and follow-up with the member.</p>
+                    <div>
+                    <div className="section-kicker">Petition Generator</div>
+                    <h3 className="section-title">{selectedAttorneyMember?.display_name || "Selected member"} petition workspace</h3>
+                    <p className="section-intro">Generate a structured EB1A petition draft from profile, evidence, exports, and attorney strategy.</p>
                   </div>
                   <div className="form-actions">
                     <button className="primary compact-btn" type="button" onClick={() => loadAttorneyPetition(selectedBuilderMemberId)} disabled={petitionBusy}>
@@ -7807,7 +8687,7 @@ function App() {
                 <div className="endeavor-hero-row">
                   <div>
                     <h1>{selectedAttorneyMember?.display_name || "Selected member"} proposed endeavor letter</h1>
-                    <p>Confirm the theory, continuity, U.S. benefit, and evidence emphasis in one compact attorney workspace.</p>
+                    <p>Smaller-font, merged sections for fast attorney drafting.</p>
                   </div>
                   <div className="endeavor-stat-strip" aria-label="Endeavor case summary">
                     <span><strong>{evidenceItems.length}</strong> evidence</span>
@@ -7990,6 +8870,14 @@ function App() {
     const costData = adminCosts || {};
     const awsCosts = costData.aws || {};
     const openaiCosts = costData.openai || {};
+    const awsMtd = costPeriodValue(awsCosts, "Monthly", "actual");
+    const openaiMtd = costPeriodValue(openaiCosts, "Monthly", "actual");
+    const awsProjected = costPeriodValue(awsCosts, "Monthly", "projected");
+    const openaiProjected = costPeriodValue(openaiCosts, "Monthly", "projected");
+    const dailyAverage = costPeriodValue(awsCosts, "Daily", "actual") + costPeriodValue(openaiCosts, "Daily", "actual");
+    const monthlySpend = awsMtd + openaiMtd;
+    const projectedTotal = awsProjected + openaiProjected;
+    const openIssueTotal = activeIssueCount(adminIssueLog);
     const costTrendRows = [
       ...(awsCosts.trend || []).slice(-7).map((item) => ({ ...item, source: "AWS", currency: awsCosts.currency })),
       ...(openaiCosts.trend || []).slice(-7).map((item) => ({ ...item, source: "OpenAI", currency: openaiCosts.currency })),
@@ -8004,31 +8892,29 @@ function App() {
         <main className="shell admin-shell" style={shellStyle}>
           <aside className="sidebar">
             <PortalBrand onHome={goToPortalHome} label="Go to admin home" />
-            <div className="brand-sub">Admin Workspace</div>
+            <div className="brand-sub">Admin Operations</div>
             <SidebarNav
               items={[
-                { value: "home", label: "Admin Home" },
-                { value: "health", label: "System Health" },
-                { value: "issues", label: `Issue Portal${adminIssueLog?.status_counts?.open ? ` (${adminIssueLog.status_counts.open})` : ""}` },
-                { value: "costs", label: "Cost Explorer" },
-                { value: "support", label: `Support Tickets${supportSummary.open_count ? ` (${supportSummary.open_count})` : ""}` },
-                { value: "debug", label: "Debug Console" },
-                { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}` },
+                { value: "home", label: "Admin Home", icon: "H" },
+                { value: "health", label: "System Health", icon: "S" },
+                { value: "costs", label: "Cost Explorer", icon: "C" },
+                { value: "support", label: `Support Tickets${supportSummary.open_count ? ` (${supportSummary.open_count})` : ""}`, icon: "T" },
+                { value: "issues", label: `Issue Portal${openIssueTotal ? ` (${openIssueTotal})` : ""}`, icon: "I" },
+                { value: "debug", label: "Debug Console", icon: "D" },
+                { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}`, icon: "M" },
               ]}
               value={portalSection}
               onChange={setPortalSection}
             />
             <div className="side-card">
-              <strong>Welcome {authMember.display_name}</strong>
-              <p>Monitor system health, case movement, portal usage, workload signals, and the support queue from one operations surface.</p>
+              <strong>Admin health</strong>
+              <p>Portals online, open issues, and monthly spend stay visible for operations review.</p>
             </div>
             <div className="side-card">
               <strong>At a glance</strong>
-              <p>Members in system: {builderDashboard?.metrics?.member_count || 0}</p>
-              <p>OpenAI calls: {ops.openai_endpoint_calls || 0}</p>
-              <p>Operational errors: {ops.operational_errors || 0}</p>
-              <p>Open support tickets: {supportSummary.open_count || 0}</p>
-              <p>Open bugs: {adminIssueLog?.status_counts?.open || 0}</p>
+              <p>Portals online: {portalHealth.filter((item) => ["online", "healthy"].includes(String(item.status || "").toLowerCase())).length || portalHealth.length || 0}</p>
+              <p>Open issues: {openIssueTotal}</p>
+              <p>Monthly spend: {formatCostAmount(monthlySpend, awsCosts.currency || openaiCosts.currency || "USD")}</p>
             </div>
             <span className="side-note">Admin portal only</span>
           </aside>
@@ -8037,8 +8923,8 @@ function App() {
             <div className="topbar">
               <div className="topbar-copy">
                 <span className="topbar-label">Admin Portal</span>
-                <div className="topbar-welcome">Welcome {authMember.display_name}.</div>
-                <strong>Operational monitoring across clients, portals, workloads, and support issues.</strong>
+                <div className="topbar-welcome">Welcome {firstNameFromDisplay(authMember.display_name)}.</div>
+                <strong>{subtitleForPortalSection("admin", portalSection)}</strong>
               </div>
               <div className="member-menu-wrap">
                 <button className="member-menu-trigger" type="button" onClick={() => setMemberMenuOpen((current) => !current)}>
@@ -8072,8 +8958,8 @@ function App() {
               <React.Fragment>
                 <header className="hero">
                   <p className="eyebrow">Issue Portal</p>
-                  <h1>Product suite bugs, centralized.</h1>
-                  <p>Track every bug with a bug ID, portal, section, priority, status, dates, and an AWS mirror so the team can diagnose and close issues without losing the thread.</p>
+                  <h1>Excel-style bug backlog.</h1>
+                  <p>Excel-style bug backlog.</p>
                 </header>
                 <IssueLogPanel
                   backlog={adminIssueLog}
@@ -8089,24 +8975,31 @@ function App() {
               <React.Fragment>
                 <header className="hero">
                   <p className="eyebrow">Cost Explorer</p>
-                  <h1>Billing visibility for planning.</h1>
-                  <p>Refresh AWS Cloud and OpenAI cost data on demand, keep the latest refresh timestamp visible, and compare actuals against projections for daily, monthly, and yearly planning.</p>
+                  <h1>AWS and OpenAI spend overview.</h1>
+                  <p>AWS, OpenAI, and infrastructure spend overview. Refresh pulls latest billing.</p>
                 </header>
 
                 <section className="panel">
                   <div className="panel-header">
                     <div>
-                      <div className="section-kicker">Refresh Controls</div>
-                      <h3 className="section-title">Live cost sync</h3>
+                      <div className="section-kicker">Cost Explorer</div>
+                      <h3 className="section-title">AWS and OpenAI spend overview</h3>
                       <p className="section-intro">{costData.detail || "Use Refresh to pull the latest cost data into the Admin Portal."}</p>
                     </div>
                     <div className="cost-toolbar">
                       <span className="mini-note">Last refreshed: {formatDateTime(costData.refreshed_at)}</span>
-                      <button className="ghost compact-btn" type="button" onClick={refreshAdminCosts} disabled={adminCostBusy}>
-                        {adminCostBusy ? "Refreshing..." : "Refresh"}
+                      <button className="primary compact-btn" type="button" onClick={refreshAdminCosts} disabled={adminCostBusy}>
+                        {adminCostBusy ? "Refreshing..." : "Refresh Costs"}
                       </button>
                     </div>
                   </div>
+                </section>
+
+                <section className="metrics-grid cost-mini-grid">
+                  <MetricCard label="AWS MTD" value={formatCostAmount(awsMtd, awsCosts.currency || "USD")} />
+                  <MetricCard label="OpenAI MTD" value={formatCostAmount(openaiMtd, openaiCosts.currency || "USD")} />
+                  <MetricCard label="Projected total" value={formatCostAmount(projectedTotal, awsCosts.currency || openaiCosts.currency || "USD")} />
+                  <MetricCard label="Daily avg" value={formatCostAmount(dailyAverage, awsCosts.currency || openaiCosts.currency || "USD")} />
                 </section>
 
                 <section className="cost-explorer-grid">
@@ -8297,16 +9190,16 @@ function App() {
             ) : portalSection === "health" ? (
               <React.Fragment>
                 <header className="hero">
-                  <p className="eyebrow">System Health</p>
-                  <h1>Platform health, easy to scan.</h1>
-                  <p>See every portal, integration, and response-time signal in one compact operational view.</p>
+                  <p className="eyebrow">Platform Health</p>
+                  <h1>AWS tech stack and response times.</h1>
+                  <p>Platform health, AWS stack, and response-time visibility.</p>
                 </header>
 
                 <section className="panel admin-health-panel">
                   <div className="panel-header">
                     <div>
                       <div className="section-kicker">Platform Health</div>
-                      <h3 className="section-title">Portals and integrations</h3>
+                      <h3 className="section-title">AWS tech stack and response times</h3>
                     </div>
                     <span className="mini-note">Live operations payload</span>
                   </div>
@@ -8358,8 +9251,8 @@ function App() {
               <React.Fragment>
                 <header className="hero">
                   <p className="eyebrow">Support Tickets</p>
-                  <h1>Issue intake, triaged.</h1>
-                  <p>Review user-reported technical issues with the first-pass assessment, likely root cause, and the next actions needed to verify or fix them.</p>
+                  <h1>Support queue.</h1>
+                  <p>Support ticket triage.</p>
                 </header>
 
                 <section className="metrics-grid">
@@ -8372,21 +9265,19 @@ function App() {
                 <section className="panel support-queue-panel" style={{ marginTop: "18px" }}>
                   <div className="panel-header">
                     <div>
-                      <div className="section-kicker">Ticket Queue</div>
-                      <h3 className="section-title">Recent support tickets</h3>
+                      <div className="section-kicker">Support Tickets</div>
+                      <h3 className="section-title">Support queue</h3>
                     </div>
-                    <span className="mini-note">{supportTickets.length} visible</span>
+                    <button className="primary compact-btn" type="button" onClick={() => setSupportOpen(true)}>New Ticket</button>
                   </div>
+                  <p className="mini-note">{supportTickets.length} visible</p>
                   <div className="support-ticket-table">
                     <div className="support-ticket-head">
                       <span>Ticket</span>
-                      <span>Category</span>
                       <span>Portal</span>
-                      <span>Reporter</span>
-                      <span>Triage</span>
                       <span>Priority</span>
-                      <span>Created</span>
-                      <span>Link</span>
+                      <span>Status</span>
+                      <span>Owner</span>
                     </div>
                     {supportTickets.length ? supportTickets.map((ticket) => (
                       <article
@@ -8401,15 +9292,10 @@ function App() {
                             <small>{ticket.short_description}</small>
                           </span>
                         </div>
-                        <span className="support-category-badge">{ticket.category?.replaceAll("_", " ") || "other"}</span>
                         <span>{ticket.portal}</span>
-                        <span>{ticket.reporter_name}</span>
-                        <span className={`status-pill ${ticket.behavior_assessment === "likely_bug" ? "blocked" : ticket.behavior_assessment === "expected_behavior" ? "planned" : "in_progress"}`}>{ticket.behavior_assessment?.replaceAll("_", " ") || "needs verification"}</span>
                         <span>{supportPriorityLabel(ticket.priority)}</span>
-                        <span>{formatDateTime(ticket.created_at)}</span>
-                        <span className="support-ticket-link">
-                          {ticket.current_url ? <a href={ticket.current_url} target="_blank" rel="noreferrer">Open</a> : "Context"}
-                        </span>
+                        <span className={`status-pill ${ticket.behavior_assessment === "likely_bug" ? "blocked" : ticket.behavior_assessment === "expected_behavior" ? "planned" : "in_progress"}`}>{ticket.behavior_assessment?.replaceAll("_", " ") || ticket.status || "needs verification"}</span>
+                        <span>{ticket.owner_name || ticket.assigned_to || ticket.reporter_name || "Unassigned"}</span>
                       </article>
                     )) : <p className="empty-state">No support tickets submitted yet.</p>}
                   </div>
@@ -8419,30 +9305,30 @@ function App() {
               <React.Fragment>
                 <header className="hero">
                   <p className="eyebrow">Debug Console</p>
-                  <h1>Operational issues, one workspace.</h1>
-                  <p>Review recent failures and take the first recovery action for a member without crowding the main admin summary page.</p>
+                  <h1>Activity and audit log.</h1>
+                  <p>Minimal rows with timestamps for debugging user journeys.</p>
                 </header>
 
                 <section className="panel admin-table-panel">
                   <div className="panel-header">
                     <div>
-                      <div className="section-kicker">Operational Errors</div>
-                      <h3 className="section-title">Recent errors</h3>
-                      <p className="section-intro">Recent failures across auth, AI processing, evidence workflows, and admin operations in a compact incident ledger.</p>
+                      <div className="section-kicker">Debug Console</div>
+                      <h3 className="section-title">Activity and audit log</h3>
+                      <p className="section-intro">Minimal rows with timestamps for debugging user journeys.</p>
                     </div>
-                    <span className="mini-note">{(adminDashboard?.recent_errors || []).length} visible</span>
+                    <button className="primary compact-btn" type="button">Export Logs</button>
                   </div>
+                  <p className="mini-note">{(adminDashboard?.recent_errors || []).length} visible</p>
                   <div className="debug-error-table">
-                    <div className="debug-error-row debug-error-head"><span>Event</span><span>Portal</span><span>Endpoint</span><span>Status</span><span>Created</span><span>Message</span></div>
+                    <div className="debug-error-row debug-error-head"><span>Timestamp</span><span>Actor</span><span>Portal</span><span>Action</span><span>Status</span></div>
                     {(adminDashboard?.recent_errors || []).length ? (
                       adminDashboard.recent_errors.map((item) => (
                         <article key={item.id} className="debug-error-row">
-                          <strong>{item.event_type}</strong>
+                          <span>{formatDateTime(item.created_at)}</span>
+                          <span>{item.actor_email || item.user_email || item.member_email || "system"}</span>
                           <span>{item.portal || "system"}</span>
-                          <span>{item.endpoint || "n/a"}</span>
+                          <strong>{item.event_type || item.action || item.endpoint || "activity"}</strong>
                           <span className="status-pill blocked">{item.status || "error"}</span>
-                          <span>{item.created_at}</span>
-                          <small>{item.message || "No message captured."}</small>
                         </article>
                       ))
                     ) : (
@@ -8482,16 +9368,21 @@ function App() {
             ) : (
               <React.Fragment>
                 <header className="hero">
-                  <p className="eyebrow">Operational Monitoring</p>
-                  <h1>Operations snapshot.</h1>
-                  <p>Watch case movement, assignments, open work, platform stability, and support load so nothing gets stuck quietly in the background.</p>
+                  <p className="eyebrow">Admin Portal</p>
+                  <h1>Operate the Ascend Product Suite with clear visibility.</h1>
+                  <p>Monitor system health, costs, support tickets, issue portal activity, debug logs, and user journeys.</p>
+                  <div className="hero-chips">
+                    <span className="hero-chip">AWS stack health</span>
+                    <span className="hero-chip">Cost Explorer</span>
+                    <span className="hero-chip">Issue Portal</span>
+                  </div>
                 </header>
 
                 <section className="metrics-grid">
-                  <MetricCard label="OpenAI Calls" value={ops.openai_endpoint_calls || 0} />
-                  <MetricCard label="Members Using AI" value={ops.members_using_ai_suggestions || 0} />
-                  <MetricCard label="Active Members" value={ops.active_members || 0} />
-                  <MetricCard label="Open Support" value={ops.open_support_tickets || 0} />
+                  <MetricCard label="Portals online" value={`${portalHealth.filter((item) => ["online", "healthy"].includes(String(item.status || "").toLowerCase())).length || portalHealth.length || 0}/${portalHealth.length || 5}`} />
+                  <MetricCard label="Open issues" value={openIssueTotal} />
+                  <MetricCard label="Monthly spend" value={formatCostAmount(monthlySpend, awsCosts.currency || openaiCosts.currency || "USD")} />
+                  <MetricCard label="Avg API latency" value={formatResponseMs(responseTimes.find((item) => item.name === "FastAPI")?.avg_ms || ops.avg_api_latency_ms_p50 || 0)} />
                 </section>
 
                 <section className="builder-layout" style={{ marginTop: "18px" }}>
@@ -8546,17 +9437,20 @@ function App() {
 
   return (
     <React.Fragment>
-      <main className="shell" style={shellStyle}>
+      <main className="shell member-shell" style={shellStyle}>
         <aside className="sidebar">
         <PortalBrand onHome={goToPortalHome} label="Go to member home" />
         <div className="brand-sub">Member Workspace</div>
         <SidebarNav
           items={[
-            { value: "home", label: "Member Home" },
-            { value: "profile", label: "Profile" },
-            { value: "planner", label: "Event Planner" },
-            { value: "intake", label: "Evidence Intake" },
-            { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}` },
+            { value: "home", label: "Member Home", icon: "H" },
+            { value: "profile", label: "Profile", icon: "P" },
+            { value: "planner", label: "Event Planner", icon: "E" },
+            { value: "intake", label: "Evidence Intake", icon: "I" },
+            { value: "workspace", label: "Evidence Workspace", icon: "W" },
+            { value: "critical_roles", label: "Critical Role Projects", icon: "C" },
+            { value: "original_contributions", label: "Original Contributions", icon: "O" },
+            { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}`, icon: "M" },
           ]}
           value={memberSection}
           onChange={(next) => {
@@ -8567,6 +9461,13 @@ function App() {
               setView({ type: "planner", criterionCode: "" });
             } else if (next === "intake") {
               setView({ type: "intake", criterionCode: "" });
+            } else if (next === "workspace") {
+              setView({ type: "workspace", criterionCode: "" });
+              setSelectedFolderId("");
+            } else if (next === "critical_roles") {
+              setView({ type: "critical_roles", criterionCode: "" });
+            } else if (next === "original_contributions") {
+              setView({ type: "original_contributions", criterionCode: "" });
             } else if (next === "messages") {
               setView({ type: "messages", criterionCode: "" });
             } else {
@@ -8599,8 +9500,8 @@ function App() {
         <div className="topbar">
           <div className="topbar-copy">
             <span className="topbar-label">{view.type === "workspace" ? "Evidence Workspace" : view.type === "profile" ? "Member Profile" : view.type === "critical_roles" ? "Critical Role Projects" : view.type === "original_contributions" ? "Original Contributions" : view.type === "planner" ? "Event Planner" : view.type === "intake" ? "Evidence Intake" : view.type === "messages" ? "Messages" : "Member Home"}</span>
-            <div className="topbar-welcome">Welcome {authMember.display_name}.</div>
-            <strong>{view.type === "workspace" ? (selectedCriterion?.name || "Evidence By Criterion") : view.type === "profile" ? "Keep your attorney-ready profile current" : view.type === "critical_roles" ? "Capture one detailed project at a time for the leading or critical role criterion" : view.type === "original_contributions" ? "Document the originality, significance, and adoption of each contribution clearly" : view.type === "planner" ? "Track upcoming opportunities and target dates in one clean planner" : view.type === "intake" ? "Upload and review evidence in its own focused intake page" : view.type === "messages" ? "Keep conversations in their own dedicated workspace" : "Evidence intake, planning, and organization"}</strong>
+            <div className="topbar-welcome">Welcome {(authMember.display_name || "").split(" ")[0] || authMember.display_name}.</div>
+            <strong>{view.type === "workspace" ? "Organize files and folders by EB1A criterion" : view.type === "profile" ? "Keep your attorney-ready profile current" : view.type === "critical_roles" ? "Capture one detailed project at a time" : view.type === "original_contributions" ? "Document originality, significance, and adoption" : view.type === "planner" ? "Track upcoming opportunities and target dates" : view.type === "intake" ? "Upload and review evidence in a focused intake page" : view.type === "messages" ? "Keep conversations in one dedicated workspace" : "Evidence intake, planning, and organization"}</strong>
           </div>
           <div className="member-menu-wrap">
             <button className="member-menu-trigger" type="button" onClick={() => setMemberMenuOpen((current) => !current)}>
@@ -8629,12 +9530,13 @@ function App() {
           <React.Fragment>
             <header className="hero">
               <p className="eyebrow">Member Portal</p>
-              <h1>Welcome {dashboard.client.display_name}.</h1>
-              <p>Capture evidence, let AI help classify and summarize it, and keep every criterion organized for the next phase of your EB1A journey.</p>
+              <h1>Welcome {authMember.display_name?.split(" ")[0] || dashboard.client.display_name}.</h1>
+              <p>Capture evidence, use guided EB1A forms, and keep each category organized for attorney review.</p>
               <div className="hero-chips">
                 <span className="hero-chip">AI-assisted intake</span>
-                <span className="hero-chip">Clean evidence organization</span>
-                <span className="hero-chip">Action items with dates</span>
+                <span className="hero-chip">Guided EB1A forms</span>
+                <span className="hero-chip">Drive-like folders</span>
+                <span className="hero-chip">Browser back and forward friendly</span>
               </div>
             </header>
 
@@ -8644,7 +9546,7 @@ function App() {
               <MetricCard label="Open tasks" value={dashboard.metrics.open_tasks} />
               <MetricCard label="Criteria started" value={dashboard.metrics.criteria_started} />
             </section>
-            <FilingTimelinePanel data={filingTimeline} busy={filingTimelineBusy} compact />
+            <FilingTimelinePanel data={filingTimeline} busy={filingTimelineBusy} memberCommitment dashboard={dashboard} onOpenIntake={() => setView({ type: "intake", criterionCode: "" })} />
           </React.Fragment>
         ) : null}
 
@@ -8745,9 +9647,9 @@ function App() {
           <section className="intake-card">
               <div className="section-kicker">Evidence Intake</div>
               <h3 className="section-title intake-title">Evidence Intake Review</h3>
-              <p className="section-intro intake-intro">Add a short note, upload the document, and let the portal guide the next step without making the process feel heavy.</p>
+              <p className="section-intro intake-intro">Upload evidence with AI assistance or manual category selection. Review before saving.</p>
               <span className="soft-badge">Review before saving</span>
-              <p className="intake-helper">Choose the faster AI route or place the evidence yourself.</p>
+              <p className="intake-helper">Choose the faster AI route or place the evidence yourself. Manual uploads only require a file and category.</p>
 
               <div className="route-toggle" role="tablist" aria-label="Evidence route">
                 <button type="button" className={routeMode === "ai" ? "active" : ""} onClick={() => { setRouteMode("ai"); setDraft(null); setConsent(false); }}>
@@ -8790,13 +9692,16 @@ function App() {
 
               {draft && routeMode === "ai" ? (
                 <section className="draft-card">
-                  <h3>Review Draft</h3>
+                  <h3>{draft.fallback_used ? "Manual Review Recommended" : "Review Draft"}</h3>
+                  {draft.fallback_used ? (
+                    <p className="empty-state">The portal could not confidently classify this file automatically. Please review the suggested category and adjust it before saving.</p>
+                  ) : null}
                   <dl>
                     <div><dt>Suggested category</dt><dd>{criteriaByCode[draft.criterion_code]?.name || draft.criterion_code}</dd></div>
                     <div><dt>Suggested evidence type</dt><dd>{draft.document_type || "Other"}</dd></div>
                     <div><dt>Suggested title</dt><dd>{draft.title}</dd></div>
                     <div><dt>Summary</dt><dd>{draft.ai_description}</dd></div>
-                    <div><dt>Confidence</dt><dd>{draft.quality_score}%</dd></div>
+                    {!draft.fallback_used ? <div><dt>Confidence</dt><dd>{draft.quality_score}%</dd></div> : null}
                   </dl>
                   <div className="route-toggle" role="tablist" aria-label="Draft feedback">
                     <button type="button" className={aiFeedback === "accept" ? "active" : ""} onClick={() => setAiFeedback("accept")}>Accept suggestion</button>
@@ -8995,15 +9900,15 @@ function App() {
                         </select>
                         <span className="field-help">The template notes that W-2, contract, and part-time work can still qualify if the role itself was critical.</span>
                       </label>
-                      <label className="profile-span-2">
-                        Why This Organization Was Distinguished
-                        <textarea value={criticalRoleForm.organization_distinctiveness} onChange={(event) => setCriticalRoleField("organization_distinctiveness", event.target.value)} placeholder="Describe market leadership, scale, brand recognition, flagship products, industry position, or why the organization is notable in its field." />
-                        <span className="field-help">Focus on size, market presence, user base, reputation, or industry contribution so attorneys can show the employer was not ordinary.</span>
-                      </label>
-                      <label className="profile-span-2">
-                        Organization Achievements, Awards, or Reputation Signals
-                        <textarea value={criticalRoleForm.organization_achievements} onChange={(event) => setCriticalRoleField("organization_achievements", event.target.value)} placeholder="Examples: market share, awards, valuation, public recognition, flagship products, global reach, research impact." />
-                      </label>
+                      {renderMemberMagicTextarea("critical_role", "organization_distinctiveness", "Why This Organization Was Distinguished", {
+                        className: "profile-span-2",
+                        placeholder: "Describe market leadership, scale, brand recognition, flagship products, industry position, or why the organization is notable in its field.",
+                        help: "Focus on size, market presence, user base, reputation, or industry contribution so attorneys can show the employer was not ordinary.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "organization_achievements", "Organization Achievements, Awards, or Reputation Signals", {
+                        className: "profile-span-2",
+                        placeholder: "Examples: market share, awards, valuation, public recognition, flagship products, global reach, research impact.",
+                      })}
                     </div>
                   </div>
 
@@ -9026,27 +9931,26 @@ function App() {
                         <input type="checkbox" checked={criticalRoleForm.is_current_role} onChange={(event) => setCriticalRoleField("is_current_role", event.target.checked)} />
                         <span>This is my current role</span>
                       </label>
-                      <label className="profile-span-2">
-                        Role Summary *
-                        <textarea value={criticalRoleForm.role_summary} onChange={(event) => setCriticalRoleField("role_summary", event.target.value)} required placeholder="Summarize the role in attorney-friendly terms and explain why the responsibilities were crucial to the organization." />
-                        <span className="field-help">This should read like the short explanation an attorney would use to describe why the position mattered.</span>
-                      </label>
-                      <label className="profile-span-2">
-                        Core Responsibilities
-                        <textarea value={criticalRoleForm.role_responsibilities} onChange={(event) => setCriticalRoleField("role_responsibilities", event.target.value)} placeholder="List the highest-value responsibilities: product strategy, launch ownership, technical leadership, stakeholder management, compliance ownership, revenue responsibility, etc." />
-                      </label>
-                      <label className="profile-span-2">
-                        How The Role Evolved
-                        <textarea value={criticalRoleForm.role_evolution} onChange={(event) => setCriticalRoleField("role_evolution", event.target.value)} placeholder="Explain how your scope grew, what higher-stakes work you inherited, and how the organization relied on you over time." />
-                      </label>
-                      <label>
-                        Leadership Scope
-                        <textarea value={criticalRoleForm.leadership_scope} onChange={(event) => setCriticalRoleField("leadership_scope", event.target.value)} placeholder="Teams led, regions covered, budget owned, products managed, or executives supported." />
-                      </label>
-                      <label>
-                        Cross-functional Partners
-                        <textarea value={criticalRoleForm.cross_functional_partners} onChange={(event) => setCriticalRoleField("cross_functional_partners", event.target.value)} placeholder="Engineering, design, sales, policy, legal, research, operations, regional teams, partner organizations." />
-                      </label>
+                      {renderMemberMagicTextarea("critical_role", "role_summary", "Role Summary", {
+                        className: "profile-span-2",
+                        required: true,
+                        placeholder: "Summarize the role in attorney-friendly terms and explain why the responsibilities were crucial to the organization.",
+                        help: "This should read like the short explanation an attorney would use to describe why the position mattered.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "role_responsibilities", "Core Responsibilities", {
+                        className: "profile-span-2",
+                        placeholder: "List the highest-value responsibilities: product strategy, launch ownership, technical leadership, stakeholder management, compliance ownership, revenue responsibility, etc.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "role_evolution", "How The Role Evolved", {
+                        className: "profile-span-2",
+                        placeholder: "Explain how your scope grew, what higher-stakes work you inherited, and how the organization relied on you over time.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "leadership_scope", "Leadership Scope", {
+                        placeholder: "Teams led, regions covered, budget owned, products managed, or executives supported.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "cross_functional_partners", "Cross-functional Partners", {
+                        placeholder: "Engineering, design, sales, policy, legal, research, operations, regional teams, partner organizations.",
+                      })}
                     </div>
                   </div>
 
@@ -9071,97 +9975,91 @@ function App() {
                         Project End Date
                         <input type="date" value={criticalRoleForm.project_end_date} onChange={(event) => setCriticalRoleField("project_end_date", event.target.value)} />
                       </label>
-                      <label className="profile-span-2">
-                        Project Summary
-                        <textarea value={criticalRoleForm.project_summary} onChange={(event) => setCriticalRoleField("project_summary", event.target.value)} placeholder="What was the initiative, what did it do, and why was it important to the organization?" />
-                      </label>
-                      <label className="profile-span-2">
-                        Business Need Or Problem To Solve
-                        <textarea value={criticalRoleForm.business_need} onChange={(event) => setCriticalRoleField("business_need", event.target.value)} placeholder="Describe the urgent need, revenue problem, platform gap, market opportunity, or operational bottleneck." />
-                      </label>
-                      <label className="profile-span-2">
-                        Strategic Importance
-                        <textarea value={criticalRoleForm.strategic_importance} onChange={(event) => setCriticalRoleField("strategic_importance", event.target.value)} placeholder="Explain why leadership cared: market expansion, user trust, retention, AI leadership, infrastructure modernization, payments growth, etc." />
-                      </label>
+                      {renderMemberMagicTextarea("critical_role", "project_summary", "Project Summary", {
+                        className: "profile-span-2",
+                        placeholder: "What was the initiative, what did it do, and why was it important to the organization?",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "business_need", "Business Need Or Problem To Solve", {
+                        className: "profile-span-2",
+                        placeholder: "Describe the urgent need, revenue problem, platform gap, market opportunity, or operational bottleneck.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "strategic_importance", "Strategic Importance", {
+                        className: "profile-span-2",
+                        placeholder: "Explain why leadership cared: market expansion, user trust, retention, AI leadership, infrastructure modernization, payments growth, etc.",
+                      })}
                     </div>
                   </div>
 
                   <div className="critical-role-section">
                     <h4>Your contribution and value</h4>
                     <div className="profile-grid">
-                      <label className="profile-span-2">
-                        Your Specific Contributions *
-                        <textarea value={criticalRoleForm.contributions_summary} onChange={(event) => setCriticalRoleField("contributions_summary", event.target.value)} required placeholder="Spell out what you personally ideated, built, led, approved, designed, negotiated, launched, or rescued." />
-                        <span className="field-help">Use direct ownership language so the attorneys can distinguish your work from the team’s work.</span>
-                      </label>
-                      <label className="profile-span-2">
-                        Originality / Innovation
-                        <textarea value={criticalRoleForm.innovation_originality} onChange={(event) => setCriticalRoleField("innovation_originality", event.target.value)} placeholder="What was novel, first-of-its-kind, unusually hard, or strategically inventive about your approach?" />
-                      </label>
-                      <label className="profile-span-2">
-                        Business Value Summary *
-                        <textarea value={criticalRoleForm.business_value_summary} onChange={(event) => setCriticalRoleField("business_value_summary", event.target.value)} required placeholder="Summarize the measurable business value this work created for the organization or users." />
-                      </label>
-                      <label className="profile-span-2">
-                        Quantitative Metrics
-                        <textarea value={criticalRoleForm.quantitative_metrics} onChange={(event) => setCriticalRoleField("quantitative_metrics", event.target.value)} placeholder="Include user counts, revenue impact, adoption metrics, faster launch timelines, reduced incident rates, CSAT gains, downloads, retention, or global reach." />
-                      </label>
-                      <label>
-                        Revenue / Monetization Impact
-                        <textarea value={criticalRoleForm.revenue_impact} onChange={(event) => setCriticalRoleField("revenue_impact", event.target.value)} placeholder="Examples: annual revenue enabled, subscription uplift, new market spend, transaction value supported." />
-                      </label>
-                      <label>
-                        Cost Savings / Efficiency
-                        <textarea value={criticalRoleForm.cost_savings} onChange={(event) => setCriticalRoleField("cost_savings", event.target.value)} placeholder="Examples: reduced headcount need, time saved, faster release cycle, fewer manual steps." />
-                      </label>
-                      <label>
-                        Speed / Operational Gain
-                        <textarea value={criticalRoleForm.efficiency_gain} onChange={(event) => setCriticalRoleField("efficiency_gain", event.target.value)} placeholder="Examples: launch in days instead of months, 50% faster release, 30% maintenance reduction." />
-                      </label>
-                      <label>
-                        User / Customer Impact
-                        <textarea value={criticalRoleForm.user_or_customer_impact} onChange={(event) => setCriticalRoleField("user_or_customer_impact", event.target.value)} placeholder="Who benefited and at what scale? Mention users, developers, customers, patients, or enterprises." />
-                      </label>
-                      <label>
-                        Market / Geographic Impact
-                        <textarea value={criticalRoleForm.market_or_geographic_impact} onChange={(event) => setCriticalRoleField("market_or_geographic_impact", event.target.value)} placeholder="Mention countries, regions, enterprise accounts, new market entry, or strategic partnerships." />
-                      </label>
-                      <label>
-                        Compliance / Risk Impact
-                        <textarea value={criticalRoleForm.compliance_or_risk_impact} onChange={(event) => setCriticalRoleField("compliance_or_risk_impact", event.target.value)} placeholder="Describe trust, safety, privacy, policy, fraud reduction, or legal compliance impact if relevant." />
-                      </label>
+                      {renderMemberMagicTextarea("critical_role", "contributions_summary", "Your Specific Contributions", {
+                        className: "profile-span-2",
+                        required: true,
+                        placeholder: "Spell out what you personally ideated, built, led, approved, designed, negotiated, launched, or rescued.",
+                        help: "Use direct ownership language so the attorneys can distinguish your work from the team’s work.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "innovation_originality", "Originality / Innovation", {
+                        className: "profile-span-2",
+                        placeholder: "What was novel, first-of-its-kind, unusually hard, or strategically inventive about your approach?",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "business_value_summary", "Business Value Summary", {
+                        className: "profile-span-2",
+                        required: true,
+                        placeholder: "Summarize the measurable business value this work created for the organization or users.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "quantitative_metrics", "Quantitative Metrics", {
+                        className: "profile-span-2",
+                        placeholder: "Include user counts, revenue impact, adoption metrics, faster launch timelines, reduced incident rates, CSAT gains, downloads, retention, or global reach.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "revenue_impact", "Revenue / Monetization Impact", {
+                        placeholder: "Examples: annual revenue enabled, subscription uplift, new market spend, transaction value supported.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "cost_savings", "Cost Savings / Efficiency", {
+                        placeholder: "Examples: reduced headcount need, time saved, faster release cycle, fewer manual steps.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "efficiency_gain", "Speed / Operational Gain", {
+                        placeholder: "Examples: launch in days instead of months, 50% faster release, 30% maintenance reduction.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "user_or_customer_impact", "User / Customer Impact", {
+                        placeholder: "Who benefited and at what scale? Mention users, developers, customers, patients, or enterprises.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "market_or_geographic_impact", "Market / Geographic Impact", {
+                        placeholder: "Mention countries, regions, enterprise accounts, new market entry, or strategic partnerships.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "compliance_or_risk_impact", "Compliance / Risk Impact", {
+                        placeholder: "Describe trust, safety, privacy, policy, fraud reduction, or legal compliance impact if relevant.",
+                      })}
                     </div>
                   </div>
 
                   <div className="critical-role-section">
                     <h4>Why you stood out</h4>
                     <div className="profile-grid">
-                      <label className="profile-span-2">
-                        How You Were Distinguished From Peers
-                        <textarea value={criticalRoleForm.peer_distinction_summary} onChange={(event) => setCriticalRoleField("peer_distinction_summary", event.target.value)} placeholder="Explain how your leadership, judgment, product sense, technical depth, innovation, or execution went beyond what peers typically delivered." />
-                      </label>
-                      <label>
-                        Mentorship / Leadership Beyond Title
-                        <textarea value={criticalRoleForm.mentorship_leadership} onChange={(event) => setCriticalRoleField("mentorship_leadership", event.target.value)} placeholder="Coaching, mentoring, shaping team culture, setting frameworks, guiding cross-functional teams." />
-                      </label>
-                      <label>
-                        Executive Visibility / Trusted Advisor Role
-                        <textarea value={criticalRoleForm.executive_visibility} onChange={(event) => setCriticalRoleField("executive_visibility", event.target.value)} placeholder="How closely leadership relied on you, which VPs or executives reviewed the work, and what decisions you influenced." />
-                      </label>
+                      {renderMemberMagicTextarea("critical_role", "peer_distinction_summary", "How You Were Distinguished From Peers", {
+                        className: "profile-span-2",
+                        placeholder: "Explain how your leadership, judgment, product sense, technical depth, innovation, or execution went beyond what peers typically delivered.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "mentorship_leadership", "Mentorship / Leadership Beyond Title", {
+                        placeholder: "Coaching, mentoring, shaping team culture, setting frameworks, guiding cross-functional teams.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "executive_visibility", "Executive Visibility / Trusted Advisor Role", {
+                        placeholder: "How closely leadership relied on you, which VPs or executives reviewed the work, and what decisions you influenced.",
+                      })}
                     </div>
                   </div>
 
                   <div className="critical-role-section">
                     <h4>Evidence and attorney draft</h4>
                     <div className="profile-grid">
-                      <label className="profile-span-2">
-                        Evidence You Can Potentially Provide
-                        <textarea value={criticalRoleForm.evidence_available} onChange={(event) => setCriticalRoleField("evidence_available", event.target.value)} placeholder="List emails, launch docs, decks, org charts, screenshots, press coverage, metrics dashboards, performance reviews, patents, awards, or recommendation letter sources." />
-                      </label>
-                      <label className="profile-span-2">
-                        Attorney-friendly Summary
-                        <textarea value={criticalRoleForm.attorney_friendly_summary} onChange={(event) => setCriticalRoleField("attorney_friendly_summary", event.target.value)} placeholder="Write a tight paragraph the legal team could reuse in a petition draft to explain why your role on this project was leading or critical." />
-                      </label>
+                      {renderMemberMagicTextarea("critical_role", "evidence_available", "Evidence You Can Potentially Provide", {
+                        className: "profile-span-2",
+                        placeholder: "List emails, launch docs, decks, org charts, screenshots, press coverage, metrics dashboards, performance reviews, patents, awards, or recommendation letter sources.",
+                      })}
+                      {renderMemberMagicTextarea("critical_role", "attorney_friendly_summary", "Attorney-friendly Summary", {
+                        className: "profile-span-2",
+                        placeholder: "Write a tight paragraph the legal team could reuse in a petition draft to explain why your role on this project was leading or critical.",
+                      })}
                     </div>
                   </div>
 
@@ -9288,119 +10186,114 @@ function App() {
                   <div className="critical-role-section">
                     <h4>Originality and innovation</h4>
                     <div className="profile-grid">
-                      <label className="profile-span-2">
-                        What Was Original *
-                        <textarea value={originalContributionForm.originality_summary} onChange={(event) => setOriginalContributionField("originality_summary", event.target.value)} required placeholder="Describe the specific innovation you introduced and why it was unique in your field or company." />
-                        <span className="field-help">Attorneys need enough detail to show this was not routine execution or a small variation on existing work.</span>
-                      </label>
-                      <label className="profile-span-2">
-                        How It Challenged Existing Methods Or Paradigms
-                        <textarea value={originalContributionForm.challenging_paradigms} onChange={(event) => setOriginalContributionField("challenging_paradigms", event.target.value)} placeholder="Explain what the old way was, why it was limited, and how your contribution changed the approach." />
-                      </label>
-                      <label className="profile-span-2">
-                        Prior State Of The Field Or Workflow
-                        <textarea value={originalContributionForm.prior_state_of_field} onChange={(event) => setOriginalContributionField("prior_state_of_field", event.target.value)} placeholder="Describe the baseline process, common limitations, and the pain points that existed before your contribution." />
-                      </label>
+                      {renderMemberMagicTextarea("original_contribution", "originality_summary", "What Was Original", {
+                        className: "profile-span-2",
+                        required: true,
+                        placeholder: "Describe the specific innovation you introduced and why it was unique in your field or company.",
+                        help: "Attorneys need enough detail to show this was not routine execution or a small variation on existing work.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "challenging_paradigms", "How It Challenged Existing Methods Or Paradigms", {
+                        className: "profile-span-2",
+                        placeholder: "Explain what the old way was, why it was limited, and how your contribution changed the approach.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "prior_state_of_field", "Prior State Of The Field Or Workflow", {
+                        className: "profile-span-2",
+                        placeholder: "Describe the baseline process, common limitations, and the pain points that existed before your contribution.",
+                      })}
                     </div>
                   </div>
 
                   <div className="critical-role-section">
                     <h4>Your role and distinct contribution</h4>
                     <div className="profile-grid">
-                      <label className="profile-span-2">
-                        Work-related Vs External Context
-                        <textarea value={originalContributionForm.work_vs_external_context} onChange={(event) => setOriginalContributionField("work_vs_external_context", event.target.value)} placeholder="Clarify whether this was work-related, research-based, entrepreneurial, grant-related, nonprofit, or external collaboration." />
-                      </label>
-                      <label>
-                        Your Personal Role
-                        <textarea value={originalContributionForm.personal_role} onChange={(event) => setOriginalContributionField("personal_role", event.target.value)} placeholder="Product lead, researcher, founder, inventor, principal engineer, etc." />
-                      </label>
-                      <label className="profile-span-2">
-                        Your Distinct Contribution *
-                        <textarea value={originalContributionForm.distinct_contribution_summary} onChange={(event) => setOriginalContributionField("distinct_contribution_summary", event.target.value)} required placeholder="Spell out exactly what you personally introduced, designed, led, authored, built, validated, or commercialized." />
-                      </label>
+                      {renderMemberMagicTextarea("original_contribution", "work_vs_external_context", "Work-related Vs External Context", {
+                        className: "profile-span-2",
+                        placeholder: "Clarify whether this was work-related, research-based, entrepreneurial, grant-related, nonprofit, or external collaboration.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "personal_role", "Your Personal Role", {
+                        placeholder: "Product lead, researcher, founder, inventor, principal engineer, etc.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "distinct_contribution_summary", "Your Distinct Contribution", {
+                        className: "profile-span-2",
+                        required: true,
+                        placeholder: "Spell out exactly what you personally introduced, designed, led, authored, built, validated, or commercialized.",
+                      })}
                     </div>
                   </div>
 
                   <div className="critical-role-section">
                     <h4>Problem, solution, and use cases</h4>
                     <div className="profile-grid">
-                      <label className="profile-span-2">
-                        Technical Or Business Problem
-                        <textarea value={originalContributionForm.technical_or_business_problem} onChange={(event) => setOriginalContributionField("technical_or_business_problem", event.target.value)} placeholder="Describe the pain point, inefficiency, market gap, scientific limitation, or operational challenge your contribution addressed." />
-                      </label>
-                      <label className="profile-span-2">
-                        Solution Or Innovation You Created
-                        <textarea value={originalContributionForm.solution_or_innovation} onChange={(event) => setOriginalContributionField("solution_or_innovation", event.target.value)} placeholder="Explain the mechanism, framework, feature, app, method, product, or process you created." />
-                      </label>
-                      <label className="profile-span-2">
-                        Unique Features Or Notable Use Cases
-                        <textarea value={originalContributionForm.unique_features} onChange={(event) => setOriginalContributionField("unique_features", event.target.value)} placeholder="List the strongest use cases, novel features, downstream capabilities, or examples showing why the contribution was different." />
-                      </label>
+                      {renderMemberMagicTextarea("original_contribution", "technical_or_business_problem", "Technical Or Business Problem", {
+                        className: "profile-span-2",
+                        placeholder: "Describe the pain point, inefficiency, market gap, scientific limitation, or operational challenge your contribution addressed.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "solution_or_innovation", "Solution Or Innovation You Created", {
+                        className: "profile-span-2",
+                        placeholder: "Explain the mechanism, framework, feature, app, method, product, or process you created.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "unique_features", "Unique Features Or Notable Use Cases", {
+                        className: "profile-span-2",
+                        placeholder: "List the strongest use cases, novel features, downstream capabilities, or examples showing why the contribution was different.",
+                      })}
                     </div>
                   </div>
 
                   <div className="critical-role-section">
                     <h4>Impact and major significance</h4>
                     <div className="profile-grid">
-                      <label className="profile-span-2">
-                        Impact Metrics *
-                        <textarea value={originalContributionForm.impact_metrics} onChange={(event) => setOriginalContributionField("impact_metrics", event.target.value)} required placeholder="Include numbers wherever possible: time savings, users reached, revenue, citations, funding, valuation, bug reduction, adoption, quality improvement, or market size." />
-                      </label>
-                      <label>
-                        Adoption Scale
-                        <textarea value={originalContributionForm.adoption_scale} onChange={(event) => setOriginalContributionField("adoption_scale", event.target.value)} placeholder="Who used or adopted it, and at what scale?" />
-                      </label>
-                      <label>
-                        Beneficiaries
-                        <textarea value={originalContributionForm.beneficiary_summary} onChange={(event) => setOriginalContributionField("beneficiary_summary", event.target.value)} placeholder="Developers, researchers, hospitals, customers, startups, platform users, or the broader public." />
-                      </label>
-                      <label>
-                        Time Savings
-                        <textarea value={originalContributionForm.time_savings} onChange={(event) => setOriginalContributionField("time_savings", event.target.value)} placeholder="Examples: reduced a 6-week process to 1 week, cut testing by 90%." />
-                      </label>
-                      <label>
-                        Cost Savings
-                        <textarea value={originalContributionForm.cost_savings} onChange={(event) => setOriginalContributionField("cost_savings", event.target.value)} placeholder="Examples: saved millions in labor, infrastructure, or lost revenue." />
-                      </label>
-                      <label>
-                        Revenue Or Funding Impact
-                        <textarea value={originalContributionForm.revenue_impact} onChange={(event) => setOriginalContributionField("revenue_impact", event.target.value)} placeholder="Examples: increased spend, monetization, funding raised, valuation achieved." />
-                      </label>
-                      <label>
-                        Quality / Risk Impact
-                        <textarea value={originalContributionForm.quality_or_risk_impact} onChange={(event) => setOriginalContributionField("quality_or_risk_impact", event.target.value)} placeholder="Bug reduction, quality improvement, reduced escalations, safer releases, policy or compliance improvement." />
-                      </label>
-                      <label className="profile-span-2">
-                        Broader Field Impact *
-                        <textarea value={originalContributionForm.field_wide_impact} onChange={(event) => setOriginalContributionField("field_wide_impact", event.target.value)} required placeholder="Explain how the contribution influenced the broader field, market, ecosystem, or industry rather than helping only one team." />
-                      </label>
+                      {renderMemberMagicTextarea("original_contribution", "impact_metrics", "Impact Metrics", {
+                        className: "profile-span-2",
+                        required: true,
+                        placeholder: "Include numbers wherever possible: time savings, users reached, revenue, citations, funding, valuation, bug reduction, adoption, quality improvement, or market size.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "adoption_scale", "Adoption Scale", {
+                        placeholder: "Who used or adopted it, and at what scale?",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "beneficiary_summary", "Beneficiaries", {
+                        placeholder: "Developers, researchers, hospitals, customers, startups, platform users, or the broader public.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "time_savings", "Time Savings", {
+                        placeholder: "Examples: reduced a 6-week process to 1 week, cut testing by 90%.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "cost_savings", "Cost Savings", {
+                        placeholder: "Examples: saved millions in labor, infrastructure, or lost revenue.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "revenue_impact", "Revenue Or Funding Impact", {
+                        placeholder: "Examples: increased spend, monetization, funding raised, valuation achieved.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "quality_or_risk_impact", "Quality / Risk Impact", {
+                        placeholder: "Bug reduction, quality improvement, reduced escalations, safer releases, policy or compliance improvement.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "field_wide_impact", "Broader Field Impact", {
+                        className: "profile-span-2",
+                        required: true,
+                        placeholder: "Explain how the contribution influenced the broader field, market, ecosystem, or industry rather than helping only one team.",
+                      })}
                     </div>
                   </div>
 
                   <div className="critical-role-section">
                     <h4>Recognition and evidence</h4>
                     <div className="profile-grid">
-                      <label className="profile-span-2">
-                        Recognition And Influence
-                        <textarea value={originalContributionForm.recognition_and_influence} onChange={(event) => setOriginalContributionField("recognition_and_influence", event.target.value)} placeholder="Describe recognition by other experts, adoption by others, conference talks, citations, internal executive recognition, or industry influence." />
-                      </label>
-                      <label className="profile-span-2">
-                        Media Or Public Mentions
-                        <textarea value={originalContributionForm.media_or_public_mentions} onChange={(event) => setOriginalContributionField("media_or_public_mentions", event.target.value)} placeholder="List Medium posts, LinkedIn posts, press releases, media articles, public product pages, or field references." />
-                      </label>
-                      <label>
-                        Adoption Letters Targets
-                        <textarea value={originalContributionForm.adoption_letters_targets} onChange={(event) => setOriginalContributionField("adoption_letters_targets", event.target.value)} placeholder="Who could write letters about adoption or significance? Include names, companies, titles, and likely use cases if known." />
-                      </label>
-                      <label>
-                        Evidence Available
-                        <textarea value={originalContributionForm.evidence_available} onChange={(event) => setOriginalContributionField("evidence_available", event.target.value)} placeholder="Product docs, citations, dashboards, screenshots, patents, press, external references, executive emails, research metrics." />
-                      </label>
-                      <label className="profile-span-2">
-                        Attorney-friendly Summary
-                        <textarea value={originalContributionForm.attorney_friendly_summary} onChange={(event) => setOriginalContributionField("attorney_friendly_summary", event.target.value)} placeholder="Write a short paragraph the legal team could reuse to explain why this contribution was original and of major significance." />
-                      </label>
+                      {renderMemberMagicTextarea("original_contribution", "recognition_and_influence", "Recognition And Influence", {
+                        className: "profile-span-2",
+                        placeholder: "Describe recognition by other experts, adoption by others, conference talks, citations, internal executive recognition, or industry influence.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "media_or_public_mentions", "Media Or Public Mentions", {
+                        className: "profile-span-2",
+                        placeholder: "List Medium posts, LinkedIn posts, press releases, media articles, public product pages, or field references.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "adoption_letters_targets", "Adoption Letters Targets", {
+                        placeholder: "Who could write letters about adoption or significance? Include names, companies, titles, and likely use cases if known.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "evidence_available", "Evidence Available", {
+                        placeholder: "Product docs, citations, dashboards, screenshots, patents, press, external references, executive emails, research metrics.",
+                      })}
+                      {renderMemberMagicTextarea("original_contribution", "attorney_friendly_summary", "Attorney-friendly Summary", {
+                        className: "profile-span-2",
+                        placeholder: "Write a short paragraph the legal team could reuse to explain why this contribution was original and of major significance.",
+                      })}
                     </div>
                   </div>
 
@@ -9897,6 +10790,20 @@ function App() {
             </form>
             )}
           </section>
+        ) : view.type === "workspace" && !view.criterionCode ? (
+          <MemberGeneralWorkspacePanel
+            criteria={dashboard.criteria || []}
+            evidence={evidenceItems || []}
+            criteriaByCode={criteriaByCode}
+            onOpenCriterion={(code) => {
+              if (code === "all") {
+                setView({ type: "intake", criterionCode: "" });
+                return;
+              }
+              setView(memberViewForCriterion(code));
+            }}
+            onBack={() => setView({ type: "home", criterionCode: "" })}
+          />
         ) : (
           <section className="workspace-page">
             <div className="workspace-top">

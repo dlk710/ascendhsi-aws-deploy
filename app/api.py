@@ -416,7 +416,7 @@ def create_admin_issue_log(
     portal: str = Form(...),
     section: str = Form(...),
     priority: str = Form("P2"),
-    status: str = Form("open"),
+    status: str = Form("new"),
     description: str = Form(...),
     reported_by: str = Form(""),
     actor_email: str = Form(""),
@@ -1122,6 +1122,14 @@ def remove_original_contribution(entry_id: str, member: dict = Depends(require_m
         return service().delete_original_contribution(member["client_id"], member["case_id"], entry_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.post("/api/member/intake-field-rewrite")
+def rewrite_member_intake_field(payload: dict = Body(...), member: dict = Depends(require_member_user)) -> dict:
+    try:
+        return service().rewrite_member_intake_field(member, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.get("/api/criteria")

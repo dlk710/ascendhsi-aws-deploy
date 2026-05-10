@@ -65,7 +65,7 @@ class OpenAIService:
             f"Evidence title: {title}. Criterion code: {criterion_code}."
         )
         payload = {
-            "model": self.config.get("model", "gpt-5.4-mini"),
+            "model": self.config.get("model", "gpt-4.1-mini"),
             "input": prompt,
             "text": {
                 "format": {
@@ -140,7 +140,7 @@ class OpenAIService:
             f"Document content excerpt: {document_excerpt}"
         )
         payload = {
-            "model": self.config.get("model", "gpt-5.4-mini"),
+            "model": self.config.get("model", "gpt-4.1-mini"),
             "input": prompt,
             "text": {
                 "format": {
@@ -217,7 +217,7 @@ class OpenAIService:
             f"Case payload JSON: {json.dumps(compact_payload)}"
         )
         payload = {
-            "model": self.config.get("model", "gpt-5.4-mini"),
+            "model": self.config.get("model", "gpt-4.1-mini"),
             "input": prompt,
             "text": {
                 "format": {
@@ -298,7 +298,7 @@ class OpenAIService:
             return result
 
         payload = {
-            "model": self.config.get("model", "gpt-5.4-mini"),
+            "model": self.config.get("model", "gpt-4.1-mini"),
             "input": compiled_prompt,
             "text": {
                 "format": {
@@ -394,7 +394,7 @@ class OpenAIService:
             return result
 
         payload = {
-            "model": self.config.get("model", "gpt-5.4-mini"),
+            "model": self.config.get("model", "gpt-4.1-mini"),
             "input": compiled_prompt,
             "text": {
                 "format": {
@@ -505,7 +505,7 @@ class OpenAIService:
             f"Assistant payload JSON: {json.dumps(assistant_payload)}"
         )
         payload = {
-            "model": self.config.get("model", "gpt-5.4-mini"),
+            "model": self.config.get("model", "gpt-4.1-mini"),
             "input": prompt,
             "text": {
                 "format": {
@@ -580,6 +580,95 @@ class OpenAIService:
             "source": "openai",
         }
 
+    def rewrite_member_intake_field(self, rewrite_payload: dict) -> dict:
+        if not self.enabled:
+            result = fallback_member_intake_rewrite(rewrite_payload)
+            result["source"] = "disabled"
+            return result
+
+        prompt = (
+            "You are helping an EB1A applicant improve one field in Ascend's member intake portal. "
+            "Think like a strong EB1A applicant and an immigration attorney preparing source material, but do not invent facts, numbers, employers, publications, adoption, awards, revenue, costs, or dates. "
+            "Use the applicant's existing text and surrounding form context only. "
+            "Make the writing more attorney-friendly, specific, first-person where natural, and focused on originality, criticality, measurable impact, adoption, beneficiaries, business value, and evidence. "
+            "If important facts are missing, keep clear bracketed placeholders such as [add metric], [name adopter], or [attach evidence] instead of fabricating. "
+            "Return concise JSON only with rewritten_value and rationale.\n\n"
+            f"Rewrite payload JSON: {json.dumps(rewrite_payload, ensure_ascii=True)}"
+        )
+        payload = {
+            "model": self.config.get("model", "gpt-4.1-mini"),
+            "input": prompt,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "member_intake_field_rewrite",
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "rewritten_value": {"type": "string"},
+                            "rationale": {"type": "string"},
+                        },
+                        "required": ["rewritten_value", "rationale"],
+                    },
+                }
+            },
+        }
+        request = urllib.request.Request(
+            "https://api.openai.com/v1/responses",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key()}",
+                "Content-Type": "application/json",
+                "OpenAI-User": self.config.get("user", "ascend-suite-local"),
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=int(self.config.get("timeout_seconds", 60))) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            result = fallback_member_intake_rewrite(rewrite_payload)
+            result["source"] = "fallback"
+            error_message = ""
+            try:
+                error_payload = json.loads(exc.read().decode("utf-8") or "{}")
+                error_message = str(error_payload.get("error", {}).get("message") or "")[:300]
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                error_message = str(exc.reason or exc.msg or "OpenAI request failed")[:300]
+            result["diagnostic"] = {"status_code": exc.code, "message": error_message}
+            return result
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            result = fallback_member_intake_rewrite(rewrite_payload)
+            result["source"] = "fallback"
+            result["diagnostic"] = {"message": str(exc)[:300]}
+            return result
+        text = raw.get("output_text")
+        if not text:
+            for item in raw.get("output", []):
+                for content in item.get("content", []):
+                    if content.get("type") in {"output_text", "text"} and content.get("text"):
+                        text = content["text"]
+                        break
+                if text:
+                    break
+        try:
+            parsed = json.loads(text or "{}")
+        except json.JSONDecodeError:
+            result = fallback_member_intake_rewrite(rewrite_payload)
+            result["source"] = "fallback"
+            return result
+        rewritten = str(parsed.get("rewritten_value") or "").strip()
+        if not rewritten:
+            result = fallback_member_intake_rewrite(rewrite_payload)
+            result["source"] = "fallback"
+            return result
+        return {
+            "rewritten_value": rewritten,
+            "rationale": str(parsed.get("rationale") or "Rewritten to be more specific, evidence-focused, and attorney-ready.").strip(),
+            "source": "openai",
+        }
+
     def triage_support_ticket(self, ticket_payload: dict) -> dict:
         if not self.enabled:
             result = fallback_support_ticket(ticket_payload)
@@ -598,7 +687,7 @@ class OpenAIService:
             f"Support ticket payload JSON: {json.dumps(ticket_payload)}"
         )
         payload = {
-            "model": self.config.get("model", "gpt-5.4-mini"),
+            "model": self.config.get("model", "gpt-4.1-mini"),
             "input": prompt,
             "text": {
                 "format": {
@@ -1311,6 +1400,36 @@ def fallback_portal_assistant(assistant_payload: dict) -> dict:
         "needs_more_detail": not detail_requested,
         "response_mode": "detailed" if detail_requested else "summary",
         "references": references,
+    }
+
+
+def fallback_member_intake_rewrite(rewrite_payload: dict) -> dict:
+    field_label = str(rewrite_payload.get("field_label") or "this field").strip()
+    field_value = str(rewrite_payload.get("field_value") or "").strip()
+    criterion_type = str(rewrite_payload.get("criterion_type") or "").replace("_", " ").title()
+    context = rewrite_payload.get("form_context") if isinstance(rewrite_payload.get("form_context"), dict) else {}
+    organization = str(context.get("organization_name") or context.get("organization") or "").strip()
+    project = str(context.get("project_name") or context.get("contribution_title") or context.get("project") or "").strip()
+    role = str(context.get("role_title") or context.get("job_title") or "").strip()
+    context_bits = [item for item in [role, project, organization] if item]
+    context_sentence = f" In this {criterion_type or 'EB1A'} entry, the current context is {', '.join(context_bits)}." if context_bits else ""
+    if field_value:
+        rewritten = (
+            f"{field_value}\n\n"
+            f"EB1A-focused rewrite note for {field_label}: connect this fact pattern to your personal ownership, why the work was not routine, "
+            "what changed because of your contribution, who benefited, and which documents can verify the claim."
+            f"{context_sentence} Add concrete metrics such as [users/adopters], [time saved], [cost saved], [revenue or funding impact], and [evidence reference] where available."
+        )
+    else:
+        rewritten = (
+            f"For {field_label}, describe the strongest facts in first person: what I personally did, why it was difficult or original, "
+            "how it mattered to the organization or field, who benefited, and what evidence supports it."
+            f"{context_sentence} Add placeholders only where facts still need to be confirmed: [metric], [adopter], [date], [document]."
+        )
+    return {
+        "rewritten_value": rewritten,
+        "rationale": "OpenAI is unavailable, so Ascend provided a structured EB1A drafting scaffold without inventing facts.",
+        "source": "fallback",
     }
 
 

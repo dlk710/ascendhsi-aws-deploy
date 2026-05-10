@@ -1,0 +1,81 @@
+name: Deploy frontend to AWS dev
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "frontend-react/**"
+      - ".github/workflows/deploy-frontend-dev.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-2
+  FRONTEND_BUCKET: ascend-frontend-dev-027903151318
+  CLOUDFRONT_DISTRIBUTION_ID: EV6WT9DUO1GQH
+  APP_URL: https://dq5ab404dg57q.cloudfront.net
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend-react/pnpm-lock.yaml
+
+      - name: Install and build
+        working-directory: frontend-react
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::027903151318:role/ascend-dev-deployer
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sync immutable assets
+        run: |
+          set -euo pipefail
+          aws s3 sync frontend-react/dist/ "s3://${FRONTEND_BUCKET}/" \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html" \
+            --exclude "runtime-config.js" \
+            --exclude "auth-helper.html" \
+            --exclude "logout-helper.html"
+
+      - name: Upload shell files without cache
+        run: |
+          set -euo pipefail
+          for file in index.html runtime-config.js auth-helper.html logout-helper.html; do
+            if [ -f "frontend-react/dist/${file}" ]; then
+              aws s3 cp "frontend-react/dist/${file}" "s3://${FRONTEND_BUCKET}/${file}" \
+                --cache-control "no-cache, no-store, must-revalidate"
+            fi
+          done
+
+      - name: Invalidate CloudFront
+        run: |
+          set -euo pipefail
+          aws cloudfront create-invalidation \
+            --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
+            --paths "/*"
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          curl -fsS "${APP_URL}/ready"
+          curl -fsSI "${APP_URL}/member/home"

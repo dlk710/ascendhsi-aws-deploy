@@ -12,6 +12,7 @@ frontend-react/dist/
 
 data/db/*.sqlite
 data/db/*.sqlite-*
+data/*.db
 data/uploads/
 data/drive_mirror/
 deliverables/
@@ -20,6 +21,7 @@ config/*.local.json
 config/secrets.json
 
 *.log
+~$*
 tmp/
 .terraform/
 *.tfstate

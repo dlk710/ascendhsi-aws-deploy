@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "./tokens.css";
 import "./styles.css";
 
 class RootErrorBoundary extends React.Component {

@@ -21,7 +21,23 @@ DEFAULT_MEMBER_PASSWORD = "Ascend123!"
 DEFAULT_MEMBER_EMAIL = "vas@ascendhsi.com"
 ADMIN_COST_SNAPSHOT_SOURCE = "cost_explorer"
 ISSUE_PRIORITIES = {"P0", "P1", "P2", "P3"}
-ISSUE_STATUSES = {"open", "triaged", "in_progress", "blocked", "fixed", "closed"}
+ISSUE_STATUSES = {
+    "new",
+    "open",
+    "triaged",
+    "in_progress",
+    "testing",
+    "blocked",
+    "fixed_local",
+    "fixed",
+    "closed",
+    "wont_do",
+    "duplicate",
+}
+MEMBER_REWRITE_MAX_FIELD_CHARS = 6000
+MEMBER_REWRITE_MAX_CONTEXT_VALUE_CHARS = 1000
+MEMBER_REWRITE_MAX_CONTEXT_TOTAL_CHARS = 12000
+MEMBER_REWRITE_RATE_LIMIT_PER_MINUTE = 20
 CRITICAL_ROLE_FIELDS = [
     "organization_name", "organization_unit", "organization_location", "organization_website", "employment_type",
     "role_title", "role_start_date", "role_end_date", "is_current_role", "project_name", "project_start_date",
@@ -1009,8 +1025,8 @@ class EvidenceService:
         return cleaned if cleaned in ISSUE_PRIORITIES else "P2"
 
     def _normalize_issue_status(self, value: str) -> str:
-        cleaned = str(value or "").strip().lower()
-        return cleaned if cleaned in ISSUE_STATUSES else "open"
+        cleaned = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+        return cleaned if cleaned in ISSUE_STATUSES else "new"
 
     def _serialize_issue_log(self, item: dict | None) -> dict:
         return dict(item or {})
@@ -4257,6 +4273,95 @@ class EvidenceService:
             "response_mode": answer.get("response_mode", "summary"),
             "references": answer.get("references", []),
         }
+
+    def rewrite_member_intake_field(self, member: dict, payload: dict) -> dict:
+        if not member:
+            raise ValueError("member session is required")
+        raw_field_value = str(payload.get("field_value") or "").strip()
+        field_value = raw_field_value[:MEMBER_REWRITE_MAX_FIELD_CHARS]
+        field_label = str(payload.get("field_label") or "").strip()[:120]
+        field_key = str(payload.get("field_key") or "").strip()[:120]
+        criterion_type = str(payload.get("criterion_type") or "").strip()[:80]
+        form_context = self._sanitize_member_rewrite_context(payload.get("form_context"))
+        if not field_label or not field_key:
+            raise ValueError("field_label and field_key are required")
+        recent_threshold = (datetime.utcnow() - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+        recent_count = one(
+            self.conn,
+            """
+            SELECT COUNT(*) AS count
+            FROM operational_events
+            WHERE event_type = 'member_intake_field_rewrite'
+              AND actor_key = ?
+              AND created_at >= ?
+            """,
+            (member.get("client_id", ""), recent_threshold),
+        )
+        if int((recent_count or {}).get("count") or 0) >= MEMBER_REWRITE_RATE_LIMIT_PER_MINUTE:
+            raise ValueError("AI rewrite limit reached. Please wait a minute before trying another rewrite.")
+        rewrite_payload = {
+            "criterion_type": criterion_type,
+            "field_key": field_key,
+            "field_label": field_label,
+            "field_value": field_value,
+            "form_context": form_context,
+            "member": {
+                "display_name": member.get("display_name", ""),
+                "client_id": member.get("client_id", ""),
+                "case_id": member.get("case_id", ""),
+            },
+        }
+        result = self.openai.rewrite_member_intake_field(rewrite_payload)
+        source = result.get("source", "fallback")
+        status = "success" if source == "openai" else "fallback"
+        self.record_operational_event(
+            "member_intake_field_rewrite",
+            status=status,
+            portal="member",
+            client_id=member.get("client_id", ""),
+            case_id=member.get("case_id", ""),
+            endpoint="/api/member/intake-field-rewrite",
+            message=f"Member requested EB1A rewrite for {field_label}.",
+            metadata={
+                "source": source,
+                "criterion_type": criterion_type,
+                "field_key": field_key,
+                "input_length": len(raw_field_value),
+                "sent_input_length": len(field_value),
+                "input_truncated": len(raw_field_value) > len(field_value),
+                "output_length": len(result.get("rewritten_value", "")),
+                "diagnostic": result.get("diagnostic"),
+            },
+            actor_role="member",
+            actor_key=member.get("client_id", ""),
+        )
+        return {
+            "ok": True,
+            "status": status,
+            "source": source,
+            "field_key": field_key,
+            "field_label": field_label,
+            "rewritten_value": result.get("rewritten_value", ""),
+            "rationale": result.get("rationale", ""),
+            "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+        }
+
+    def _sanitize_member_rewrite_context(self, context: object) -> dict:
+        if not isinstance(context, dict):
+            return {}
+        sanitized: dict[str, str] = {}
+        total_chars = 0
+        for key, value in context.items():
+            clean_key = str(key or "").strip()[:120]
+            if not clean_key:
+                continue
+            clean_value = str(value or "").strip()[:MEMBER_REWRITE_MAX_CONTEXT_VALUE_CHARS]
+            next_total = total_chars + len(clean_key) + len(clean_value)
+            if next_total > MEMBER_REWRITE_MAX_CONTEXT_TOTAL_CHARS:
+                break
+            sanitized[clean_key] = clean_value
+            total_chars = next_total
+        return sanitized
 
     def attorney_batch_intake_create(
         self,
