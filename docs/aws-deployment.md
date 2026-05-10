@@ -45,6 +45,8 @@ https://dq5ab404dg57q.cloudfront.net
 
 The ALB DNS name is an API origin, not the product-suite user URL.
 
+Human access to this dev account is documented in `docs/aws-human-access.md`. Daily work should use the IAM user `lohith-dev-admin` and switch into MFA-required roles instead of using root.
+
 Current ACM certificate request for `dev-portal.ascendhsi.com`:
 
 ```text

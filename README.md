@@ -26,6 +26,7 @@ This repository is intended to be understandable and extendable by any engineer,
 
 - `docs/feature-catalog.md` - portal-by-portal feature inventory
 - `docs/aws-deployment.md` - AWS hosting shape, required services, and environment variables
+- `docs/aws-human-access.md` - IAM role-based human access runbook for the dev account
 - `docs/database-configuration.md` - database backends, switching rules, and deployment guidance
 - `docs/solution-architecture.md` - current and scaled-world architecture with tech-stack guidance
 - `docs/verification-notes.md` - live verification findings and known runtime caveats
