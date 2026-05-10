@@ -31,13 +31,32 @@ The active dev environment is deployed in AWS account `027903151318`, region `us
 | Observability queries | Athena workgroup `ascend-dev-observability`, database `ascend_dev_observability` |
 | Secrets | `ascend-dev/backend/database-url`, `ascend-dev/backend/openai-api-key` |
 
-The current public dev endpoint is:
+The target branded dev endpoint is:
+
+```text
+https://dev-portal.ascendhsi.com
+```
+
+Until DNS and SSL validation are completed, the current public dev endpoint is:
 
 ```text
 https://dq5ab404dg57q.cloudfront.net
 ```
 
 The ALB DNS name is an API origin, not the product-suite user URL.
+
+Current ACM certificate request for `dev-portal.ascendhsi.com`:
+
+```text
+arn:aws:acm:us-east-1:027903151318:certificate/126ffbc1-caf2-4098-a51a-42ea6fc1c425
+```
+
+DNS validation still needed:
+
+```text
+CNAME _fe0e9a32839d8195eb01703489086da3.dev-portal.ascendhsi.com
+  -> _cb421196fe2de034e98a52b7cf429f70.jkddzztszm.acm-validations.aws
+```
 
 ## Recommended AWS Services
 

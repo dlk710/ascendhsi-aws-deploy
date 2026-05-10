@@ -45,6 +45,7 @@ Before finishing a change:
 4. Manually verify critical role flows when UI behavior changes.
 5. Document any residual risk.
 6. If deployed to AWS, verify CloudFront `/ready` and role-specific login/data APIs.
+7. For local UX-only changes, run the relevant page through `pnpm run dev:aws` before deployment.
 
 ## Production-Grade Expectations
 

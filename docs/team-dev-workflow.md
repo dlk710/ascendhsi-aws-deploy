@@ -50,6 +50,15 @@ Until DNS and SSL validation are completed for the dev custom domain, AWS dev re
 https://dq5ab404dg57q.cloudfront.net
 ```
 
+Current DNS validation needed for `dev-portal.ascendhsi.com`:
+
+```text
+CNAME _fe0e9a32839d8195eb01703489086da3.dev-portal.ascendhsi.com
+  -> _cb421196fe2de034e98a52b7cf429f70.jkddzztszm.acm-validations.aws
+```
+
+After ACM validates, attach the certificate and `dev-portal.ascendhsi.com` alias to CloudFront distribution `EV6WT9DUO1GQH`, then point the DNS record to the CloudFront distribution.
+
 ## Multi-Developer Guardrails
 
 - Work in a personal Git branch for every change.

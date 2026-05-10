@@ -10,6 +10,14 @@ Use this file at the start of a new development chat to choose the right continu
 
 Every feature should be treated as a role-aware workflow change, not an isolated screen or endpoint change.
 
+## Current Dev Baseline
+
+- Daily UX work should run the local React app with `cd frontend-react && pnpm run dev:aws`.
+- That command proxies `/api`, `/ready`, `/health`, `/docs`, and `/openapi.json` to the shared AWS dev backend.
+- Use `pnpm run dev:local` only when the backend is also running locally on `127.0.0.1:8000`.
+- AWS dev is currently available at `https://dq5ab404dg57q.cloudfront.net`; the target branded endpoint is `https://dev-portal.ascendhsi.com` after DNS/ACM validation.
+- Work in a personal branch and keep fabricated test data clearly prefixed by developer.
+
 Before implementation, identify:
 
 - affected role portals

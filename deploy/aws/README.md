@@ -63,6 +63,19 @@ Until DNS and SSL validation are completed for that custom domain, use the Cloud
 https://dq5ab404dg57q.cloudfront.net
 ```
 
+Current ACM certificate request for the dev custom domain:
+
+```text
+arn:aws:acm:us-east-1:027903151318:certificate/126ffbc1-caf2-4098-a51a-42ea6fc1c425
+```
+
+DNS validation still needed:
+
+```text
+CNAME _fe0e9a32839d8195eb01703489086da3.dev-portal.ascendhsi.com
+  -> _cb421196fe2de034e98a52b7cf429f70.jkddzztszm.acm-validations.aws
+```
+
 The ALB DNS name should be treated as an internal API origin for troubleshooting, not as the user-facing product-suite URL.
 
 For local UX iteration against the shared AWS dev backend:

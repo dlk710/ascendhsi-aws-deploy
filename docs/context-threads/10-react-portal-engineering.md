@@ -31,6 +31,13 @@ Developers must be able to:
 - keep member-facing UI simple and non-technical
 - keep builder, leader, attorney, admin, and member views visually related but purpose-built
 
+## Current Local Frontend Workflow
+
+- Run `pnpm run dev:aws` from `frontend-react/` for daily UX and design review.
+- The local Vite server proxies API calls to AWS dev, so browser back/forward, role routing, and live data can be reviewed locally without redeploying every visual change.
+- Run `pnpm run dev:local` only when testing against a local FastAPI backend.
+- Keep API calls relative to the app origin; do not hardcode CloudFront, ALB, localhost, or future custom-domain URLs into components.
+
 ## Formal Development Workflow
 
 Before changing frontend code:

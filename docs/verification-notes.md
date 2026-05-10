@@ -2,6 +2,45 @@
 
 This document records recent live verification results for the Ascend product suite so future contributors can distinguish product behavior from environment-specific gaps.
 
+## Verification Run: 2026-05-10
+
+### Scope
+
+- AWS deployment repo after the team-dev workflow update
+- Shared AWS dev endpoint at `https://dq5ab404dg57q.cloudfront.net`
+- Local React frontend using `pnpm run dev:aws`
+- Frontend and backend GitHub Actions deployment runs
+- Backend and frontend regression checks
+
+### Overall Result
+
+Status: pass
+
+The AWS dev deployment is live through the CloudFront fallback URL. The deployment repo now documents the intended branded dev endpoint and keeps the local-to-AWS development loop explicit for multiple developers.
+
+### Runtime Health
+
+- `GET https://dq5ab404dg57q.cloudfront.net/ready` returned healthy dependency readiness.
+- AWS dev backend reported RDS PostgreSQL, S3 storage, and OpenAI readiness.
+- ECS was running task definition `ascend-dev-backend:36`.
+- Frontend assets were deployed to S3 and served through CloudFront distribution `EV6WT9DUO1GQH`.
+
+### Deployment Verification
+
+- Frontend GitHub Actions run `25628949512`: success
+- Backend GitHub Actions run `25628949513`: success
+- Backend image tag deployed from commit `fd3d015`
+- AWS deployment repo build: pass
+- AWS deployment repo Python regression suite: `111 passed`
+
+### Environment Notes
+
+- Target branded dev URL: `https://dev-portal.ascendhsi.com`
+- Active fallback URL: `https://dq5ab404dg57q.cloudfront.net`
+- ACM certificate for the branded dev URL is pending DNS validation because the AWS account does not currently host the `ascendhsi.com` Route 53 zone.
+- Certificate ARN: `arn:aws:acm:us-east-1:027903151318:certificate/126ffbc1-caf2-4098-a51a-42ea6fc1c425`
+- Required DNS validation CNAME: `_fe0e9a32839d8195eb01703489086da3.dev-portal.ascendhsi.com` -> `_cb421196fe2de034e98a52b7cf429f70.jkddzztszm.acm-validations.aws`
+
 ## Verification Run: 2026-05-06
 
 ### Scope

@@ -14,14 +14,14 @@ The goal is not to force an immediate rewrite. The goal is to make the current s
 
 ## Current Runtime Architecture
 
-The current repository runs as a modular product suite with a React frontend, FastAPI backend, SQLite persistence, S3-backed file storage, and OpenAI-backed AI flows with deterministic fallback behavior.
+The current repository runs as a modular product suite with a React frontend, FastAPI backend, SQLite persistence for local development, RDS PostgreSQL in AWS dev, S3-backed file storage, and OpenAI-backed AI flows with deterministic fallback behavior.
 
 ```mermaid
 flowchart LR
     U[Members, Builders, Leaders, Attorneys, Admins] --> FE[React portal suite<br/>Vite dev server / static build]
     FE --> API[FastAPI application<br/>app/api.py]
     API --> SVC[Service layer<br/>app/services.py]
-    SVC --> DB[(SQLite<br/>data/db/ascend_suite.sqlite)]
+    SVC --> DB[(SQLite locally<br/>RDS PostgreSQL in AWS dev)]
     SVC --> S3[Amazon S3 integration<br/>app/s3_storage.py]
     SVC --> AI[OpenAI client<br/>app/openai_client.py]
     SVC --> LOGS[Operational events<br/>support + usage logging]
@@ -130,7 +130,7 @@ flowchart TB
 | Identity | Seeded local credentials | Managed identity provider with RBAC, MFA, invite flows, audit-friendly session controls |
 | API | FastAPI + Uvicorn | FastAPI behind load balancer/API gateway, horizontal pod scaling |
 | Domain logic | `app/services.py` monolith-style service layer | Modular domain packages by cases, evidence, messaging, support, AI |
-| Database | SQLite | PostgreSQL with migrations and backup/restore policy |
+| Database | SQLite locally, RDS PostgreSQL in AWS dev | PostgreSQL with migrations and backup/restore policy |
 | Cache/session coordination | None | Redis for caching, throttling, ephemeral coordination, queue support |
 | Async workloads | Inline request processing | Queue + workers for AI jobs, document indexing, email, ticket receipts, batch intake |
 | File storage | Amazon S3 + local metadata mirror fallback | Object storage abstraction with signed URLs, lifecycle archive rules, retention controls |

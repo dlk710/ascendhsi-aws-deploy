@@ -146,6 +146,13 @@ Until DNS and SSL validation are completed for that custom domain, the CloudFron
 https://dq5ab404dg57q.cloudfront.net
 ```
 
+Current DNS validation needed for `dev-portal.ascendhsi.com`:
+
+```text
+CNAME _fe0e9a32839d8195eb01703489086da3.dev-portal.ascendhsi.com
+  -> _cb421196fe2de034e98a52b7cf429f70.jkddzztszm.acm-validations.aws
+```
+
 After frontend changes, build the React app, sync `frontend-react/dist/` to the frontend S3 bucket, and invalidate CloudFront.
 
 For local UX work against the AWS dev backend, use:

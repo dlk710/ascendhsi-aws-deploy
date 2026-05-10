@@ -28,9 +28,11 @@ This repository is intended to be continued by another engineer, product team, i
 
 - FastAPI backend
 - React frontend
-- SQLite database
+- SQLite for local-only development
+- RDS PostgreSQL for AWS dev and production-style environments through `ASCEND_DATABASE_URL`
 - Amazon S3 bucket configuration for document storage and archive movement
 - OpenAI API key for AI classification and petition generation
+- local frontend can run against AWS dev backend with `cd frontend-react && pnpm run dev:aws`
 
 ## Continuation rule
 
@@ -69,3 +71,4 @@ Documentation in this repository should stay understandable without requiring pr
 - add formal secret management
 - establish CI for tests
 - finalize RBAC hardening and audit logging
+- complete `dev-portal.ascendhsi.com` DNS and ACM validation before treating the branded dev endpoint as live
