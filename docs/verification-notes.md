@@ -12,20 +12,28 @@ This document records recent live verification results for the Ascend product su
 
 ### Overall Result
 
-Status: pass locally, AWS frontend deployed, backend ECS stabilization fix in progress
+Status: pass locally and deployed to AWS dev
 
 The backend now exposes a lightweight `/ready` endpoint in the shared product code, matching the AWS deployment workflow and load-balancer smoke checks without running the full admin dashboard on every health probe. CORS origins can also be configured with `ASCEND_CORS_ORIGINS` while preserving local defaults. The AWS deployment path now also honors runtime path overrides, older and newer S3 evidence bucket environment names, and a 120-second ECS health-check grace period for safer Fargate rollouts.
 
 ### Automated Checks
 
-- Product repo Python regression suite: `154 passed`
+- Product repo Python regression suite: `156 passed`
 - Product repo React production build: pass
-- AWS deployment repo Python regression suite: `159 passed`
+- AWS deployment repo Python regression suite: `161 passed`
 - AWS deployment repo React production build: pass
+- AWS deployment repo targeted import/API regression: `84 passed`
 - Direct local `GET /ready` through FastAPI TestClient: `200`
 - `/ready` regression test confirms the health probe does not instantiate the full service layer.
 - Runtime config regression tests confirm AWS container paths can be redirected to `/tmp/ascend`.
 - Evidence S3 regression tests confirm AWS deployment env names map to the active and archive evidence buckets.
+
+### AWS Verification
+
+- Backend workflow `25758713386` completed successfully for deploy repo commit `3f81b0d`.
+- `GET https://dq5ab404dg57q.cloudfront.net/health`: `200`
+- `GET https://dq5ab404dg57q.cloudfront.net/ready`: `200`, with S3 evidence storage reported healthy.
+- Member, Profile Builder, Leader, Attorney, and Admin login plus initial bootstrap APIs returned `200`.
 
 ### Release Notes
 
