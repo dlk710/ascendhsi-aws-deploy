@@ -36,6 +36,21 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["service"], "ascend-suite-api")
 
+    def test_ready_uses_operational_dashboard(self):
+        service = Mock()
+        service.admin_operational_dashboard.return_value = {
+            "portal_health": [
+                {"name": "S3 Evidence Buckets", "status": "healthy"},
+                {"name": "OpenAI", "status": "healthy"},
+            ]
+        }
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/ready")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        self.assertEqual(response.json()["storage"]["name"], "S3 Evidence Buckets")
+        service.admin_operational_dashboard.assert_called_once()
+
     def test_visa_compass_lead_capture_uses_service(self):
         service = Mock()
         service.capture_marketing_lead.return_value = {"ok": True, "lead": {"id": "lead_1", "email": "prospect@example.com"}}

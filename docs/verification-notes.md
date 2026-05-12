@@ -2,6 +2,33 @@
 
 This document records recent live verification results for the Ascend product suite so future contributors can distinguish product behavior from environment-specific gaps.
 
+## Verification Run: 2026-05-12 Release Readiness Guardrail
+
+### Scope
+
+- Product repo after AWS readiness endpoint restoration
+- AWS deployment repo after matching readiness endpoint restoration and ECS failure diagnostics
+- Backend readiness behavior for local and AWS-style deployments
+
+### Overall Result
+
+Status: pass locally, AWS deployment in progress
+
+The backend now exposes `/ready` in the shared product code, matching the AWS deployment workflow and load-balancer smoke checks. CORS origins can also be configured with `ASCEND_CORS_ORIGINS` while preserving local defaults.
+
+### Automated Checks
+
+- Product repo Python regression suite: `154 passed`
+- Product repo React production build: pass
+- AWS deployment repo Python regression suite: `159 passed`
+- AWS deployment repo React production build: pass
+- Direct local `GET /ready` through FastAPI TestClient: `200`
+
+### Release Notes
+
+- The AWS backend deployment workflow now prints recent ECS service events and stopped-task details if the service does not stabilize.
+- Local runtime data under `data/` remains intentionally uncommitted.
+
 ## Verification Run: 2026-05-12
 
 ### Scope

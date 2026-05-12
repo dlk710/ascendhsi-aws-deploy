@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,13 @@ def load_json(relative_path: str) -> dict:
     path = ROOT / relative_path
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _env_list(name: str, fallback: list[str]) -> list[str]:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return fallback
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def load_app_config() -> AppConfig:
@@ -44,3 +52,15 @@ def load_openai_config() -> dict:
 
 def load_google_drive_config() -> dict:
     return load_json("config/google_drive.json")
+
+
+def load_cors_origins() -> list[str]:
+    defaults = [
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+    ]
+    return _env_list("ASCEND_CORS_ORIGINS", defaults)

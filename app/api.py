@@ -3,6 +3,7 @@ import json
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import load_cors_origins
 from app.google_drive import GoogleDriveConfigError, GoogleDriveUploadError
 from app.services import DuplicateEvidenceError, EvidenceService
 
@@ -15,14 +16,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://localhost:3002",
-        "http://127.0.0.1:3002",
-        "http://localhost:4173",
-        "http://127.0.0.1:4173",
-    ],
+    allow_origins=load_cors_origins(),
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
@@ -34,9 +28,46 @@ def service() -> EvidenceService:
     return EvidenceService()
 
 
+@app.get("/")
+def root() -> dict:
+    return {
+        "ok": True,
+        "service": "ascend-suite-api",
+        "message": "Ascend API is running. This endpoint is the backend API origin, not the product suite web UI.",
+        "endpoints": {
+            "health": "/health",
+            "readiness": "/ready",
+            "docs": "/docs",
+            "openapi": "/openapi.json",
+        },
+    }
+
+
 @app.get("/health")
 def health() -> dict:
     return {"ok": True, "service": "ascend-suite-api"}
+
+
+@app.get("/ready")
+def ready() -> dict:
+    try:
+        dashboard = service().admin_operational_dashboard()
+    except Exception as exc:  # pragma: no cover - defensive readiness guard
+        raise HTTPException(status_code=503, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+    storage_health = next(
+        (
+            item
+            for item in dashboard.get("portal_health", [])
+            if item.get("name") in {"Amazon S3", "S3 Evidence Buckets"}
+        ),
+        {},
+    )
+    return {
+        "ok": True,
+        "service": "ascend-suite-api",
+        "storage": storage_health,
+        "openai": next((item for item in dashboard.get("portal_health", []) if item.get("name") == "OpenAI"), {}),
+    }
 
 
 @app.post("/api/marketing/leads/visa-compass")
