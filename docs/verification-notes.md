@@ -14,7 +14,7 @@ This document records recent live verification results for the Ascend product su
 
 Status: pass locally, AWS deployment in progress
 
-The backend now exposes `/ready` in the shared product code, matching the AWS deployment workflow and load-balancer smoke checks. CORS origins can also be configured with `ASCEND_CORS_ORIGINS` while preserving local defaults.
+The backend now exposes a lightweight `/ready` endpoint in the shared product code, matching the AWS deployment workflow and load-balancer smoke checks without running the full admin dashboard on every health probe. CORS origins can also be configured with `ASCEND_CORS_ORIGINS` while preserving local defaults.
 
 ### Automated Checks
 
@@ -23,6 +23,7 @@ The backend now exposes `/ready` in the shared product code, matching the AWS de
 - AWS deployment repo Python regression suite: `159 passed`
 - AWS deployment repo React production build: pass
 - Direct local `GET /ready` through FastAPI TestClient: `200`
+- `/ready` regression test confirms the health probe does not instantiate the full service layer.
 
 ### Release Notes
 

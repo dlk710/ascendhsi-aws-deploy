@@ -1,9 +1,10 @@
 import json
+import os
 
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import load_cors_origins
+from app.config import load_cors_origins, load_openai_config
 from app.google_drive import GoogleDriveConfigError, GoogleDriveUploadError
 from app.services import DuplicateEvidenceError, EvidenceService
 
@@ -50,23 +51,25 @@ def health() -> dict:
 
 @app.get("/ready")
 def ready() -> dict:
-    try:
-        dashboard = service().admin_operational_dashboard()
-    except Exception as exc:  # pragma: no cover - defensive readiness guard
-        raise HTTPException(status_code=503, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
-    storage_health = next(
-        (
-            item
-            for item in dashboard.get("portal_health", [])
-            if item.get("name") in {"Amazon S3", "S3 Evidence Buckets"}
-        ),
-        {},
-    )
+    storage_configured = bool(os.environ.get("ASCEND_STORAGE_BUCKET") or os.environ.get("ASCEND_EVIDENCE_S3_BUCKET"))
+    archive_configured = bool(os.environ.get("ASCEND_ARCHIVE_BUCKET"))
+    openai_config = load_openai_config()
+    openai_configured = bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_ADMIN_API_KEY") or openai_config.get("api_key"))
     return {
         "ok": True,
         "service": "ascend-suite-api",
-        "storage": storage_health,
-        "openai": next((item for item in dashboard.get("portal_health", []) if item.get("name") == "OpenAI"), {}),
+        "storage": {
+            "name": "S3 Evidence Buckets",
+            "layer": "Secure storage",
+            "status": "healthy" if storage_configured and archive_configured else "degraded",
+            "detail": "Evidence and archive storage configured." if storage_configured and archive_configured else "Evidence storage configuration needs review.",
+        },
+        "openai": {
+            "name": "OpenAI",
+            "layer": "AI",
+            "status": "healthy" if openai_configured else "degraded",
+            "detail": openai_config.get("model", "not configured"),
+        },
     }
 
 
