@@ -20,7 +20,7 @@ class PortalAssistantServiceTests(unittest.TestCase):
         )
         patches = [
             patch("app.services.load_app_config", return_value=self.config),
-            patch("app.services.load_storage_config", return_value={"enabled": False, "provider": "s3", "bucket_env": "ASCEND_STORAGE_BUCKET"}),
+            patch("app.services.load_google_drive_config", return_value={"folder_id": "folder", "folder_url": "url", "mode": "test"}),
             patch("app.services.load_openai_config", return_value={"enabled": False}),
         ]
         self.patchers = patches
@@ -77,15 +77,15 @@ class PortalAssistantServiceTests(unittest.TestCase):
         self.assertIsInstance(result["references"], list)
         self.assertTrue(result["detail_prompt"])
 
-    def test_decorate_file_prefers_s3_open_url(self):
+    def test_decorate_file_prefers_google_drive_open_url(self):
         sample = self.config.upload_root / "clients" / "client_1" / "cases" / "case_1" / "evidence" / "awards" / "ev_1" / "original" / "sample.txt"
         sample.parent.mkdir(parents=True, exist_ok=True)
         sample.write_text("sample evidence", encoding="utf-8")
-        storage = Mock()
-        storage.enabled = True
-        storage.ensure_folder_path.return_value = "active/clients/client_1/cases/case_1/evidence/awards/ev_1/original"
-        storage.upload_file.return_value = {"id": "active/clients/client_1/sample.txt", "webViewLink": "https://signed.example.com/sample.txt"}
-        self.service.storage.object_storage = storage
+        drive = Mock()
+        drive.enabled = True
+        drive.ensure_folder_path.return_value = "folder_123"
+        drive.upload_file.return_value = {"id": "drive_file_123", "webViewLink": "https://drive.google.com/file/d/drive_file_123/view"}
+        self.service.storage.google_drive = drive
         record = {
             "id": "ev_1",
             "client_id": "client_1",
@@ -102,9 +102,9 @@ class PortalAssistantServiceTests(unittest.TestCase):
             "folder_id": "",
         }
         decorated = self.service._decorate_file(record, [])
-        self.assertEqual(decorated["open_url"], "https://signed.example.com/sample.txt")
-        self.assertEqual(decorated["drive_web_url"], "https://signed.example.com/sample.txt")
-        storage.upload_file.assert_called_once()
+        self.assertEqual(decorated["open_url"], "https://drive.google.com/file/d/drive_file_123/view")
+        self.assertEqual(decorated["drive_web_url"], "https://drive.google.com/file/d/drive_file_123/view")
+        drive.upload_file.assert_called_once()
 
     def test_assistant_retrieves_best_matching_uploaded_document(self):
         self.config.upload_root.mkdir(parents=True, exist_ok=True)

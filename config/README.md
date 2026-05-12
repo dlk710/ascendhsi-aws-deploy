@@ -8,9 +8,9 @@ This folder contains checked-in configuration templates for the Ascend product s
   - local application paths
   - default client seed values
 
-- `storage.json`
-  - Amazon S3 storage and archive configuration
-  - bucket, archive bucket, storage class, and URL environment variable names
+- `google_drive.json`
+  - Google Drive folder routing
+  - token environment variable name
 
 - `openai.json`
   - OpenAI model settings
@@ -28,8 +28,6 @@ Do not commit live credentials into this folder.
 Use environment variables for:
 
 - `OPENAI_API_KEY`
-- `ASCEND_STORAGE_BUCKET`
-- `ASCEND_ARCHIVE_BUCKET`
-- `AWS_REGION`
+- `GOOGLE_DRIVE_ACCESS_TOKEN`
 
 If a local-only override is needed, create a `*.local.json` file and keep it out of version control.

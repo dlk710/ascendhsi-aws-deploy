@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "folder_url": "https://drive.google.com/drive/folders/1Qmv1b5BetW2UvF3jxOtx4WzQO3_fSIV9?usp=sharing",
+  "folder_id": "1Qmv1b5BetW2UvF3jxOtx4WzQO3_fSIV9",
+  "auth_method": "oauth_access_token",
+  "access_token_env": "GOOGLE_DRIVE_ACCESS_TOKEN",
+  "credentials_path": "",
+  "mode": "local_drive_mirror"
+}

@@ -1,5 +1,4 @@
 import mimetypes
-import calendar
 import hashlib
 import json
 import os
@@ -8,6 +7,7 @@ import secrets
 import tempfile
 import time
 import zipfile
+import calendar
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlencode
@@ -34,35 +34,18 @@ ISSUE_STATUSES = {
     "wont_do",
     "duplicate",
 }
+REFERRAL_STATUSES = {"submitted", "contacted", "contract_signed", "qualified", "paid", "disqualified"}
 MEMBER_REWRITE_MAX_FIELD_CHARS = 6000
 MEMBER_REWRITE_MAX_CONTEXT_VALUE_CHARS = 1000
 MEMBER_REWRITE_MAX_CONTEXT_TOTAL_CHARS = 12000
 MEMBER_REWRITE_RATE_LIMIT_PER_MINUTE = 20
-CRITICAL_ROLE_FIELDS = [
-    "organization_name", "organization_unit", "organization_location", "organization_website", "employment_type",
-    "role_title", "role_start_date", "role_end_date", "is_current_role", "project_name", "project_start_date",
-    "project_end_date", "project_status", "organization_achievements", "organization_distinctiveness", "role_summary",
-    "role_responsibilities", "role_evolution", "leadership_scope", "cross_functional_partners", "project_summary",
-    "business_need", "strategic_importance", "contributions_summary", "innovation_originality", "business_value_summary",
-    "quantitative_metrics", "revenue_impact", "cost_savings", "efficiency_gain", "user_or_customer_impact",
-    "market_or_geographic_impact", "compliance_or_risk_impact", "peer_distinction_summary", "mentorship_leadership",
-    "executive_visibility", "evidence_available", "attorney_friendly_summary", "workflow_status",
-]
-ORIGINAL_CONTRIBUTION_FIELDS = [
-    "contribution_title", "contribution_category", "field_of_expertise", "job_title", "organization_name", "project_name",
-    "contribution_start_date", "contribution_end_date", "contribution_status", "originality_summary", "challenging_paradigms",
-    "prior_state_of_field", "work_vs_external_context", "personal_role", "distinct_contribution_summary",
-    "technical_or_business_problem", "solution_or_innovation", "unique_features", "impact_metrics", "adoption_scale",
-    "beneficiary_summary", "time_savings", "cost_savings", "revenue_impact", "quality_or_risk_impact",
-    "field_wide_impact", "recognition_and_influence", "media_or_public_mentions", "adoption_letters_targets",
-    "evidence_available", "attorney_friendly_summary", "workflow_status",
-]
 
-from app.config import load_app_config, load_openai_config, load_storage_config
-from app.db import connect, initialize, one, rows, seed_default_case
+from app.config import load_app_config, load_google_drive_config, load_openai_config
+from app.db import connect, initialize, next_numeric_identifier, one, rows, seed_default_case
+from app.google_drive import GoogleDriveClient, GoogleDriveConfigError, GoogleDriveUploadError
 from app.openai_client import DOCUMENT_TYPES, OpenAIService, extract_document_excerpt, infer_document_type
-from app.s3_storage import S3ConfigError, S3StorageClient, S3StorageError
 from app.storage import EvidenceStorage, safe_file_name
+from app.template_exports import render_critical_role_pdf, render_original_contribution_pdf
 
 
 class DuplicateEvidenceError(RuntimeError):
@@ -74,14 +57,14 @@ class DuplicateEvidenceError(RuntimeError):
 class EvidenceService:
     def __init__(self):
         self.config = load_app_config()
-        self.storage_config = load_storage_config()
+        self.google_drive_config = load_google_drive_config()
         self.openai = OpenAIService(load_openai_config())
         self.storage = EvidenceStorage(
             self.config.upload_root,
             self.config.drive_mirror_root,
-            S3StorageClient(self.storage_config),
+            GoogleDriveClient(self.google_drive_config),
         )
-        self.conn = connect(self.config)
+        self.conn = connect(self.config.database_path)
         initialize(self.conn)
         seed_default_case(
             self.conn,
@@ -105,14 +88,65 @@ class EvidenceService:
             {"role": "admin", "key": "admin@ascendhsi.com", "name": "Maya Thompson", "email": "admin@ascendhsi.com"},
         ]
 
-    def _database_driver(self) -> str:
-        return getattr(self.conn, "driver", "sqlite")
+    def _numeric_key(self, value: int | str | None) -> str:
+        try:
+            numeric = int(value or 0)
+        except (TypeError, ValueError):
+            numeric = 0
+        return str(numeric) if numeric > 0 else ""
 
-    def _insert_ignore(self, sqlite_sql: str, postgres_sql: str, params: tuple) -> None:
-        self.conn.execute(postgres_sql if self._database_driver() == "postgres" else sqlite_sql, params)
+    def _actor_key_candidates(self, actor: dict) -> list[str]:
+        keys = []
+        for value in [actor.get("key", ""), actor.get("legacy_key", "")]:
+            cleaned = str(value or "").strip()
+            if cleaned and cleaned not in keys:
+                keys.append(cleaned)
+        return keys
 
-    def _stable_id(self, prefix: str, value: str) -> str:
-        return f"{prefix}_{hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]}"
+    def _identity_payload(
+        self,
+        role: str,
+        numeric_identifier: int | str | None,
+        legacy_key: str,
+        name: str,
+        email: str = "",
+        **extra: object,
+    ) -> dict:
+        numeric_key = self._numeric_key(numeric_identifier)
+        payload = {
+            "role": role,
+            "key": numeric_key or legacy_key,
+            "legacy_key": legacy_key,
+            "numeric_identifier": int(numeric_identifier or 0),
+            "name": name,
+            "email": email.strip().lower(),
+        }
+        payload.update(extra)
+        return payload
+
+    def _system_user_account(self, role: str, actor_email: str = "") -> tuple[dict, dict | None]:
+        cleaned_role = role.strip().lower()
+        cleaned_email = actor_email.strip().lower()
+        user = next(
+            (
+                item
+                for item in self._system_users()
+                if item["role"] == cleaned_role and (not cleaned_email or item["email"].strip().lower() == cleaned_email)
+            ),
+            None,
+        )
+        if not user:
+            raise ValueError(f"{cleaned_role.title()} not found")
+        account = one(
+            self.conn,
+            """
+            SELECT *
+            FROM staff_accounts
+            WHERE role = ? AND (LOWER(email) = ? OR actor_key = ?)
+            """,
+            (cleaned_role, user["email"].strip().lower(), user["key"]),
+        )
+        return user, account
 
     def _actor_identity(self, role: str, actor_email: str = "", actor_client_id: str = "") -> dict:
         role = role.strip().lower()
@@ -120,61 +154,85 @@ class EvidenceService:
         actor_client_id = actor_client_id.strip()
         if role == "member":
             client_id = actor_client_id or self.config.default_client["client_id"]
-            profile = one(self.conn, "SELECT * FROM member_profiles WHERE client_id = ?", (client_id,))
+            profile = one(
+                self.conn,
+                """
+                SELECT mp.*, c.member_uid, c.display_name
+                FROM member_profiles mp
+                JOIN clients c ON c.id = mp.client_id
+                WHERE mp.client_id = ?
+                """,
+                (client_id,),
+            )
             if not profile:
                 raise ValueError("Member not found")
-            return {
-                "role": "member",
-                "key": client_id,
-                "client_id": client_id,
-                "name": (profile.get("preferred_name") or profile.get("first_name") or profile.get("email") or "Member").strip(),
-                "email": profile.get("email", "").strip().lower(),
-            }
+            return self._identity_payload(
+                "member",
+                profile.get("member_uid"),
+                client_id,
+                (profile.get("preferred_name") or profile.get("first_name") or profile.get("display_name") or profile.get("email") or "Member").strip(),
+                profile.get("email", ""),
+                client_id=client_id,
+                member_uid=profile.get("member_uid"),
+            )
         if role == "builder":
             account = one(self.conn, "SELECT * FROM profile_builder_accounts WHERE LOWER(email) = ? OR LOWER(username) = ?", (actor_email, actor_email))
             if not account:
                 raise ValueError("Profile builder not found")
             payload = self._builder_payload(account)
-            return {
-                "role": "builder",
-                "key": payload["email"].strip().lower(),
-                "builder_id": payload["builder_id"],
-                "name": payload["display_name"],
-                "email": payload["email"].strip().lower(),
-            }
+            return self._identity_payload(
+                "builder",
+                payload.get("builder_uid"),
+                payload["email"].strip().lower(),
+                payload["display_name"],
+                payload["email"],
+                builder_id=payload["builder_id"],
+                builder_uid=payload.get("builder_uid"),
+            )
         if role == "attorney":
             attorney = one(self.conn, "SELECT * FROM attorneys WHERE LOWER(email) = ?", (actor_email,))
             if not attorney:
                 raise ValueError("Attorney not found")
-            return {
-                "role": "attorney",
-                "key": attorney["email"].strip().lower(),
-                "attorney_id": attorney["id"],
-                "name": attorney["display_name"],
-                "email": attorney["email"].strip().lower(),
-            }
+            return self._identity_payload(
+                "attorney",
+                attorney.get("attorney_uid"),
+                attorney["email"].strip().lower(),
+                attorney["display_name"],
+                attorney["email"],
+                attorney_id=attorney["id"],
+                attorney_uid=attorney.get("attorney_uid"),
+            )
         if role in {"leader", "admin"}:
-            user = next((item for item in self._system_users() if item["role"] == role and (not actor_email or item["email"] == actor_email)), None)
-            if not user:
-                raise ValueError(f"{role.title()} not found")
-            return {
-                "role": role,
-                "key": user["key"],
-                "name": user["name"],
-                "email": user["email"],
-            }
+            user, account = self._system_user_account(role, actor_email)
+            return self._identity_payload(
+                role,
+                account.get("staff_uid") if account else 0,
+                user["key"],
+                user["name"],
+                user["email"],
+                staff_account_id=account.get("id", "") if account else "",
+                staff_uid=account.get("staff_uid", 0) if account else 0,
+            )
         raise ValueError("Unsupported actor role")
 
     def _recipient_options(self, actor: dict) -> list[dict]:
         options: list[dict] = []
         seen: set[tuple[str, str]] = set()
 
-        def add(role: str, key: str, name: str, email: str = "", detail: str = "") -> None:
+        def add(role: str, key: str, name: str, email: str = "", detail: str = "", legacy_key: str = "", numeric_identifier: int | str | None = None) -> None:
             ident = (role, key)
             if not key or ident in seen:
                 return
             seen.add(ident)
-            options.append({"role": role, "key": key, "name": name, "email": email, "detail": detail})
+            options.append({
+                "role": role,
+                "key": key,
+                "legacy_key": legacy_key,
+                "numeric_identifier": int(numeric_identifier or 0),
+                "name": name,
+                "email": email,
+                "detail": detail,
+            })
 
         if actor["role"] == "member":
             client_id = actor["client_id"]
@@ -204,18 +262,42 @@ class EvidenceService:
                 (member["client_id"], member["case_id"]),
             )
             if builder:
-                add("builder", builder["email"].strip().lower(), builder["display_name"], builder["email"], "Assigned profile builder")
+                add(
+                    "builder",
+                    self._numeric_key(builder.get("builder_uid")),
+                    builder["display_name"],
+                    builder["email"],
+                    "Assigned profile builder",
+                    legacy_key=builder["email"].strip().lower(),
+                    numeric_identifier=builder.get("builder_uid"),
+                )
             if attorney:
-                add("attorney", attorney["email"].strip().lower(), attorney["display_name"], attorney["email"], "Assigned attorney")
-            admin = next(item for item in self._system_users() if item["role"] == "admin")
-            add("admin", admin["key"], admin["name"], admin["email"], "Operations support")
+                add(
+                    "attorney",
+                    self._numeric_key(attorney.get("attorney_uid")),
+                    attorney["display_name"],
+                    attorney["email"],
+                    "Assigned attorney",
+                    legacy_key=attorney["email"].strip().lower(),
+                    numeric_identifier=attorney.get("attorney_uid"),
+                )
+            admin, admin_account = self._system_user_account("admin")
+            add(
+                "admin",
+                self._numeric_key(admin_account.get("staff_uid") if admin_account else 0),
+                admin["name"],
+                admin["email"],
+                "Operations support",
+                legacy_key=admin["key"],
+                numeric_identifier=admin_account.get("staff_uid") if admin_account else 0,
+            )
             return options
 
         if actor["role"] == "builder":
             members = rows(
                 self.conn,
                 """
-                SELECT c.id AS client_id, c.display_name, mp.email
+                SELECT c.id AS client_id, c.member_uid, c.display_name, mp.email
                 FROM builder_member_assignments a
                 JOIN clients c ON c.id = a.client_id
                 LEFT JOIN member_profiles mp ON mp.client_id = c.id AND mp.case_id = a.case_id
@@ -225,16 +307,33 @@ class EvidenceService:
                 (actor["builder_id"],),
             )
             for item in members:
-                add("member", item["client_id"], item["display_name"], item.get("email", ""), "Assigned member")
+                add(
+                    "member",
+                    self._numeric_key(item.get("member_uid")),
+                    item["display_name"],
+                    item.get("email", ""),
+                    "Assigned member",
+                    legacy_key=item["client_id"],
+                    numeric_identifier=item.get("member_uid"),
+                )
             for system in self._system_users():
-                add(system["role"], system["key"], system["name"], system["email"], "Operations")
+                system_user, system_account = self._system_user_account(system["role"], system["email"])
+                add(
+                    system_user["role"],
+                    self._numeric_key(system_account.get("staff_uid") if system_account else 0),
+                    system_user["name"],
+                    system_user["email"],
+                    "Operations",
+                    legacy_key=system_user["key"],
+                    numeric_identifier=system_account.get("staff_uid") if system_account else 0,
+                )
             return options
 
         if actor["role"] == "attorney":
             members = rows(
                 self.conn,
                 """
-                SELECT c.id AS client_id, c.display_name, mp.email
+                SELECT c.id AS client_id, c.member_uid, c.display_name, mp.email
                 FROM attorney_member_assignments a
                 JOIN clients c ON c.id = a.client_id
                 LEFT JOIN member_profiles mp ON mp.client_id = c.id AND mp.case_id = a.case_id
@@ -244,23 +343,73 @@ class EvidenceService:
                 (actor["attorney_id"],),
             )
             for item in members:
-                add("member", item["client_id"], item["display_name"], item.get("email", ""), "Assigned member")
+                add(
+                    "member",
+                    self._numeric_key(item.get("member_uid")),
+                    item["display_name"],
+                    item.get("email", ""),
+                    "Assigned member",
+                    legacy_key=item["client_id"],
+                    numeric_identifier=item.get("member_uid"),
+                )
             for system in self._system_users():
-                add(system["role"], system["key"], system["name"], system["email"], "Operations")
+                system_user, system_account = self._system_user_account(system["role"], system["email"])
+                add(
+                    system_user["role"],
+                    self._numeric_key(system_account.get("staff_uid") if system_account else 0),
+                    system_user["name"],
+                    system_user["email"],
+                    "Operations",
+                    legacy_key=system_user["key"],
+                    numeric_identifier=system_account.get("staff_uid") if system_account else 0,
+                )
             return options
 
         if actor["role"] in {"leader", "admin"}:
-            members = rows(self.conn, "SELECT c.id AS client_id, c.display_name, mp.email FROM clients c LEFT JOIN member_profiles mp ON mp.client_id = c.id ORDER BY c.display_name")
-            builders = rows(self.conn, "SELECT display_name, email FROM profile_builders ORDER BY display_name")
-            attorneys = rows(self.conn, "SELECT display_name, email FROM attorneys ORDER BY display_name")
+            members = rows(self.conn, "SELECT c.id AS client_id, c.member_uid, c.display_name, mp.email FROM clients c LEFT JOIN member_profiles mp ON mp.client_id = c.id ORDER BY c.display_name")
+            builders = rows(self.conn, "SELECT id, builder_uid, display_name, email FROM profile_builders ORDER BY display_name")
+            attorneys = rows(self.conn, "SELECT id, attorney_uid, display_name, email FROM attorneys ORDER BY display_name")
             for item in members:
-                add("member", item["client_id"], item["display_name"], item.get("email", ""), "Member")
+                add(
+                    "member",
+                    self._numeric_key(item.get("member_uid")),
+                    item["display_name"],
+                    item.get("email", ""),
+                    "Member",
+                    legacy_key=item["client_id"],
+                    numeric_identifier=item.get("member_uid"),
+                )
             for item in builders:
-                add("builder", item["email"].strip().lower(), item["display_name"], item["email"], "Profile builder")
+                add(
+                    "builder",
+                    self._numeric_key(item.get("builder_uid")),
+                    item["display_name"],
+                    item["email"],
+                    "Profile builder",
+                    legacy_key=item["email"].strip().lower(),
+                    numeric_identifier=item.get("builder_uid"),
+                )
             for item in attorneys:
-                add("attorney", item["email"].strip().lower(), item["display_name"], item["email"], "Attorney")
+                add(
+                    "attorney",
+                    self._numeric_key(item.get("attorney_uid")),
+                    item["display_name"],
+                    item["email"],
+                    "Attorney",
+                    legacy_key=item["email"].strip().lower(),
+                    numeric_identifier=item.get("attorney_uid"),
+                )
             for system in self._system_users():
-                add(system["role"], system["key"], system["name"], system["email"], "Operations")
+                system_user, system_account = self._system_user_account(system["role"], system["email"])
+                add(
+                    system_user["role"],
+                    self._numeric_key(system_account.get("staff_uid") if system_account else 0),
+                    system_user["name"],
+                    system_user["email"],
+                    "Operations",
+                    legacy_key=system_user["key"],
+                    numeric_identifier=system_account.get("staff_uid") if system_account else 0,
+                )
             return [item for item in options if not (item["role"] == actor["role"] and item["key"] == actor["key"])]
 
         return options
@@ -271,19 +420,21 @@ class EvidenceService:
 
     def message_center(self, actor_role: str, actor_email: str = "", actor_client_id: str = "") -> dict:
         actor = self._actor_identity(actor_role, actor_email, actor_client_id)
+        actor_keys = self._actor_key_candidates(actor)
+        placeholders = ", ".join("?" for _ in actor_keys)
         visible_messages = rows(
             self.conn,
-            """
+            f"""
             SELECT *
             FROM messages
             WHERE (
-              (recipient_role = ? AND recipient_key = ? AND deleted_by_recipient = 0)
+              (recipient_role = ? AND recipient_key IN ({placeholders}) AND deleted_by_recipient = 0)
               OR
-              (sender_role = ? AND sender_key = ? AND deleted_by_sender = 0)
+              (sender_role = ? AND sender_key IN ({placeholders}) AND deleted_by_sender = 0)
             )
             ORDER BY created_at DESC
             """,
-            (actor["role"], actor["key"], actor["role"], actor["key"]),
+            (actor["role"], *actor_keys, actor["role"], *actor_keys),
         )
         threads_map: dict[str, dict] = {}
         for item in visible_messages:
@@ -306,7 +457,7 @@ class EvidenceService:
                 bucket["latest_message"] = item
             if item["urgent"]:
                 bucket["urgent"] = True
-            if item["recipient_role"] == actor["role"] and item["recipient_key"] == actor["key"] and not item["is_read"]:
+            if item["recipient_role"] == actor["role"] and item["recipient_key"] in actor_keys and not item["is_read"]:
                 bucket["unread_count"] += 1
             if item.get("parent_message_id") is None or bucket["subject"] == "":
                 bucket["subject"] = item["subject"]
@@ -377,6 +528,7 @@ class EvidenceService:
         parent_message_id: str = "",
     ) -> dict:
         actor = self._actor_identity(actor_role, actor_email, actor_client_id)
+        actor_keys = self._actor_key_candidates(actor)
         cleaned_thread_id = thread_id.strip()
         cleaned_parent_id = parent_message_id.strip()
         recipients = self._recipient_options(actor)
@@ -397,7 +549,7 @@ class EvidenceService:
                         "email": item.get("sender_email", ""),
                     }
                     for item in thread_messages
-                    if not (item["sender_role"] == actor["role"] and item["sender_key"] == actor["key"])
+                    if not (item["sender_role"] == actor["role"] and item["sender_key"] in actor_keys)
                 ),
                 None,
             ) or next(
@@ -409,7 +561,7 @@ class EvidenceService:
                         "email": item.get("recipient_email", ""),
                     }
                     for item in thread_messages
-                    if not (item["recipient_role"] == actor["role"] and item["recipient_key"] == actor["key"])
+                    if not (item["recipient_role"] == actor["role"] and item["recipient_key"] in actor_keys)
                 ),
                 None,
             )
@@ -418,7 +570,16 @@ class EvidenceService:
             recipient = thread_participant
             cleaned_subject = thread_messages[0]["subject"]
         else:
-            recipient = next((item for item in recipients if item["role"] == recipient_role.strip().lower() and item["key"] == recipient_key.strip()), None)
+            cleaned_recipient_key = recipient_key.strip()
+            recipient = next(
+                (
+                    item
+                    for item in recipients
+                    if item["role"] == recipient_role.strip().lower()
+                    and cleaned_recipient_key in {str(item.get("key", "")).strip(), str(item.get("legacy_key", "")).strip()}
+                ),
+                None,
+            )
             if not recipient:
                 raise ValueError("Recipient not available for this actor")
             cleaned_thread_id = f"thd_{uuid.uuid4().hex[:12]}"
@@ -452,10 +613,11 @@ class EvidenceService:
         actor_client_id: str = "",
     ) -> dict:
         actor = self._actor_identity(actor_role, actor_email, actor_client_id)
+        actor_keys = self._actor_key_candidates(actor)
         message = one(self.conn, "SELECT * FROM messages WHERE id = ?", (message_id,))
         if not message:
             raise ValueError("Message not found")
-        if message["recipient_role"] != actor["role"] or message["recipient_key"] != actor["key"]:
+        if message["recipient_role"] != actor["role"] or message["recipient_key"] not in actor_keys:
             raise ValueError("Message cannot be updated by this actor")
         self.conn.execute(
             """
@@ -476,12 +638,13 @@ class EvidenceService:
         actor_client_id: str = "",
     ) -> dict:
         actor = self._actor_identity(actor_role, actor_email, actor_client_id)
+        actor_keys = self._actor_key_candidates(actor)
         message = one(self.conn, "SELECT * FROM messages WHERE id = ?", (message_id,))
         if not message:
             raise ValueError("Message not found")
-        if message["sender_role"] == actor["role"] and message["sender_key"] == actor["key"]:
+        if message["sender_role"] == actor["role"] and message["sender_key"] in actor_keys:
             self.conn.execute("UPDATE messages SET deleted_by_sender = 1 WHERE id = ?", (message_id,))
-        elif message["recipient_role"] == actor["role"] and message["recipient_key"] == actor["key"]:
+        elif message["recipient_role"] == actor["role"] and message["recipient_key"] in actor_keys:
             self.conn.execute("UPDATE messages SET deleted_by_recipient = 1 WHERE id = ?", (message_id,))
         else:
             raise ValueError("Message cannot be deleted by this actor")
@@ -629,6 +792,362 @@ class EvidenceService:
             },
         }
 
+    def _serialize_referral_settings(self, settings: dict | None) -> dict:
+        row = settings or {}
+        return {
+            "id": row.get("id", "default"),
+            "is_enabled": bool(int(row.get("is_enabled") or 0)),
+            "referred_bonus_amount": int(row.get("referred_bonus_amount") or 500),
+            "referrer_bonus_amount": int(row.get("referrer_bonus_amount") or 250),
+            "currency": row.get("currency", "USD") or "USD",
+            "promotion_name": row.get("promotion_name", "Standard referral program") or "Standard referral program",
+            "eligibility_note": row.get("eligibility_note", "Paid after referred member signs the contract and completes at least 6 months with Ascend.") or "Paid after referred member signs the contract and completes at least 6 months with Ascend.",
+            "updated_by": row.get("updated_by", ""),
+            "updated_at": row.get("updated_at", ""),
+        }
+
+    def _referral_settings(self) -> dict:
+        settings = one(self.conn, "SELECT * FROM referral_settings WHERE id = 'default'")
+        if not settings:
+            self.conn.execute(
+                """
+                INSERT INTO referral_settings(
+                  id, is_enabled, referred_bonus_amount, referrer_bonus_amount, currency, promotion_name, eligibility_note
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "default",
+                    1,
+                    500,
+                    250,
+                    "USD",
+                    "Standard referral program",
+                    "Paid after referred member signs the contract and completes at least 6 months with Ascend.",
+                ),
+            )
+            self.conn.commit()
+            settings = one(self.conn, "SELECT * FROM referral_settings WHERE id = 'default'")
+        return self._serialize_referral_settings(settings)
+
+    def _serialize_referral(self, referral: dict) -> dict:
+        item = dict(referral)
+        status = str(item.get("status") or "submitted").strip().lower()
+        item["status"] = status
+        item["status_label"] = status.replace("_", " ").title()
+        item["referrer_bonus_amount"] = int(item.get("referrer_bonus_amount") or 0)
+        item["referred_bonus_amount"] = int(item.get("referred_bonus_amount") or 0)
+        item["currency"] = item.get("currency", "USD") or "USD"
+        item["total_bonus_amount"] = item["referrer_bonus_amount"] + item["referred_bonus_amount"]
+        item["is_bonus_eligible"] = bool(item.get("eligible_at")) and not bool(item.get("paid_at"))
+        item["is_paid"] = bool(item.get("paid_at")) or status == "paid"
+        return item
+
+    def _referral_metrics(self, referrals: list[dict]) -> dict:
+        active_statuses = {"submitted", "contacted", "contract_signed", "qualified"}
+        pending_payout = sum(
+            int(item.get("total_bonus_amount") or 0)
+            for item in referrals
+            if item.get("status") == "qualified" and not item.get("paid_at")
+        )
+        return {
+            "total_referrals": len(referrals),
+            "active_referrals": sum(1 for item in referrals if item.get("status") in active_statuses),
+            "contract_signed": sum(1 for item in referrals if item.get("status") in {"contract_signed", "qualified", "paid"} or item.get("contract_signed_at")),
+            "qualified": sum(1 for item in referrals if item.get("status") in {"qualified", "paid"} or item.get("eligible_at")),
+            "paid": sum(1 for item in referrals if item.get("status") == "paid" or item.get("paid_at")),
+            "pending_payout_amount": pending_payout,
+        }
+
+    def member_referrals(self, client_id: str, case_id: str) -> dict:
+        referral_rows = rows(
+            self.conn,
+            """
+            SELECT *
+            FROM member_referrals
+            WHERE referrer_client_id = ? AND referrer_case_id = ?
+            ORDER BY created_at DESC
+            """,
+            (client_id, case_id),
+        )
+        referrals = [self._serialize_referral(item) for item in referral_rows]
+        return {
+            "ok": True,
+            "settings": self._referral_settings(),
+            "referrals": referrals,
+            "metrics": self._referral_metrics(referrals),
+        }
+
+    def create_member_referral(
+        self,
+        client_id: str,
+        case_id: str,
+        prospect_name: str,
+        prospect_email: str = "",
+        prospect_phone: str = "",
+        relationship: str = "",
+        notes: str = "",
+    ) -> dict:
+        settings = self._referral_settings()
+        if not settings["is_enabled"]:
+            raise ValueError("Referral program is currently paused by Ascend leadership.")
+        client = one(self.conn, "SELECT * FROM clients WHERE id = ?", (client_id,))
+        case = one(self.conn, "SELECT * FROM cases WHERE id = ? AND client_id = ?", (case_id, client_id))
+        if not client or not case:
+            raise ValueError("Member case not found")
+        cleaned_name = re.sub(r"\s+", " ", str(prospect_name or "").strip())[:160]
+        cleaned_email = str(prospect_email or "").strip().lower()
+        cleaned_phone = re.sub(r"\s+", " ", str(prospect_phone or "").strip())[:80]
+        phone_digits = re.sub(r"\D", "", cleaned_phone)
+        if not cleaned_name:
+            raise ValueError("Referral name is required")
+        if cleaned_email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", cleaned_email):
+            raise ValueError("Referral email must be valid")
+        if not cleaned_email and not phone_digits:
+            raise ValueError("Add at least one contact method: email or phone")
+        existing = rows(
+            self.conn,
+            """
+            SELECT *
+            FROM member_referrals
+            WHERE referrer_client_id = ? AND status != 'disqualified'
+            """,
+            (client_id,),
+        )
+        for item in existing:
+            if cleaned_email and str(item.get("prospect_email", "")).strip().lower() == cleaned_email:
+                raise ValueError("This referral email is already in your referral history")
+            if phone_digits and re.sub(r"\D", "", str(item.get("prospect_phone", ""))) == phone_digits:
+                raise ValueError("This referral phone number is already in your referral history")
+        referral = {
+            "id": f"ref_{uuid.uuid4().hex[:12]}",
+            "referrer_client_id": client_id,
+            "referrer_case_id": case_id,
+            "referrer_member_uid": int(client.get("member_uid") or 0),
+            "referrer_name": client.get("display_name", ""),
+            "prospect_name": cleaned_name,
+            "prospect_email": cleaned_email,
+            "prospect_phone": cleaned_phone,
+            "relationship": re.sub(r"\s+", " ", str(relationship or "").strip())[:120],
+            "notes": str(notes or "").strip()[:1000],
+            "status": "submitted",
+            "referrer_bonus_amount": settings["referrer_bonus_amount"],
+            "referred_bonus_amount": settings["referred_bonus_amount"],
+            "currency": settings["currency"],
+        }
+        self.conn.execute(
+            """
+            INSERT INTO member_referrals(
+              id, referrer_client_id, referrer_case_id, referrer_member_uid, referrer_name,
+              prospect_name, prospect_email, prospect_phone, relationship, notes, status,
+              referrer_bonus_amount, referred_bonus_amount, currency
+            )
+            VALUES (
+              :id, :referrer_client_id, :referrer_case_id, :referrer_member_uid, :referrer_name,
+              :prospect_name, :prospect_email, :prospect_phone, :relationship, :notes, :status,
+              :referrer_bonus_amount, :referred_bonus_amount, :currency
+            )
+            """,
+            referral,
+        )
+        self.conn.commit()
+        self.record_operational_event(
+            "member_referral_created",
+            status="success",
+            portal="member",
+            client_id=client_id,
+            case_id=case_id,
+            endpoint="/api/member/referrals",
+            message="Member submitted a referral.",
+            metadata={
+                "referral_id": referral["id"],
+                "has_email": bool(cleaned_email),
+                "has_phone": bool(phone_digits),
+                "referrer_bonus_amount": referral["referrer_bonus_amount"],
+                "referred_bonus_amount": referral["referred_bonus_amount"],
+                "currency": referral["currency"],
+            },
+            actor_role="member",
+            actor_key=str(client.get("member_uid") or client_id),
+        )
+        summary = self.member_referrals(client_id, case_id)
+        summary["referral"] = next((item for item in summary["referrals"] if item["id"] == referral["id"]), self._serialize_referral(referral))
+        return summary
+
+    def leader_referral_dashboard(self) -> dict:
+        referral_rows = rows(
+            self.conn,
+            """
+            SELECT r.*,
+                   c.display_name AS referrer_display_name,
+                   mp.email AS referrer_email,
+                   mp.phone AS referrer_phone
+            FROM member_referrals r
+            LEFT JOIN clients c ON c.id = r.referrer_client_id
+            LEFT JOIN member_profiles mp ON mp.client_id = r.referrer_client_id AND mp.case_id = r.referrer_case_id
+            ORDER BY r.created_at DESC
+            """,
+        )
+        referrals = [self._serialize_referral(item) for item in referral_rows]
+        return {
+            "ok": True,
+            "settings": self._referral_settings(),
+            "referrals": referrals,
+            "metrics": self._referral_metrics(referrals),
+            "statuses": sorted(REFERRAL_STATUSES),
+        }
+
+    def update_referral_settings(
+        self,
+        is_enabled: str | bool,
+        referred_bonus_amount: str | int,
+        referrer_bonus_amount: str | int,
+        promotion_name: str = "",
+        eligibility_note: str = "",
+        actor_email: str = "",
+    ) -> dict:
+        if isinstance(is_enabled, bool):
+            enabled = is_enabled
+        else:
+            enabled = str(is_enabled or "").strip().lower() in {"1", "true", "yes", "on", "enabled", "active"}
+        try:
+            referred_bonus = int(float(str(referred_bonus_amount).replace(",", "").strip()))
+            referrer_bonus = int(float(str(referrer_bonus_amount).replace(",", "").strip()))
+        except ValueError as exc:
+            raise ValueError("Referral bonus amounts must be numeric") from exc
+        if referred_bonus < 0 or referrer_bonus < 0:
+            raise ValueError("Referral bonus amounts cannot be negative")
+        if referred_bonus > 100000 or referrer_bonus > 100000:
+            raise ValueError("Referral bonus amounts look too high. Please verify the promotion values.")
+        cleaned_promotion = re.sub(r"\s+", " ", str(promotion_name or "").strip())[:160] or "Standard referral program"
+        cleaned_note = str(eligibility_note or "").strip()[:600] or "Paid after referred member signs the contract and completes at least 6 months with Ascend."
+        self.conn.execute(
+            """
+            UPDATE referral_settings
+            SET is_enabled = ?,
+                referred_bonus_amount = ?,
+                referrer_bonus_amount = ?,
+                promotion_name = ?,
+                eligibility_note = ?,
+                updated_by = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = 'default'
+            """,
+            (1 if enabled else 0, referred_bonus, referrer_bonus, cleaned_promotion, cleaned_note, str(actor_email or "").strip().lower()),
+        )
+        self.conn.commit()
+        self.record_operational_event(
+            "referral_settings_updated",
+            status="success",
+            portal="leader",
+            endpoint="/api/leader/referrals/settings",
+            message="Leader updated referral program settings.",
+            metadata={
+                "is_enabled": enabled,
+                "referred_bonus_amount": referred_bonus,
+                "referrer_bonus_amount": referrer_bonus,
+            },
+            actor_role="leader",
+            actor_key=str(actor_email or "").strip().lower(),
+        )
+        return self.leader_referral_dashboard()
+
+    def update_referral_status(
+        self,
+        referral_id: str,
+        status: str,
+        contract_signed_at: str = "",
+        six_months_completed_at: str = "",
+        paid_at: str = "",
+        disqualification_reason: str = "",
+        actor_email: str = "",
+    ) -> dict:
+        cleaned_status = str(status or "").strip().lower()
+        if cleaned_status not in REFERRAL_STATUSES:
+            raise ValueError("Referral status is not supported")
+        referral = one(self.conn, "SELECT * FROM member_referrals WHERE id = ?", (referral_id,))
+        if not referral:
+            raise ValueError("Referral not found")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        updates = {
+            "status": cleaned_status,
+            "contract_signed_at": str(contract_signed_at or referral.get("contract_signed_at") or "").strip() or None,
+            "six_months_completed_at": str(six_months_completed_at or referral.get("six_months_completed_at") or "").strip() or None,
+            "eligible_at": referral.get("eligible_at"),
+            "paid_at": str(paid_at or referral.get("paid_at") or "").strip() or None,
+            "disqualification_reason": str(disqualification_reason or "").strip()[:500] if cleaned_status == "disqualified" else "",
+            "updated_at": now,
+            "id": referral_id,
+        }
+        if cleaned_status in {"contract_signed", "qualified", "paid"} and not updates["contract_signed_at"]:
+            updates["contract_signed_at"] = now
+        if cleaned_status in {"qualified", "paid"}:
+            if not updates["six_months_completed_at"]:
+                updates["six_months_completed_at"] = now
+            if not updates["eligible_at"]:
+                updates["eligible_at"] = now
+        if cleaned_status == "paid" and not updates["paid_at"]:
+            updates["paid_at"] = now
+        self.conn.execute(
+            """
+            UPDATE member_referrals
+            SET status = :status,
+                contract_signed_at = :contract_signed_at,
+                six_months_completed_at = :six_months_completed_at,
+                eligible_at = :eligible_at,
+                paid_at = :paid_at,
+                disqualification_reason = :disqualification_reason,
+                updated_at = :updated_at
+            WHERE id = :id
+            """,
+            updates,
+        )
+        self.conn.commit()
+        self.record_operational_event(
+            "referral_status_updated",
+            status="success",
+            portal="leader",
+            endpoint="/api/leader/referrals/{referral_id}",
+            message="Leader updated referral status.",
+            metadata={"referral_id": referral_id, "status": cleaned_status},
+            actor_role="leader",
+            actor_key=str(actor_email or "").strip().lower(),
+            related_client_id=referral.get("referrer_client_id", ""),
+            related_case_id=referral.get("referrer_case_id", ""),
+        )
+        return self.leader_referral_dashboard()
+
+    def log_portal_activity(
+        self,
+        actor_role: str,
+        actor_email: str = "",
+        actor_client_id: str = "",
+        event_type: str = "page_view",
+        message: str = "",
+        endpoint: str = "/web/activity",
+        metadata: dict | None = None,
+        related_client_id: str = "",
+    ) -> dict:
+        actor = self._actor_identity(actor_role, actor_email, actor_client_id)
+        related_case_id = ""
+        if related_client_id:
+            related_member = self._member_case(related_client_id)
+            related_case_id = related_member["case_id"]
+        return self.record_operational_event(
+            event_type,
+            status="info",
+            portal=actor["role"],
+            client_id=actor.get("client_id", ""),
+            case_id=actor.get("case_id", ""),
+            endpoint=endpoint,
+            message=message,
+            metadata=metadata or {},
+            actor_role=actor["role"],
+            actor_key=actor["key"],
+            related_client_id=related_client_id,
+            related_case_id=related_case_id,
+        )
+
     def _login_audit_metadata(self, audit_context: dict | None = None) -> dict:
         context = audit_context or {}
         return {
@@ -639,7 +1158,7 @@ class EvidenceService:
 
     def _mark_account_login(self, table: str, account_id: str, audit_context: dict | None = None) -> tuple[str, dict]:
         metadata = self._login_audit_metadata(audit_context)
-        logged_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        logged_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         self.conn.execute(
             f"""
             UPDATE {table}
@@ -677,13 +1196,6 @@ class EvidenceService:
             return {}
         decorated = dict(attachment)
         drive_url = str(decorated.get("drive_web_url", "")).strip()
-        drive_file_id = str(decorated.get("drive_file_id", "")).strip()
-        if drive_file_id and self.storage.object_storage and self.storage.object_storage.enabled:
-            try:
-                drive_url = self.storage.object_storage.build_file_url(drive_file_id)
-                decorated["drive_web_url"] = drive_url
-            except S3StorageError:
-                drive_url = str(decorated.get("drive_web_url", "")).strip()
         local_path = str(decorated.get("local_path", "")).strip()
         open_url = drive_url
         if not open_url and local_path:
@@ -723,13 +1235,16 @@ class EvidenceService:
         relative_path = Path("support") / "tickets" / ticket_number / attachment_id / cleaned_file_name
         drive_path = relative_path.as_posix()
 
-        object_storage = self.storage.object_storage
-        if object_storage and object_storage.enabled:
+        drive = self.storage.google_drive
+        if drive and drive.enabled and drive.access_token():
             try:
-                parent_id = object_storage.ensure_folder_path(["support", "tickets", ticket_number, attachment_id])
-                uploaded = object_storage.upload_bytes(parent_id, cleaned_file_name, file_bytes, normalized_content_type)
+                with tempfile.NamedTemporaryFile(delete=True) as tmp:
+                    tmp.write(file_bytes)
+                    tmp.flush()
+                    parent_id = drive.ensure_folder_path(["Support Tickets", ticket_number, attachment_id])
+                    uploaded = drive.upload_file(parent_id, Path(tmp.name), cleaned_file_name)
                 drive_file_id = str(uploaded.get("id", "")).strip()
-                drive_web_url = str(uploaded.get("webViewLink", "")).strip() or (object_storage.build_file_url(drive_file_id) if drive_file_id else "")
+                drive_web_url = str(uploaded.get("webViewLink", "")).strip() or (drive.build_file_url(drive_file_id) if drive_file_id else "")
                 return {
                     "id": attachment_id,
                     "file_name": cleaned_file_name,
@@ -739,10 +1254,8 @@ class EvidenceService:
                     "drive_path": drive_path,
                     "drive_file_id": drive_file_id,
                     "drive_web_url": drive_web_url,
-                    "storage_provider": "s3",
-                    "storage_class": str(uploaded.get("storageClass", "")).strip(),
                 }
-            except (S3ConfigError, S3StorageError):
+            except (GoogleDriveConfigError, GoogleDriveUploadError):
                 pass
 
         local_dir = self.config.upload_root / relative_path.parent
@@ -762,8 +1275,6 @@ class EvidenceService:
             "drive_path": str(mirror_path),
             "drive_file_id": "",
             "drive_web_url": "",
-            "storage_provider": "local",
-            "storage_class": "",
         }
 
     def _serialize_feature_attachment(self, attachment: dict | None) -> dict:
@@ -796,26 +1307,6 @@ class EvidenceService:
         cleaned_file_name = safe_file_name(file_name or "feature-screenshot")
         normalized_content_type = (content_type or "").strip() or mimetypes.guess_type(cleaned_file_name)[0] or "application/octet-stream"
         relative_path = Path("product") / "feature-requests" / request_id / attachment_id / cleaned_file_name
-        drive_path = relative_path.as_posix()
-        object_storage = self.storage.object_storage
-        if object_storage and object_storage.enabled:
-            try:
-                parent_id = object_storage.ensure_folder_path(["product", "feature-requests", request_id, attachment_id])
-                uploaded = object_storage.upload_bytes(parent_id, cleaned_file_name, file_bytes, normalized_content_type)
-                drive_file_id = str(uploaded.get("id", "")).strip()
-                drive_web_url = str(uploaded.get("webViewLink", "")).strip() or (object_storage.build_file_url(drive_file_id) if drive_file_id else "")
-                return {
-                    "id": attachment_id,
-                    "file_name": cleaned_file_name,
-                    "description": description.strip(),
-                    "content_type": normalized_content_type,
-                    "local_path": "",
-                    "drive_path": drive_path,
-                    "drive_file_id": drive_file_id,
-                    "drive_web_url": drive_web_url,
-                }
-            except (S3ConfigError, S3StorageError):
-                pass
         local_dir = self.config.upload_root / relative_path.parent
         mirror_dir = self.config.drive_mirror_root / relative_path.parent
         local_dir.mkdir(parents=True, exist_ok=True)
@@ -859,7 +1350,11 @@ class EvidenceService:
         status_counts: dict[str, int] = {}
         for item in items:
             status_counts[item.get("status", "backlog")] = status_counts.get(item.get("status", "backlog"), 0) + 1
-        return {"items": items, "priority_counts": priority_counts, "status_counts": status_counts}
+        return {
+            "items": items,
+            "priority_counts": priority_counts,
+            "status_counts": status_counts,
+        }
 
     def create_product_feature_request(
         self,
@@ -986,37 +1481,6 @@ class EvidenceService:
         )
         return updated
 
-    def log_portal_activity(
-        self,
-        actor_role: str,
-        actor_email: str = "",
-        actor_client_id: str = "",
-        event_type: str = "page_view",
-        message: str = "",
-        endpoint: str = "/web/activity",
-        metadata: dict | None = None,
-        related_client_id: str = "",
-    ) -> dict:
-        actor = self._actor_identity(actor_role, actor_email, actor_client_id)
-        related_case_id = ""
-        if related_client_id:
-            related_member = self._member_case(related_client_id)
-            related_case_id = related_member["case_id"]
-        return self.record_operational_event(
-            event_type,
-            status="info",
-            portal=actor["role"],
-            client_id=actor.get("client_id", ""),
-            case_id=actor.get("case_id", ""),
-            endpoint=endpoint,
-            message=message,
-            metadata=metadata or {},
-            actor_role=actor["role"],
-            actor_key=actor["key"],
-            related_client_id=related_client_id,
-            related_case_id=related_case_id,
-        )
-
     def _bug_log_id(self) -> str:
         return f"BUG-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
 
@@ -1029,7 +1493,9 @@ class EvidenceService:
         return cleaned if cleaned in ISSUE_STATUSES else "new"
 
     def _serialize_issue_log(self, item: dict | None) -> dict:
-        return dict(item or {})
+        if not item:
+            return {}
+        return dict(item)
 
     def _aws_issue_table_name(self) -> str:
         return os.environ.get("ASCEND_BUG_LOG_TABLE", "ascend_product_issue_logs")
@@ -1056,7 +1522,8 @@ class EvidenceService:
             KeySchema=[{"AttributeName": "bug_id", "KeyType": "HASH"}],
             BillingMode="PAY_PER_REQUEST",
         )
-        client.get_waiter("table_exists").wait(TableName=table_name)
+        waiter = client.get_waiter("table_exists")
+        waiter.wait(TableName=table_name)
 
     def _sync_issue_log_to_aws(self, issue: dict) -> dict:
         try:
@@ -1116,52 +1583,6 @@ class EvidenceService:
                 "last_synced_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
             }
 
-    def _aws_issue_logs(self) -> list[dict]:
-        try:
-            import boto3
-        except ImportError:
-            return []
-
-        try:
-            client = boto3.client("dynamodb", region_name=self._aws_issue_region())
-            response = client.scan(TableName=self._aws_issue_table_name())
-        except Exception:
-            return []
-
-        def value(item: dict, key: str) -> str:
-            entry = item.get(key) or {}
-            if "S" in entry:
-                return entry.get("S") or ""
-            if "NULL" in entry:
-                return ""
-            return next(iter(entry.values()), "") if entry else ""
-
-        return [
-            {
-                "bug_id": value(item, "bug_id"),
-                "title": value(item, "title"),
-                "portal": value(item, "portal"),
-                "section": value(item, "section"),
-                "priority": self._normalize_issue_priority(value(item, "priority")),
-                "status": self._normalize_issue_status(value(item, "status")),
-                "description": value(item, "description"),
-                "reported_by": value(item, "reported_by"),
-                "created_by_role": "admin",
-                "created_by_key": value(item, "reported_by"),
-                "created_at": value(item, "created_at"),
-                "updated_at": value(item, "updated_at"),
-                "closed_at": value(item, "closed_at") or None,
-                "aws_table_name": self._aws_issue_table_name(),
-                "aws_sync_status": "synced",
-                "aws_sync_message": "Loaded from DynamoDB issue log mirror.",
-                "last_synced_at": "",
-                "deleted_at": value(item, "deleted_at") or None,
-                "deleted_by_key": value(item, "deleted_by_key"),
-            }
-            for item in response.get("Items", [])
-            if value(item, "bug_id")
-        ]
-
     def issue_log_backlog(self) -> dict:
         issue_rows = rows(
             self.conn,
@@ -1169,21 +1590,28 @@ class EvidenceService:
             SELECT *
             FROM product_issue_logs
             WHERE deleted_at IS NULL OR deleted_at = ''
+            ORDER BY
+              CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+              CASE status
+                WHEN 'new' THEN 0
+                WHEN 'open' THEN 0
+                WHEN 'triaged' THEN 1
+                WHEN 'in_progress' THEN 2
+                WHEN 'testing' THEN 3
+                WHEN 'blocked' THEN 3
+                WHEN 'fixed_local' THEN 4
+                WHEN 'fixed' THEN 5
+                WHEN 'closed' THEN 6
+                WHEN 'wont_do' THEN 7
+                WHEN 'duplicate' THEN 8
+                ELSE 9
+              END,
+              created_at DESC
             """,
         )
-        items_by_id = {item["bug_id"]: self._serialize_issue_log(item) for item in issue_rows}
-        for item in self._aws_issue_logs():
-            if item.get("deleted_at"):
-                continue
-            items_by_id.setdefault(item["bug_id"], item)
-        items = list(items_by_id.values())
-        priority_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
-        status_order = {"open": 0, "triaged": 1, "in_progress": 2, "blocked": 3, "fixed": 4, "closed": 5}
-        items.sort(key=lambda item: item.get("created_at") or "", reverse=True)
-        items.sort(key=lambda item: status_order.get(item.get("status"), 9))
-        items.sort(key=lambda item: priority_order.get(item.get("priority"), 9))
+        items = [self._serialize_issue_log(item) for item in issue_rows]
         priority_counts = {priority: sum(1 for item in items if item.get("priority") == priority) for priority in ["P0", "P1", "P2", "P3"]}
-        status_counts = {status: sum(1 for item in items if item.get("status") == status) for status in ["open", "triaged", "in_progress", "blocked", "fixed", "closed"]}
+        status_counts = {status: sum(1 for item in items if item.get("status") == status) for status in sorted(ISSUE_STATUSES)}
         return {
             "items": items,
             "priority_counts": priority_counts,
@@ -1213,14 +1641,13 @@ class EvidenceService:
         bug_id = self._bug_log_id()
         normalized_priority = self._normalize_issue_priority(priority)
         normalized_status = self._normalize_issue_status(status)
-        closed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if normalized_status == "closed" else None
         self.conn.execute(
             """
             INSERT INTO product_issue_logs(
               bug_id, title, portal, section, priority, status, description, reported_by,
-              created_by_role, created_by_key, closed_at
+              created_by_role, created_by_key
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'admin', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'admin', ?)
             """,
             (
                 bug_id,
@@ -1232,16 +1659,16 @@ class EvidenceService:
                 cleaned_description,
                 reported_by.strip() or actor["name"],
                 actor["key"],
-                closed_at,
             ),
         )
         self.conn.commit()
         current = one(self.conn, "SELECT * FROM product_issue_logs WHERE bug_id = ?", (bug_id,))
         aws_sync = self._sync_issue_log_to_aws(current or {})
+        closed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if normalized_status == "closed" else None
         self.conn.execute(
             """
             UPDATE product_issue_logs
-            SET aws_table_name = ?, aws_sync_status = ?, aws_sync_message = ?, last_synced_at = ?
+            SET aws_table_name = ?, aws_sync_status = ?, aws_sync_message = ?, last_synced_at = ?, closed_at = COALESCE(closed_at, ?)
             WHERE bug_id = ?
             """,
             (
@@ -1249,6 +1676,7 @@ class EvidenceService:
                 aws_sync["aws_sync_status"],
                 aws_sync["aws_sync_message"],
                 aws_sync["last_synced_at"],
+                closed_at,
                 bug_id,
             ),
         )
@@ -1266,7 +1694,13 @@ class EvidenceService:
         )
         return saved
 
-    def update_issue_log(self, bug_id: str, priority: str = "", status: str = "", actor_email: str = "") -> dict:
+    def update_issue_log(
+        self,
+        bug_id: str,
+        priority: str = "",
+        status: str = "",
+        actor_email: str = "",
+    ) -> dict:
         actor = self._actor_identity("admin", actor_email)
         existing = one(self.conn, "SELECT * FROM product_issue_logs WHERE bug_id = ?", (bug_id.strip(),))
         if not existing:
@@ -1776,10 +2210,7 @@ class EvidenceService:
             "response_times": self._admin_response_time_series(portal_health),
             "recent_errors": recent_errors,
             "login_audit": login_audit,
-            "audit_log": login_audit,
             "member_debug": debug_member,
-            "user_management": self._admin_user_management_summary(),
-            "product_ops": self._admin_product_ops_controls(portal_health, support_counts, error_count),
             "support_summary": {
                 "total_count": int(support_counts.get("total_count") or 0),
                 "open_count": int(support_counts.get("open_count") or 0),
@@ -1872,8 +2303,9 @@ class EvidenceService:
             "OpenAI": 1180 if self.openai.enabled else 0,
         }
         labels = ["30m", "25m", "20m", "15m", "10m", "5m", "now"]
+        stacks = [(item["name"], item.get("layer") or "Platform") for item in portal_health]
         result = []
-        for name, layer in [(item["name"], item.get("layer") or "Platform") for item in portal_health]:
+        for name, layer in stacks:
             health = health_by_name.get(name, {})
             samples = observed.get(name, [])[:12]
             current = round(sum(samples) / len(samples)) if samples else int(base_response_ms.get(name, 150))
@@ -1898,69 +2330,6 @@ class EvidenceService:
                 }
             )
         return result
-
-    def _admin_user_management_summary(self) -> dict:
-        member_accounts = one(self.conn, "SELECT COUNT(*) AS count FROM member_accounts") or {"count": 0}
-        builder_accounts = one(self.conn, "SELECT COUNT(*) AS count FROM profile_builder_accounts") or {"count": 0}
-        staff_by_role = rows(
-            self.conn,
-            """
-            SELECT role, COUNT(*) AS count
-            FROM staff_accounts
-            GROUP BY role
-            ORDER BY role
-            """,
-        )
-        roles = {
-            "member": int(member_accounts.get("count") or 0),
-            "profile_builder": int(builder_accounts.get("count") or 0),
-        }
-        for row in staff_by_role:
-            roles[str(row.get("role") or "staff")] = int(row.get("count") or 0)
-        recent_login = rows(
-            self.conn,
-            """
-            SELECT actor_role, actor_key, portal, status, created_at
-            FROM operational_events
-            WHERE event_type IN ('member_auth', 'builder_auth', 'leader_auth', 'attorney_auth', 'admin_auth', 'staff_auth')
-            ORDER BY created_at DESC
-            LIMIT 5
-            """,
-        )
-        return {
-            "total_accounts": sum(roles.values()),
-            "roles": roles,
-            "recent_login": recent_login,
-            "controls": [
-                {"label": "Role inventory", "status": "active", "detail": "Numeric account IDs and role counts are visible for admin review."},
-                {"label": "Login audit", "status": "active", "detail": "Authentication events include portal, actor, status, timestamp, IP, and user-agent metadata."},
-                {"label": "RBAC administration", "status": "planned", "detail": "Full role-permission editing remains a future security workstream."},
-            ],
-        }
-
-    def _admin_product_ops_controls(self, portal_health: list[dict], support_counts: dict, error_count: dict) -> dict:
-        issue_counts = one(
-            self.conn,
-            """
-            SELECT
-              COUNT(*) AS total_count,
-              SUM(CASE WHEN status IN ('open', 'triaged', 'in_progress', 'blocked') THEN 1 ELSE 0 END) AS active_count,
-              SUM(CASE WHEN priority IN ('P0', 'P1') AND status NOT IN ('fixed', 'closed') THEN 1 ELSE 0 END) AS p0_p1_count
-            FROM product_issue_logs
-            """,
-        ) or {"total_count": 0, "active_count": 0, "p0_p1_count": 0}
-        unhealthy = [item for item in portal_health if str(item.get("status", "")).lower() not in {"online", "healthy"}]
-        return {
-            "readiness_rows": [
-                {"area": "Issue Portal", "status": "active", "count": int(issue_counts.get("active_count") or 0), "detail": "Bugs are tracked with priority, owner context, timestamps, and AWS mirror state."},
-                {"area": "Cost Explorer", "status": "active", "count": 1, "detail": "AWS and OpenAI cost summaries are available from Admin Cost Explorer."},
-                {"area": "Platform Health", "status": "active", "count": len(portal_health), "detail": "Portals and AWS stack components are monitored in one compact health table."},
-                {"area": "Audit Log Viewer", "status": "active", "count": int(error_count.get("count") or 0), "detail": "Login and operational events are visible for debugging and journey tracing."},
-                {"area": "Support Queue", "status": "active", "count": int(support_counts.get("open_count") or 0), "detail": "User-reported issues are triaged with priority and reproduction context."},
-            ],
-            "p0_p1_open": int(issue_counts.get("p0_p1_count") or 0),
-            "unhealthy_stack_count": len(unhealthy),
-        }
 
     def admin_cost_dashboard(self) -> dict:
         ai_calls = self._ai_call_summary()
@@ -2493,7 +2862,7 @@ class EvidenceService:
             "recommended_actions": [
                 "Review recent operational errors",
                 "Reset member sessions if login or stale-state issues are reported",
-                "Check Amazon S3 and OpenAI health before escalating",
+                "Check Google Drive and OpenAI health before escalating",
             ],
         }
 
@@ -2525,12 +2894,15 @@ class EvidenceService:
             "case_id": (case_id or self.config.default_client["case_id"]).strip(),
             "display_name": (display_name or self.config.default_client["display_name"]).strip(),
         }
+        client_record = one(self.conn, "SELECT member_uid, display_name FROM clients WHERE id = ?", (client["client_id"],)) or {}
+        client["member_uid"] = client_record.get("member_uid", 0)
+        client["numeric_identifier"] = int(client_record.get("member_uid") or 0)
         case = one(self.conn, "SELECT * FROM cases WHERE id = ?", (client["case_id"],))
         if not case:
             raise ValueError("Member case not found")
-        profile = one(self.conn, "SELECT * FROM member_profiles WHERE client_id = ? AND case_id = ?", (client["client_id"], client["case_id"])) or {}
+        profile = one(self.conn, "SELECT preferred_name, first_name, last_name FROM member_profiles WHERE client_id = ? AND case_id = ?", (client["client_id"], client["case_id"])) or {}
         if not client["display_name"]:
-            client["display_name"] = (profile.get("preferred_name") or " ".join(filter(None, [profile.get("first_name", ""), profile.get("last_name", "")])) or "Member").strip()
+            client["display_name"] = (client_record.get("display_name") or profile.get("preferred_name") or " ".join(filter(None, [profile.get("first_name", ""), profile.get("last_name", "")])) or "Member").strip()
         evidence_count = one(
             self.conn,
             "SELECT COUNT(*) AS count FROM evidence_items WHERE case_id = ? AND status != 'archived'",
@@ -2543,12 +2915,11 @@ class EvidenceService:
             SELECT c.code, c.name, COUNT(e.id) AS evidence_count, COALESCE(AVG(e.quality_score), 0) AS average_score
             FROM criteria c
             LEFT JOIN evidence_items e ON e.criterion_code = c.code AND e.case_id = ? AND e.status != 'archived'
-            GROUP BY c.code, c.name, c.display_order
-            ORDER BY c.display_order, c.name
+            GROUP BY c.code, c.name
+            ORDER BY c.rowid
             """,
             (client["case_id"],),
         )
-        criterion_tracker = self._criterion_tracker(by_criterion)
         return {
             "client": client,
             "case": case,
@@ -2559,18 +2930,16 @@ class EvidenceService:
                 "criteria_started": sum(1 for item in by_criterion if item["evidence_count"]),
             },
             "criteria": by_criterion,
-            "case_command_center": self._case_command_center(client, case, profile, criterion_tracker),
-            "storage": {
-                "provider": self.storage_config.get("provider", "s3"),
-                "bucket": self.storage.object_storage.bucket_name() if self.storage.object_storage else "",
-                "archive_bucket": self.storage.object_storage.archive_bucket_name() if self.storage.object_storage else "",
-                "active_storage_class": self.storage_config.get("active_storage_class", ""),
-                "archive_storage_class": self.storage_config.get("archive_storage_class", ""),
+            "referral_program": self.member_referrals(client["client_id"], client["case_id"]),
+            "google_drive": {
+                "folder_id": self.google_drive_config["folder_id"],
+                "folder_url": self.google_drive_config["folder_url"],
+                "mode": self.google_drive_config["mode"],
             },
         }
 
     def criteria(self) -> list[dict]:
-        return rows(self.conn, "SELECT code, name, description FROM criteria ORDER BY display_order, name")
+        return rows(self.conn, "SELECT code, name, description FROM criteria ORDER BY rowid")
 
     def login_builder(self, username: str, password: str, audit_context: dict | None = None) -> dict:
         username = username.strip().lower()
@@ -2604,6 +2973,9 @@ class EvidenceService:
         actor = self._actor_identity(role, account.get("email", ""))
         return {
             "account_id": account["id"],
+            "numeric_identifier": int(actor.get("numeric_identifier") or 0),
+            "storage_key": actor["key"],
+            "legacy_key": actor.get("legacy_key", ""),
             "username": account["username"],
             "email": account["email"].strip().lower(),
             "display_name": actor["name"],
@@ -2783,6 +3155,7 @@ class EvidenceService:
             self.conn,
             """
             SELECT c.id AS client_id,
+                   c.member_uid,
                    c.display_name,
                    cs.id AS case_id,
                    cs.readiness_score,
@@ -2800,10 +3173,12 @@ class EvidenceService:
                    invite.invite_sent_at,
                    invite.registered_at,
                    bma.builder_id,
+                   pb.builder_uid,
                    pb.display_name AS builder_name,
                    pb.email AS builder_email,
                    bma.created_at AS builder_assigned_at,
                    ama.attorney_id,
+                   att.attorney_uid,
                    att.display_name AS attorney_name,
                    att.email AS attorney_email,
                    ama.created_at AS attorney_assigned_at,
@@ -2829,10 +3204,11 @@ class EvidenceService:
             item["days_since_activity"] = self._days_since(item["last_activity_at"])
             item["stage_label"] = self._leader_stage_label(item)
             item.update(self._leader_risk_profile(item))
+            item["timeline_summary"] = self._timeline_summary_from_member(item)
         builders = rows(
             self.conn,
             """
-            SELECT pb.id, pb.display_name, pb.email,
+            SELECT pb.id, pb.builder_uid, pb.display_name, pb.email,
                    COUNT(DISTINCT a.client_id) AS assigned_members
             FROM profile_builders pb
             LEFT JOIN builder_member_assignments a ON a.builder_id = pb.id AND a.status = 'active'
@@ -2843,7 +3219,7 @@ class EvidenceService:
         attorneys = rows(
             self.conn,
             """
-            SELECT att.id, att.display_name, att.email, att.focus_domains,
+            SELECT att.id, att.attorney_uid, att.display_name, att.email, att.focus_domains,
                    COUNT(DISTINCT a.client_id) AS assigned_members
             FROM attorneys att
             LEFT JOIN attorney_member_assignments a ON a.attorney_id = att.id AND a.status = 'active'
@@ -2890,6 +3266,7 @@ class EvidenceService:
             "at_risk_cases": sum(1 for item in members if item.get("risk_level") == "High"),
             "unassigned_cases": sum(1 for item in members if not item.get("builder_name")),
             "stale_cases": sum(1 for item in members if int(item.get("days_since_activity") or 0) >= 14),
+            "late_timeline_cases": sum(1 for item in members if item.get("timeline_summary", {}).get("late")),
             "completed_cases": sum(1 for item in members if str(item.get("status", "")).strip().lower() == "completed"),
         }
         timeline = self._leader_activity_timeline()
@@ -2902,8 +3279,11 @@ class EvidenceService:
         builder_capacity = self._leader_capacity_summary(members, builders, owner_key="builder_name")
         attorney_capacity = self._leader_capacity_summary(members, attorneys, owner_key="attorney_name")
         forecast = self._leader_forecast(members)
-        attorney_performance = self._leader_attorney_performance(members, attorneys)
-        revenue_analytics = self._leader_revenue_analytics(members)
+        referral_dashboard = self.leader_referral_dashboard()
+        referral_metrics = referral_dashboard.get("metrics", {})
+        metrics["referrals_total"] = referral_metrics.get("total_referrals", 0)
+        metrics["referrals_qualified"] = referral_metrics.get("qualified", 0)
+        metrics["referral_pending_payout"] = referral_metrics.get("pending_payout_amount", 0)
         return {
             "metrics": metrics,
             "members": members,
@@ -2919,8 +3299,7 @@ class EvidenceService:
             "forecast": forecast,
             "builder_capacity": builder_capacity,
             "attorney_capacity": attorney_capacity,
-            "attorney_performance": attorney_performance,
-            "revenue_analytics": revenue_analytics,
+            "referrals": referral_dashboard,
         }
 
     def builder_members(self) -> list[dict]:
@@ -2929,10 +3308,12 @@ class EvidenceService:
             self.conn,
             """
             SELECT c.id AS client_id,
+                   c.member_uid,
                    c.display_name,
                    cs.id AS case_id,
                    cs.readiness_score,
                    cs.status,
+                   cs.created_at AS case_created_at,
                    (SELECT COUNT(*) FROM evidence_items e WHERE e.client_id = c.id AND e.case_id = cs.id AND e.status != 'archived') AS evidence_count,
                    (SELECT COUNT(*) FROM tasks t WHERE t.client_id = c.id AND t.case_id = cs.id AND t.status = 'open') AS open_task_count,
                    mp.primary_field,
@@ -2954,13 +3335,14 @@ class EvidenceService:
         for item in members:
             item["momentum"] = self._member_momentum(item["client_id"], item["case_id"])
             item["criteria_started"] = self._criteria_started(item["case_id"])
+            item["timeline_summary"] = self._timeline_summary_from_member(item)
         return members
 
     def builder_member_detail(self, client_id: str) -> dict:
         member = one(
             self.conn,
             """
-            SELECT c.id AS client_id, c.display_name, cs.id AS case_id, cs.readiness_score, cs.status
+            SELECT c.id AS client_id, c.member_uid, c.display_name, cs.id AS case_id, cs.readiness_score, cs.status
             FROM clients c
             JOIN cases cs ON cs.client_id = c.id
             WHERE c.id = ?
@@ -2969,15 +3351,16 @@ class EvidenceService:
         )
         if not member:
             raise ValueError("Member not found")
+        self._backfill_missing_narrative_exports(member["client_id"], member["case_id"])
         profile = one(self.conn, "SELECT * FROM member_profiles WHERE client_id = ? AND case_id = ?", (member["client_id"], member["case_id"])) or {}
         criteria = rows(
             self.conn,
             """
-            SELECT c.code, c.name, COUNT(e.id) AS evidence_count, COALESCE(AVG(e.quality_score), 0) AS average_score
+            SELECT c.code, c.name, COUNT(e.id) AS evidence_count
             FROM criteria c
             LEFT JOIN evidence_items e ON e.criterion_code = c.code AND e.client_id = ? AND e.case_id = ? AND e.status != 'archived'
-            GROUP BY c.code, c.name, c.display_order
-            ORDER BY c.display_order, c.name
+            GROUP BY c.code, c.name
+            ORDER BY c.rowid
             """,
             (member["client_id"], member["case_id"]),
         )
@@ -2993,9 +3376,15 @@ class EvidenceService:
             (member["client_id"], member["case_id"]),
         )
         evidence = self._assistant_evidence(member["client_id"], member["case_id"])
-        criterion_tracker = self._criterion_tracker(criteria)
-        critical_role_projects = self.critical_role_projects(member["client_id"], member["case_id"])
-        original_contribution_entries = self.original_contribution_entries(member["client_id"], member["case_id"])
+        evidence_lookup = {item["id"]: item for item in evidence}
+        critical_role_projects = self._decorate_export_records(
+            self.critical_role_projects(member["client_id"], member["case_id"]),
+            evidence_lookup,
+        )
+        original_contribution_entries = self._decorate_export_records(
+            self.original_contribution_entries(member["client_id"], member["case_id"]),
+            evidence_lookup,
+        )
         return {
             "member": member,
             "profile": profile,
@@ -3004,8 +3393,6 @@ class EvidenceService:
             "evidence": evidence,
             "critical_role_projects": critical_role_projects,
             "original_contribution_entries": original_contribution_entries,
-            "builder_workbench": self._builder_workbench(member, profile, criterion_tracker, tasks),
-            "legal_workbench": self._legal_workbench(member, profile, criterion_tracker, tasks, evidence),
         }
 
     def builder_opportunities(self) -> list[dict]:
@@ -3016,7 +3403,7 @@ class EvidenceService:
             FROM opportunity_library o
             JOIN criteria c ON c.code = o.criterion_code
             WHERE o.status = 'active'
-            ORDER BY c.display_order, LOWER(o.title)
+            ORDER BY c.rowid, LOWER(o.title)
             """
         )
 
@@ -3163,7 +3550,10 @@ class EvidenceService:
         registration_link = self._member_registration_link(invite_token)
         display_name = f"{first_name} {last_name}".strip()
         domain = industry_domain.strip() or self._infer_domain({"industry_domain": "", "primary_field": primary_field, "current_employer": current_employer})
-        self.conn.execute("INSERT INTO clients(id, display_name) VALUES (?, ?)", (client_id, display_name))
+        self.conn.execute(
+            "INSERT INTO clients(id, member_uid, display_name) VALUES (?, ?, ?)",
+            (client_id, next_numeric_identifier(self.conn, "clients", "member_uid"), display_name),
+        )
         self.conn.execute("INSERT INTO cases(id, client_id, readiness_score, status) VALUES (?, ?, ?, ?)", (case_id, client_id, 5, "intake"))
         self.conn.execute(
             """
@@ -3505,6 +3895,7 @@ class EvidenceService:
             self.conn,
             """
             SELECT c.id AS client_id,
+                   c.member_uid,
                    c.display_name,
                    cs.id AS case_id,
                    cs.readiness_score,
@@ -3563,44 +3954,27 @@ class EvidenceService:
         )
         return [self._decorate_file(item, folders) for item in evidence_rows]
 
-    def batch_intake_sessions(self, client_id: str, actor_role: str = "attorney", actor_email: str = "") -> list[dict]:
-        member = self._member_case(client_id)
-        self._assert_member_batch_access(member["client_id"], actor_role, actor_email)
-        sessions = rows(
+    def _attorney_case_context(self, client_id: str) -> dict:
+        client_id = client_id.strip() or self.config.default_client["client_id"]
+        detail = self.builder_member_detail(client_id)
+        member = detail["member"]
+        profile = detail.get("profile") or {}
+        folders = rows(
+            self.conn,
+            "SELECT * FROM evidence_folders WHERE client_id = ? AND case_id = ?",
+            (member["client_id"], member["case_id"]),
+        )
+        evidence_rows = rows(
             self.conn,
             """
             SELECT *
-            FROM batch_intake_sessions
-            WHERE client_id = ? AND case_id = ?
+            FROM evidence_items
+            WHERE client_id = ? AND case_id = ? AND status != 'archived'
             ORDER BY created_at DESC
             """,
             (member["client_id"], member["case_id"]),
         )
-        return [
-            {
-                "id": item["id"],
-                "uploaded_zip_name": item["uploaded_zip_name"],
-                "status": item["status"],
-                "item_count": int(item.get("item_count") or 0),
-                "committed_count": int(item.get("committed_count") or 0),
-                "skipped_file_count": int(item.get("skipped_file_count") or 0),
-                "created_at": item["created_at"],
-                "committed_at": item.get("committed_at"),
-                "source_note": item.get("source_note", ""),
-                "created_by_role": item.get("created_by_role", ""),
-            }
-            for item in sessions
-        ]
-
-    def _attorney_case_context(self, client_id: str = "", actor_role: str = "attorney", actor_email: str = "") -> dict:
-        resolved_client_id = client_id.strip() or self.config.default_client["client_id"]
-        if actor_role.strip().lower() == "attorney":
-            detail = self.attorney_member_detail(resolved_client_id, actor_email)
-        else:
-            detail = self.builder_member_detail(resolved_client_id)
-        member = detail["member"]
-        profile = detail.get("profile") or {}
-        evidence_items = detail.get("evidence") or self._assistant_evidence(member["client_id"], member["case_id"])
+        evidence_items = [self._decorate_file(item, folders) for item in evidence_rows]
         planner_rows = rows(
             self.conn,
             """
@@ -3612,7 +3986,6 @@ class EvidenceService:
             """,
             (member["client_id"], member["case_id"]),
         )
-        folders = self._folders_for_case(member["client_id"], member["case_id"])
         for item in planner_rows:
             item["folder_path"] = self._folder_path(item["folder_id"], folders) if item.get("folder_id") else ""
         recent_messages = rows(
@@ -3620,29 +3993,40 @@ class EvidenceService:
             """
             SELECT subject, body, sender_name, sender_role, recipient_name, recipient_role, urgent, created_at
             FROM messages
-            WHERE sender_key = ? OR recipient_key = ? OR sender_name = ? OR recipient_name = ?
+            WHERE sender_key IN (?, ?) OR recipient_key IN (?, ?) OR sender_name = ? OR recipient_name = ?
             ORDER BY created_at DESC
             LIMIT 12
             """,
-            (member["client_id"], member["client_id"], member["display_name"], member["display_name"]),
+            (
+                self._numeric_key(member.get("member_uid")),
+                member["client_id"],
+                self._numeric_key(member.get("member_uid")),
+                member["client_id"],
+                member["display_name"],
+                member["display_name"],
+            ),
         )
+        criteria_lookup = {item["code"]: item["name"] for item in detail.get("criteria", [])}
         return {
+            "client_id": client_id,
             "detail": detail,
             "member": member,
             "profile": profile,
+            "folders": folders,
             "evidence_items": evidence_items,
             "planner_rows": planner_rows,
             "recent_messages": recent_messages,
+            "criteria_lookup": criteria_lookup,
         }
 
-    def _attorney_case_payload(self, context: dict) -> dict:
-        detail = context["detail"]
-        member = context["member"]
-        profile = context["profile"]
-        evidence_items = context["evidence_items"]
-        planner_rows = context["planner_rows"]
-        recent_messages = context["recent_messages"]
-        criteria_lookup = {item["code"]: item["name"] for item in detail.get("criteria", [])}
+    def _attorney_case_payload(self, case_context: dict) -> dict:
+        detail = case_context["detail"]
+        member = case_context["member"]
+        profile = case_context["profile"]
+        planner_rows = case_context["planner_rows"]
+        evidence_items = case_context["evidence_items"]
+        criteria_lookup = case_context["criteria_lookup"]
+        recent_messages = case_context["recent_messages"]
         return {
             "member_name": member.get("display_name", "Member"),
             "client_id": member["client_id"],
@@ -3673,11 +4057,7 @@ class EvidenceService:
                 "salary_summary": profile.get("salary_summary", ""),
             },
             "criteria_summary": [
-                {
-                    "code": item["code"],
-                    "name": item["name"],
-                    "evidence_count": int(item.get("evidence_count") or 0),
-                }
+                {"code": item["code"], "name": item["name"], "evidence_count": int(item.get("evidence_count") or 0)}
                 for item in detail.get("criteria", [])
             ],
             "tasks": [
@@ -3730,14 +4110,62 @@ class EvidenceService:
             ],
         }
 
-    def attorney_petition_generator(self, client_id: str = "", attorney_email: str = "") -> dict:
-        context = self._attorney_case_context(client_id, "attorney", attorney_email)
-        detail = context["detail"]
-        member = context["member"]
-        profile = context["profile"]
-        evidence_items = context["evidence_items"]
-        planner_rows = context["planner_rows"]
-        payload = self._attorney_case_payload(context)
+    def _parsed_evidence_context(self, evidence_items: list[dict]) -> list[dict]:
+        parsed = []
+        for item in evidence_items:
+            excerpt = self._assistant_read_document_excerpt(item).strip()
+            parsed.append(
+                {
+                    "file_name": item.get("file_name", ""),
+                    "title": item.get("title", ""),
+                    "criterion_code": item.get("criterion_code", ""),
+                    "criterion_name": item.get("criterion_name", ""),
+                    "document_type": item.get("document_type", "Other"),
+                    "folder_path": item.get("folder_path", ""),
+                    "summary": item.get("ai_summary", "") or item.get("description", ""),
+                    "excerpt": excerpt[:2400],
+                    "excerpt_available": bool(excerpt),
+                }
+            )
+        return parsed
+
+    def batch_intake_sessions(self, client_id: str, actor_role: str = "attorney", actor_email: str = "") -> list[dict]:
+        member = self._member_case(client_id)
+        self._assert_member_batch_access(member["client_id"], actor_role, actor_email)
+        sessions = rows(
+            self.conn,
+            """
+            SELECT *
+            FROM batch_intake_sessions
+            WHERE client_id = ? AND case_id = ?
+            ORDER BY created_at DESC
+            """,
+            (member["client_id"], member["case_id"]),
+        )
+        return [
+            {
+                "id": item["id"],
+                "uploaded_zip_name": item["uploaded_zip_name"],
+                "status": item["status"],
+                "item_count": int(item.get("item_count") or 0),
+                "committed_count": int(item.get("committed_count") or 0),
+                "skipped_file_count": int(item.get("skipped_file_count") or 0),
+                "created_at": item["created_at"],
+                "committed_at": item.get("committed_at"),
+                "source_note": item.get("source_note", ""),
+                "created_by_role": item.get("created_by_role", ""),
+            }
+            for item in sessions
+        ]
+
+    def attorney_petition_generator(self, client_id: str = "") -> dict:
+        case_context = self._attorney_case_context(client_id)
+        detail = case_context["detail"]
+        member = case_context["member"]
+        profile = case_context["profile"]
+        evidence_items = case_context["evidence_items"]
+        planner_rows = case_context["planner_rows"]
+        payload = self._attorney_case_payload(case_context)
         try:
             draft = self.openai.generate_petition_package(payload)
             source = draft.pop("source", "fallback")
@@ -3789,9 +4217,923 @@ class EvidenceService:
                 "open_tasks": sum(1 for item in detail.get("tasks", []) if item.get("status") == "open"),
                 "planner_items": len(planner_rows),
             },
-            "legal_workbench": detail.get("legal_workbench") or self._legal_workbench(member, profile, self._criterion_tracker(detail.get("criteria", [])), detail.get("tasks", []), evidence_items),
             **draft,
         }
+
+    def petition_acceleration_workspace(self, client_id: str = "", actor_role: str = "attorney", actor_email: str = "") -> dict:
+        actor_role = (actor_role or "attorney").strip().lower()
+        if actor_role not in {"member", "builder", "attorney", "leader", "admin"}:
+            raise ValueError("Unsupported actor role")
+        resolved_client_id = client_id.strip() or self.config.default_client["client_id"]
+        if actor_role == "attorney":
+            self.attorney_member_detail(resolved_client_id, actor_email)
+        context = self._attorney_case_context(resolved_client_id)
+        detail = context["detail"]
+        member = context["member"]
+        profile = context["profile"]
+        criteria = detail.get("criteria", [])
+        evidence_items = context["evidence_items"]
+        tasks = detail.get("tasks", [])
+        planner_rows = context["planner_rows"]
+        critical_role_projects = detail.get("critical_role_projects", [])
+        original_contributions = detail.get("original_contribution_entries", [])
+        claim_map = self._petition_claim_map(criteria, evidence_items, profile, critical_role_projects, original_contributions)
+        gap_detector = self._petition_gap_detector(claim_map, tasks, planner_rows, profile, critical_role_projects, original_contributions)
+        document_qa = self._petition_document_qa(evidence_items)
+        exhibit_assembly = self._petition_exhibit_assembly(criteria, evidence_items)
+        recommendation_workspace = self._petition_recommendation_workspace(profile, claim_map, evidence_items, gap_detector)
+        top_next_actions = self._petition_top_next_actions(gap_detector, tasks, document_qa, recommendation_workspace)
+        portfolio_heatmap = self._petition_portfolio_heatmap()
+        sla_dashboard = self._petition_sla_dashboard()
+        filing_qa = self._petition_filing_qa_checklist(
+            member,
+            profile,
+            claim_map,
+            document_qa,
+            exhibit_assembly,
+            recommendation_workspace,
+            critical_role_projects,
+            original_contributions,
+        )
+        workspace = {
+            "ok": True,
+            "status": "success",
+            "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+            "actor_role": actor_role,
+            "member": {
+                "client_id": member["client_id"],
+                "case_id": member["case_id"],
+                "display_name": member.get("display_name", "Member"),
+                "case_status": member.get("status", ""),
+                "readiness_score": int(member.get("readiness_score") or 0),
+                "primary_field": profile.get("primary_field", ""),
+                "current_title": profile.get("current_title", ""),
+                "current_employer": profile.get("current_employer", ""),
+            },
+            "snapshot": {
+                "evidence_count": len(evidence_items),
+                "criteria_started": sum(1 for item in claim_map if item["evidence_count"] > 0),
+                "submitted_member_intakes": sum(1 for item in critical_role_projects + original_contributions if item.get("is_submitted")),
+                "draft_member_intakes": sum(1 for item in critical_role_projects + original_contributions if not item.get("is_submitted")),
+                "open_tasks": sum(1 for item in tasks if item.get("status") == "open"),
+                "high_severity_gaps": gap_detector["severity_counts"].get("high", 0),
+                "qa_flags": document_qa["flag_count"],
+            },
+            "feature_index": self._petition_feature_index(),
+            "p0": {
+                "claim_map": claim_map,
+                "petition_spine": self._petition_spine_builder(member, profile, claim_map, gap_detector),
+                "gap_detector": gap_detector,
+                "traceable_drafting": self._petition_traceable_drafting(claim_map, exhibit_assembly),
+                "final_merits_strategy": self._petition_final_merits_strategy(profile, claim_map, gap_detector),
+                "recommendation_letter_workspace": recommendation_workspace,
+                "criterion_request_packs": self._petition_request_packs(claim_map),
+                "draft_resume_submit_workflow": self._petition_draft_submit_workflow(critical_role_projects, original_contributions),
+                "top_next_actions": top_next_actions,
+                "recommender_intake": self._petition_recommender_intake(member, recommendation_workspace),
+                "attorney_review_queue": self._petition_attorney_review_queue(actor_role, actor_email),
+                "rfe_noid_workspace": self._petition_rfe_noid_workspace(member, gap_detector, tasks, evidence_items),
+                "adjudication_risk_dashboard": self._petition_risk_dashboard(profile, claim_map, document_qa, critical_role_projects, original_contributions),
+                "argument_bank": self._petition_argument_bank(profile, claim_map),
+            },
+            "p1": {
+                "criterion_playbooks": self._petition_criterion_playbooks(claim_map),
+                "portfolio_heatmap": portfolio_heatmap,
+                "sla_turnaround_dashboard": sla_dashboard,
+                "document_qa": document_qa,
+                "exhibit_assembly_manager": exhibit_assembly,
+                "uscis_upload_packager": self._petition_upload_packager(exhibit_assembly),
+                "filing_qa_checklist": filing_qa,
+            },
+        }
+        self.record_operational_event(
+            "petition_acceleration_workspace",
+            status="success",
+            portal=actor_role,
+            client_id=member["client_id"],
+            case_id=member["case_id"],
+            endpoint="/api/petition-acceleration",
+            message="Petition acceleration workspace generated.",
+            metadata={
+                "evidence_count": len(evidence_items),
+                "high_severity_gaps": gap_detector["severity_counts"].get("high", 0),
+                "feature_count": len(workspace["feature_index"]),
+            },
+            actor_role=actor_role,
+            actor_key=self._actor_identity(actor_role, actor_email, member["client_id"] if actor_role == "member" else "").get("key", ""),
+        )
+        return workspace
+
+    def _petition_feature_index(self) -> list[dict]:
+        features = [
+            ("P0", "Petition Production Core", "Criterion-to-evidence claim map", "Implemented"),
+            ("P0", "Petition Production Core", "Petition spine builder", "Implemented"),
+            ("P0", "Petition Production Core", "Evidence gap detector with severity scoring", "Implemented"),
+            ("P0", "Petition Production Core", "Traceable drafting with source links", "Implemented"),
+            ("P0", "Petition Production Core", "Final merits strategy workspace", "Implemented"),
+            ("P0", "Petition Production Core", "Recommendation letter workspace", "Implemented"),
+            ("P0", "Member Experience", "Criterion-specific evidence request packs", "Implemented"),
+            ("P0", "Member Experience", "Unified draft, resume, and submit workflow", "Implemented"),
+            ("P0", "Member Experience", "Top next actions guidance", "Implemented"),
+            ("P0", "Member Experience", "Recommender intake portal", "Implemented as guided intake payload"),
+            ("P0", "Attorney Experience", "Attorney review queue by readiness state", "Implemented"),
+            ("P0", "Attorney Experience", "RFE / NOID response workspace", "Implemented as response planning workspace"),
+            ("P0", "Attorney Experience", "Adjudication risk dashboard", "Implemented"),
+            ("P0", "Attorney Experience", "Internal argument bank and exemplar library", "Implemented"),
+            ("P1", "Builder, Leader, And Operations", "Criterion playbooks for profile builders", "Implemented"),
+            ("P1", "Builder, Leader, And Operations", "Portfolio heatmap for leaders", "Implemented"),
+            ("P1", "Builder, Leader, And Operations", "SLA and turnaround dashboard", "Implemented"),
+            ("P1", "Builder, Leader, And Operations", "Document QA and duplicate detection", "Implemented"),
+            ("P1", "Filing And Packaging", "Exhibit assembly manager", "Implemented"),
+            ("P1", "Filing And Packaging", "USCIS upload-mode packager", "Implemented"),
+            ("P1", "Filing And Packaging", "Filing QA checklist", "Implemented"),
+        ]
+        return [{"priority": priority, "area": area, "feature": feature, "status": status} for priority, area, feature, status in features]
+
+    def _petition_claim_map(
+        self,
+        criteria: list[dict],
+        evidence_items: list[dict],
+        profile: dict,
+        critical_role_projects: list[dict],
+        original_contributions: list[dict],
+    ) -> list[dict]:
+        summary_fields = {
+            "awards": "awards_summary",
+            "memberships": "memberships_summary",
+            "published_material": "media_summary",
+            "judging": "judging_summary",
+            "original_contributions": "original_contributions_summary",
+            "scholarly_articles": "publications_summary",
+            "leading_critical_role": "leading_roles_summary",
+            "high_salary": "salary_summary",
+            "comparable_evidence": "top_achievements",
+            "other": "biography",
+        }
+        evidence_by_code: dict[str, list[dict]] = {}
+        for item in evidence_items:
+            evidence_by_code.setdefault(item.get("criterion_code", "other") or "other", []).append(item)
+        narrative_links = {
+            "leading_critical_role": [
+                self._petition_narrative_link("Critical Role", item)
+                for item in critical_role_projects
+            ],
+            "original_contributions": [
+                self._petition_narrative_link("Original Contribution", item)
+                for item in original_contributions
+            ],
+        }
+        mapped = []
+        for criterion in criteria:
+            code = criterion["code"]
+            files = evidence_by_code.get(code, [])
+            quality_scores = [int(item.get("quality_score") or 0) for item in files]
+            profile_summary = str(profile.get(summary_fields.get(code, ""), "") or "").strip()
+            source_links = [self._petition_source_link(item) for item in files]
+            narratives = [item for item in narrative_links.get(code, []) if item]
+            submitted_narratives = [item for item in narratives if item.get("workflow_status") == "submitted"]
+            document_types = sorted({item.get("document_type", "Other") for item in files if item.get("document_type")})
+            status = "gap"
+            if len(files) >= 3 and (not quality_scores or round(sum(quality_scores) / len(quality_scores)) >= 55):
+                status = "petition_ready"
+            elif files or profile_summary or submitted_narratives:
+                status = "building"
+            claim = profile_summary or self._petition_default_claim(criterion, files, submitted_narratives)
+            mapped.append(
+                {
+                    "criterion_code": code,
+                    "criterion_name": criterion.get("name", code),
+                    "claim": claim,
+                    "status": status,
+                    "evidence_count": len(files),
+                    "quality_average": round(sum(quality_scores) / len(quality_scores)) if quality_scores else 0,
+                    "document_types": document_types,
+                    "source_links": source_links,
+                    "member_narrative_links": narratives,
+                    "attorney_use": self._petition_attorney_use_note(code, status, len(files), bool(submitted_narratives)),
+                }
+            )
+        return mapped
+
+    def _petition_narrative_link(self, label: str, item: dict) -> dict:
+        return {
+            "type": label,
+            "id": item.get("id", ""),
+            "title": item.get("summary_line") or item.get("project_name") or item.get("contribution_title") or "Member narrative",
+            "workflow_status": item.get("workflow_status", "draft"),
+            "last_edited_at": item.get("updated_at", ""),
+            "submitted_at": item.get("submitted_at", ""),
+            "export_evidence_id": item.get("export_evidence_id", ""),
+            "export_file_name": item.get("export_file_name", ""),
+            "export_open_url": item.get("export_open_url", ""),
+        }
+
+    def _petition_source_link(self, item: dict) -> dict:
+        return {
+            "evidence_id": item.get("id", ""),
+            "title": item.get("title", ""),
+            "file_name": item.get("file_name", ""),
+            "document_type": item.get("document_type", "Other"),
+            "uploaded_at": item.get("created_at", ""),
+            "folder_path": item.get("folder_path", ""),
+            "quality_score": int(item.get("quality_score") or 0),
+            "summary": item.get("ai_summary", "") or item.get("description", ""),
+            "open_url": item.get("open_url", ""),
+        }
+
+    def _petition_default_claim(self, criterion: dict, files: list[dict], narratives: list[dict]) -> str:
+        if narratives:
+            return f"Member submitted structured narrative(s) supporting {criterion.get('name', 'this criterion')}."
+        if files:
+            titles = ", ".join(item.get("title") or item.get("file_name", "") for item in files[:3])
+            return f"Uploaded evidence currently supports {criterion.get('name', 'this criterion')}: {titles}."
+        return f"No specific claim has been drafted yet for {criterion.get('name', 'this criterion')}."
+
+    def _petition_attorney_use_note(self, code: str, status: str, evidence_count: int, has_narrative: bool) -> str:
+        if status == "petition_ready":
+            return "Candidate for petition draft section with source citations and final merits tie-in."
+        if has_narrative:
+            return "Review member narrative export and corroborate with independent documents before relying on it."
+        if evidence_count:
+            return "Usable as a build area; attorney should confirm independence, dates, and measurable impact."
+        if code in {"original_contributions", "leading_critical_role", "judging"}:
+            return "High-value EB1A criterion; request targeted evidence before final petition positioning."
+        return "Keep as optional unless new stronger evidence arrives."
+
+    def _petition_gap_detector(
+        self,
+        claim_map: list[dict],
+        tasks: list[dict],
+        planner_rows: list[dict],
+        profile: dict,
+        critical_role_projects: list[dict],
+        original_contributions: list[dict],
+    ) -> dict:
+        high_value_codes = {"original_contributions", "leading_critical_role", "judging", "published_material", "awards"}
+        open_tasks_by_code: dict[str, list[dict]] = {}
+        for task in tasks:
+            open_tasks_by_code.setdefault(task.get("criterion_code", "") or "general", []).append(task)
+        planner_by_code: dict[str, list[dict]] = {}
+        for item in planner_rows:
+            planner_by_code.setdefault(item.get("criterion_code", "") or "general", []).append(item)
+        gaps = []
+        severity_counts = {"high": 0, "medium": 0, "low": 0}
+        for claim in claim_map:
+            issues = []
+            score = 0
+            code = claim["criterion_code"]
+            if claim["evidence_count"] == 0:
+                issues.append("No active evidence uploaded")
+                score += 35
+            if claim["quality_average"] and claim["quality_average"] < 55:
+                issues.append("Evidence quality score is below petition-ready range")
+                score += 18
+            if not claim.get("claim") or claim["claim"].startswith("No specific claim"):
+                issues.append("Attorney-facing claim is not drafted")
+                score += 12
+            independent_types = {"Invitation", "Acceptance or Selection", "Certificate or Completion", "Confirmation Email", "Publication or Media", "Recommendation or Support", "Agenda or Program", "Thank You Note", "Appointment or Contract"}
+            if claim["evidence_count"] and not any(item.get("document_type") in independent_types for item in claim.get("source_links", [])):
+                issues.append("Independence is thin; most support appears informal or self-described")
+                score += 14
+            if code == "leading_critical_role":
+                submitted = [item for item in critical_role_projects if item.get("is_submitted")]
+                if not submitted:
+                    issues.append("No submitted Critical Role project questionnaire export")
+                    score += 22
+                if any(not str(item.get("quantitative_metrics", "")).strip() for item in submitted):
+                    issues.append("Critical Role narrative needs stronger quantified impact")
+                    score += 10
+                if any(not str(item.get("organization_distinctiveness", "")).strip() for item in submitted):
+                    issues.append("Organization distinctiveness is not yet well documented")
+                    score += 10
+            if code == "original_contributions":
+                submitted = [item for item in original_contributions if item.get("is_submitted")]
+                if not submitted:
+                    issues.append("No submitted Original Contribution questionnaire export")
+                    score += 22
+                if any(not str(item.get("field_wide_impact", "")).strip() for item in submitted):
+                    issues.append("Field-wide impact needs more evidence")
+                    score += 10
+            if code in high_value_codes and claim["evidence_count"] <= 1:
+                issues.append("High-value criterion has thin support")
+                score += 12
+            if not profile.get("proposed_final_merits_summary"):
+                score += 3
+            severity = "low"
+            if score >= 50:
+                severity = "high"
+            elif score >= 24:
+                severity = "medium"
+            severity_counts[severity] += 1
+            gaps.append(
+                {
+                    "criterion_code": code,
+                    "criterion_name": claim["criterion_name"],
+                    "severity": severity,
+                    "severity_score": min(100, score),
+                    "issues": issues or ["No major gap detected from current structured data"],
+                    "open_tasks": [
+                        {"id": item.get("id", ""), "title": item.get("title", ""), "due_date": item.get("due_date", ""), "status": item.get("status", "")}
+                        for item in open_tasks_by_code.get(code, [])[:4]
+                    ],
+                    "planned_items": [
+                        {"id": item.get("id", ""), "description": item.get("description", ""), "planned_completion_date": item.get("planned_completion_date", ""), "status": item.get("status", "")}
+                        for item in planner_by_code.get(code, [])[:4]
+                    ],
+                }
+            )
+        return {
+            "overall_status": "high_risk" if severity_counts["high"] else "building" if severity_counts["medium"] else "stable",
+            "severity_counts": severity_counts,
+            "gaps": sorted(gaps, key=lambda item: (-item["severity_score"], item["criterion_name"])),
+        }
+
+    def _petition_spine_builder(self, member: dict, profile: dict, claim_map: list[dict], gap_detector: dict) -> dict:
+        sorted_claims = sorted(
+            claim_map,
+            key=lambda item: (
+                0 if item["status"] == "petition_ready" else 1 if item["status"] == "building" else 2,
+                -item["evidence_count"],
+                item["criterion_name"],
+            ),
+        )
+        anchor_criteria = [item for item in sorted_claims if item["status"] in {"petition_ready", "building"}][:5]
+        sections = [
+            {
+                "section": "Beneficiary background and field positioning",
+                "purpose": "Establish who the member is, the field, and why the work belongs in a nationally meaningful narrative.",
+                "inputs": [
+                    profile.get("primary_field", "") or "Primary field missing",
+                    profile.get("current_title", "") or "Current title missing",
+                    profile.get("current_employer", "") or "Current employer missing",
+                ],
+            },
+            {
+                "section": "Criterion-by-criterion evidentiary argument",
+                "purpose": "Lead with strongest criteria and avoid overclaiming weak categories.",
+                "inputs": [item["criterion_name"] for item in anchor_criteria] or ["No anchor criteria ready yet"],
+            },
+            {
+                "section": "Final merits synthesis",
+                "purpose": "Tie acclaim, impact, and continuing work into a cohesive final merits story.",
+                "inputs": [profile.get("proposed_final_merits_summary", "") or "Final merits summary needs drafting"],
+            },
+            {
+                "section": "Gaps, dependencies, and filing readiness",
+                "purpose": "Show the team what must be fixed before filing or before a deeper attorney draft.",
+                "inputs": [item["criterion_name"] for item in gap_detector.get("gaps", [])[:4]],
+            },
+        ]
+        return {
+            "spine_title": f"{member.get('display_name', 'Member')} EB1A petition spine",
+            "recommended_opening_position": self._petition_opening_position(profile, anchor_criteria),
+            "anchor_criteria": [
+                {
+                    "criterion_code": item["criterion_code"],
+                    "criterion_name": item["criterion_name"],
+                    "claim": item["claim"],
+                    "evidence_count": item["evidence_count"],
+                }
+                for item in anchor_criteria
+            ],
+            "sections": sections,
+        }
+
+    def _petition_opening_position(self, profile: dict, anchor_criteria: list[dict]) -> str:
+        field = profile.get("primary_field") or profile.get("industry_domain") or "the member's field"
+        role = " at ".join(part for part in [profile.get("current_title", ""), profile.get("current_employer", "")] if part)
+        anchors = ", ".join(item["criterion_name"] for item in anchor_criteria[:3]) or "the strongest documented criteria"
+        return f"Position the case around {role or 'the member'} in {field}, then prove sustained acclaim through {anchors}."
+
+    def _petition_traceable_drafting(self, claim_map: list[dict], exhibit_assembly: dict) -> dict:
+        exhibit_lookup = {item["evidence_id"]: item["exhibit_number"] for item in exhibit_assembly.get("exhibits", [])}
+        blocks = []
+        for claim in claim_map:
+            if claim["status"] == "gap":
+                continue
+            sources = []
+            for source in claim.get("source_links", [])[:8]:
+                sources.append({**source, "exhibit_number": exhibit_lookup.get(source.get("evidence_id"), "")})
+            blocks.append(
+                {
+                    "block_id": f"draft_{claim['criterion_code']}",
+                    "heading": claim["criterion_name"],
+                    "drafting_prompt": f"Draft the {claim['criterion_name']} section using only the linked source evidence and clearly explain the legal relevance without overstatement.",
+                    "claim": claim["claim"],
+                    "source_links": sources,
+                }
+            )
+        return {
+            "traceability_rule": "Every petition assertion should point to an evidence id, exhibit number, or member narrative export.",
+            "draft_blocks": blocks,
+        }
+
+    def _petition_final_merits_strategy(self, profile: dict, claim_map: list[dict], gap_detector: dict) -> dict:
+        strong_claims = [item for item in claim_map if item["status"] in {"petition_ready", "building"}]
+        pillars = [
+            {
+                "pillar": "Sustained acclaim",
+                "support": [item["criterion_name"] for item in strong_claims if item["criterion_code"] in {"awards", "memberships", "judging", "published_material"}],
+            },
+            {
+                "pillar": "Originality and field impact",
+                "support": [item["criterion_name"] for item in strong_claims if item["criterion_code"] in {"original_contributions", "scholarly_articles", "comparable_evidence"}],
+            },
+            {
+                "pillar": "Distinguished role and influence",
+                "support": [item["criterion_name"] for item in strong_claims if item["criterion_code"] in {"leading_critical_role", "high_salary"}],
+            },
+        ]
+        return {
+            "current_summary": profile.get("proposed_final_merits_summary", ""),
+            "strategy_note": "Use final merits to connect separate evidence categories into one credible record of field-level distinction.",
+            "pillars": [{**item, "support": item["support"] or ["Needs more support"]} for item in pillars],
+            "watchouts": [gap["issues"][0] for gap in gap_detector.get("gaps", []) if gap.get("severity") == "high"][:5],
+        }
+
+    def _petition_recommendation_workspace(self, profile: dict, claim_map: list[dict], evidence_items: list[dict], gap_detector: dict) -> dict:
+        existing_letters = [
+            self._petition_source_link(item)
+            for item in evidence_items
+            if item.get("document_type") == "Recommendation or Support" or "recommend" in (item.get("title", "") + " " + item.get("file_name", "")).lower()
+        ]
+        high_gaps = [item for item in gap_detector.get("gaps", []) if item.get("severity") == "high"]
+        target_templates = [
+            ("Independent expert", "Corroborate field significance and explain why the work matters beyond the employer.", ["original_contributions", "scholarly_articles", "comparable_evidence"]),
+            ("Senior executive or sponsor", "Confirm role criticality, scope, and business impact in a distinguished organization.", ["leading_critical_role"]),
+            ("Customer, adopter, or implementation partner", "Confirm adoption, measurable outcomes, and external reliance.", ["original_contributions", "leading_critical_role"]),
+            ("Conference, journal, or program organizer", "Confirm judging, reviewer selection, panel invitations, or selective participation.", ["judging", "published_material"]),
+            ("Compensation or market expert", "Explain salary/remuneration benchmarks and why pay is unusually high.", ["high_salary"]),
+        ]
+        targets = []
+        for target_type, purpose, criteria_codes in target_templates:
+            related_gaps = [gap for gap in high_gaps if gap["criterion_code"] in criteria_codes]
+            related_claims = [claim for claim in claim_map if claim["criterion_code"] in criteria_codes and claim["status"] != "gap"]
+            if related_gaps or related_claims:
+                targets.append(
+                    {
+                        "target_type": target_type,
+                        "purpose": purpose,
+                        "linked_criteria": [claim["criterion_name"] for claim in related_claims] or [gap["criterion_name"] for gap in related_gaps],
+                        "facts_to_confirm": self._petition_letter_fact_prompts(criteria_codes, profile),
+                        "status": "needed" if related_gaps else "helpful",
+                    }
+                )
+        return {
+            "existing_letters": existing_letters,
+            "recommended_targets": targets[:6],
+            "letter_quality_rules": [
+                "Prefer independent or senior third-party voices over coworkers when possible.",
+                "Ask for facts, dates, metrics, selection standards, and observed impact rather than generic praise.",
+                "Tie each letter to one or two criteria and the final merits story.",
+            ],
+        }
+
+    def _petition_letter_fact_prompts(self, criteria_codes: list[str], profile: dict) -> list[str]:
+        prompts = ["Relationship to member and basis of firsthand knowledge", "Specific dates, projects, or events the recommender can verify"]
+        if "leading_critical_role" in criteria_codes:
+            prompts.extend(["Why the organization or unit is distinguished", "Why the member's role was critical rather than routine"])
+        if "original_contributions" in criteria_codes:
+            prompts.extend(["What was original compared with prior practice", "Who adopted or benefited from the contribution"])
+        if "judging" in criteria_codes:
+            prompts.append("Selection standard used to invite the member to judge or review others")
+        if profile.get("primary_field"):
+            prompts.append(f"How the facts matter in {profile['primary_field']}")
+        return prompts[:6]
+
+    def _petition_request_packs(self, claim_map: list[dict]) -> list[dict]:
+        templates = self._petition_request_pack_templates()
+        packs = []
+        for claim in claim_map:
+            template = templates.get(claim["criterion_code"], templates["other"])
+            packs.append(
+                {
+                    "criterion_code": claim["criterion_code"],
+                    "criterion_name": claim["criterion_name"],
+                    "current_status": claim["status"],
+                    "priority": "high" if claim["status"] == "gap" and claim["criterion_code"] in {"original_contributions", "leading_critical_role", "judging"} else "normal",
+                    **template,
+                }
+            )
+        return packs
+
+    def _petition_request_pack_templates(self) -> dict[str, dict]:
+        return {
+            "awards": {
+                "member_prompt": "Upload award certificates, selection emails, nomination materials, judging criteria, and proof that the award is nationally or internationally recognized.",
+                "strong_examples": ["Award certificate plus selection criteria", "Press release naming winners", "Evidence of national or international applicant pool"],
+                "weak_examples": ["Internal team shout-out with no selection standard", "Undated badge without award context"],
+                "upload_checklist": ["Award proof", "Selection criteria", "Issuer reputation", "Date received"],
+            },
+            "memberships": {
+                "member_prompt": "Show that membership required outstanding achievement, not just payment or routine experience.",
+                "strong_examples": ["Acceptance letter", "Bylaws showing selective standards", "Reviewer or sponsor confirmation"],
+                "weak_examples": ["Paid membership receipt only", "Open LinkedIn group membership"],
+                "upload_checklist": ["Acceptance proof", "Membership criteria", "Organization reputation", "Date joined"],
+            },
+            "published_material": {
+                "member_prompt": "Upload articles about you or your work, not just articles you authored, with publication reputation and date.",
+                "strong_examples": ["Media article primarily about member's work", "Publication masthead or readership data", "Press mention tied to impact"],
+                "weak_examples": ["Company blog post written by member", "Brief name mention without substance"],
+                "upload_checklist": ["Article", "Publisher details", "Date", "Why it matters"],
+            },
+            "judging": {
+                "member_prompt": "Upload invitation, participation proof, thank-you email, certificate, agenda, and any selection standard showing why you were chosen to judge others.",
+                "strong_examples": ["Reviewer invitation and completed review acknowledgement", "Judge certificate", "Conference agenda listing judging role"],
+                "weak_examples": ["Informal calendar hold only", "Generic volunteer email"],
+                "upload_checklist": ["Invitation", "Participation proof", "Thank-you or certificate", "Selection standard"],
+            },
+            "original_contributions": {
+                "member_prompt": "Describe the original contribution, what existed before, your personal role, measurable adoption or impact, and independent corroboration.",
+                "strong_examples": ["Adoption metrics", "Independent expert letter", "Patent/product/research proof tied to field impact"],
+                "weak_examples": ["Routine job responsibility", "Unquantified internal description only"],
+                "upload_checklist": ["Problem before contribution", "Your distinct role", "Metrics", "External adoption or recognition"],
+            },
+            "scholarly_articles": {
+                "member_prompt": "Upload authored articles, citations, venue reputation, acceptance proof, and evidence of influence where available.",
+                "strong_examples": ["Published paper with citation record", "Journal/conference ranking", "Google Scholar or publisher page"],
+                "weak_examples": ["Unpublished draft only", "Internal whitepaper without audience"],
+                "upload_checklist": ["Article", "Venue proof", "Citation/influence", "Publication date"],
+            },
+            "leading_critical_role": {
+                "member_prompt": "Explain the organization, your job title, project dates, leadership scope, why the role was critical, business value, and metrics.",
+                "strong_examples": ["Executive confirmation letter", "Project metrics", "Org reputation proof", "Launch or revenue impact document"],
+                "weak_examples": ["Job description only", "Self-written summary without corroboration"],
+                "upload_checklist": ["Role title", "Project dates", "Org distinction", "Criticality", "Metrics"],
+            },
+            "high_salary": {
+                "member_prompt": "Upload compensation proof and credible market benchmarks showing pay was high relative to peers in the same field/location.",
+                "strong_examples": ["W-2 or offer letter", "Compensation survey benchmark", "Role/location comparison"],
+                "weak_examples": ["Salary claim without proof", "Generic national average unrelated to role"],
+                "upload_checklist": ["Compensation proof", "Benchmark source", "Comparable role/location", "Date"],
+            },
+            "comparable_evidence": {
+                "member_prompt": "Use this when standard criteria do not fit. Explain why the evidence is comparable and what achievement it proves.",
+                "strong_examples": ["Selective accelerator acceptance", "Open-source adoption metrics", "Standards committee contribution"],
+                "weak_examples": ["Generic resume bullet", "Unverified social post"],
+                "upload_checklist": ["Comparable rationale", "Selection or impact proof", "Independent corroboration", "Dates"],
+            },
+            "other": {
+                "member_prompt": "Upload supporting documents only when they help explain a claimed EB1A criterion or final merits narrative.",
+                "strong_examples": ["Official documents with dates and issuer", "Context documents tied to a claim"],
+                "weak_examples": ["Unlabeled screenshots", "Duplicate files"],
+                "upload_checklist": ["Title", "Date", "Issuer/source", "Why it matters"],
+            },
+        }
+
+    def _petition_draft_submit_workflow(self, critical_role_projects: list[dict], original_contributions: list[dict]) -> dict:
+        items = []
+        for item in critical_role_projects:
+            items.append(
+                {
+                    "id": item.get("id", ""),
+                    "type": "Critical Role",
+                    "title": item.get("summary_line", "Critical role project"),
+                    "workflow_status": item.get("workflow_status", "draft"),
+                    "last_edited_at": item.get("updated_at", ""),
+                    "submitted_at": item.get("submitted_at", ""),
+                    "resume_endpoint": "/api/member/critical-role-projects",
+                    "export_evidence_id": item.get("export_evidence_id", ""),
+                }
+            )
+        for item in original_contributions:
+            items.append(
+                {
+                    "id": item.get("id", ""),
+                    "type": "Original Contribution",
+                    "title": item.get("summary_line", "Original contribution"),
+                    "workflow_status": item.get("workflow_status", "draft"),
+                    "last_edited_at": item.get("updated_at", ""),
+                    "submitted_at": item.get("submitted_at", ""),
+                    "resume_endpoint": "/api/member/original-contributions",
+                    "export_evidence_id": item.get("export_evidence_id", ""),
+                }
+            )
+        return {
+            "rules": [
+                "Members can save drafts without meeting submission validation.",
+                "Submitting generates a PDF export and stores it as criterion evidence.",
+                "Deleting a submitted item archives the generated evidence instead of hard-deleting the file artifact.",
+            ],
+            "items": sorted(items, key=lambda item: item.get("last_edited_at") or "", reverse=True),
+        }
+
+    def _petition_top_next_actions(self, gap_detector: dict, tasks: list[dict], document_qa: dict, recommendation_workspace: dict) -> list[dict]:
+        actions = []
+        for task in [item for item in tasks if item.get("status") == "open"][:3]:
+            actions.append(
+                {
+                    "priority": "high" if task.get("due_date") else "medium",
+                    "owner": "member",
+                    "action": f"Complete open task: {task.get('title', 'Untitled task')}",
+                    "why_it_matters": task.get("description", "Open work blocks case readiness."),
+                    "related_criterion": task.get("criterion_code", ""),
+                }
+            )
+        for gap in gap_detector.get("gaps", []):
+            if gap["severity"] not in {"high", "medium"}:
+                continue
+            actions.append(
+                {
+                    "priority": gap["severity"],
+                    "owner": "profile_builder" if gap["severity"] == "high" else "member",
+                    "action": f"Strengthen {gap['criterion_name']}",
+                    "why_it_matters": "; ".join(gap.get("issues", [])[:2]),
+                    "related_criterion": gap["criterion_code"],
+                }
+            )
+        if document_qa.get("flag_count"):
+            actions.append(
+                {
+                    "priority": "medium",
+                    "owner": "admin",
+                    "action": "Resolve document QA flags before filing package work",
+                    "why_it_matters": f"{document_qa['flag_count']} evidence hygiene issue(s) could slow exhibit assembly.",
+                    "related_criterion": "",
+                }
+            )
+        needed_letters = [item for item in recommendation_workspace.get("recommended_targets", []) if item.get("status") == "needed"]
+        if needed_letters:
+            actions.append(
+                {
+                    "priority": "high",
+                    "owner": "attorney",
+                    "action": f"Start {needed_letters[0]['target_type']} recommendation request",
+                    "why_it_matters": needed_letters[0]["purpose"],
+                    "related_criterion": ", ".join(needed_letters[0].get("linked_criteria", [])),
+                }
+            )
+        priority_order = {"high": 0, "medium": 1, "low": 2}
+        return sorted(actions, key=lambda item: (priority_order.get(item["priority"], 9), item["action"]))[:3]
+
+    def _petition_recommender_intake(self, member: dict, recommendation_workspace: dict) -> dict:
+        return {
+            "intake_slug": f"rec-{member['client_id']}",
+            "status": "ready_to_invite" if recommendation_workspace.get("recommended_targets") else "no_targets_needed",
+            "form_fields": [
+                "Recommender name, title, organization, and email",
+                "Relationship to member and independence level",
+                "Credential summary establishing authority in the field",
+                "Facts the recommender can personally verify",
+                "Specific dates, metrics, selection standards, or adoption details",
+                "Permission to be contacted for attorney follow-up",
+            ],
+            "recommended_invites": recommendation_workspace.get("recommended_targets", []),
+        }
+
+    def _petition_attorney_review_queue(self, actor_role: str, actor_email: str) -> dict:
+        if actor_role == "attorney" and actor_email:
+            members = self.attorney_members(actor_email)
+        elif actor_role == "leader":
+            members = self.leader_dashboard().get("members", [])
+        else:
+            members = self.builder_members()
+        buckets = {
+            "intake_draft": [],
+            "evidence_review": [],
+            "drafting_ready": [],
+            "final_merits_review": [],
+            "letter_review": [],
+            "filing_qa": [],
+            "rfe_response": [],
+        }
+        for member in members:
+            stage = self._petition_review_stage(member)
+            buckets.setdefault(stage, []).append(
+                {
+                    "client_id": member.get("client_id", ""),
+                    "display_name": member.get("display_name", ""),
+                    "readiness_score": int(member.get("readiness_score") or 0),
+                    "evidence_count": int(member.get("evidence_count") or 0),
+                    "open_task_count": int(member.get("open_task_count") or 0),
+                    "case_status": member.get("status", ""),
+                    "stage": stage,
+                }
+            )
+        return {
+            "stage_order": list(buckets.keys()),
+            "buckets": buckets,
+            "counts": {stage: len(items) for stage, items in buckets.items()},
+        }
+
+    def _petition_review_stage(self, member: dict) -> str:
+        status = str(member.get("status", "")).strip().lower()
+        readiness = int(member.get("readiness_score") or 0)
+        evidence_count = int(member.get("evidence_count") or 0)
+        open_tasks = int(member.get("open_task_count") or 0)
+        if "rfe" in status or "noid" in status:
+            return "rfe_response"
+        if readiness >= 85 and open_tasks == 0:
+            return "filing_qa"
+        if readiness >= 75:
+            return "final_merits_review"
+        if readiness >= 65:
+            return "letter_review"
+        if readiness >= 55 and evidence_count >= 5:
+            return "drafting_ready"
+        if evidence_count >= 3:
+            return "evidence_review"
+        return "intake_draft"
+
+    def _petition_rfe_noid_workspace(self, member: dict, gap_detector: dict, tasks: list[dict], evidence_items: list[dict]) -> dict:
+        rfe_tasks = [item for item in tasks if re.search(r"\b(rfe|noid|notice|request for evidence)\b", f"{item.get('title', '')} {item.get('description', '')}", re.I)]
+        issues = gap_detector.get("gaps", [])[:6]
+        return {
+            "case_mode": "active_response" if rfe_tasks or re.search(r"\b(rfe|noid)\b", str(member.get("status", "")), re.I) else "standby",
+            "response_deadline": next((item.get("due_date", "") for item in rfe_tasks if item.get("due_date")), ""),
+            "issue_workstreams": [
+                {
+                    "issue": gap["criterion_name"],
+                    "severity": gap["severity"],
+                    "response_plan": f"Collect delta evidence and draft a focused response addressing: {gap['issues'][0]}",
+                    "needed_evidence": gap.get("issues", [])[:3],
+                }
+                for gap in issues
+            ],
+            "delta_exhibits": [
+                self._petition_source_link(item)
+                for item in evidence_items[:8]
+            ],
+        }
+
+    def _petition_risk_dashboard(
+        self,
+        profile: dict,
+        claim_map: list[dict],
+        document_qa: dict,
+        critical_role_projects: list[dict],
+        original_contributions: list[dict],
+    ) -> dict:
+        risks = []
+        if not profile.get("biography"):
+            risks.append({"risk": "Missing member biography", "severity": "medium", "fix": "Ask member to complete profile biography before attorney draft."})
+        if not profile.get("proposed_final_merits_summary"):
+            risks.append({"risk": "Final merits story is not drafted", "severity": "high", "fix": "Create a concise final merits thesis tied to strongest criteria."})
+        for claim in claim_map:
+            if claim["evidence_count"] and claim["quality_average"] < 45:
+                risks.append({"risk": f"{claim['criterion_name']} evidence quality is low", "severity": "medium", "fix": "Replace informal or unclear documents with official corroboration."})
+            if claim["criterion_code"] in {"original_contributions", "leading_critical_role"} and claim["status"] == "gap":
+                risks.append({"risk": f"{claim['criterion_name']} is a high-value gap", "severity": "high", "fix": "Use the structured member intake plus independent corroboration."})
+        for item in critical_role_projects:
+            if item.get("is_submitted") and not item.get("organization_distinctiveness"):
+                risks.append({"risk": "Critical Role organization distinction not documented", "severity": "high", "fix": "Add proof of organization scale, reputation, market position, or awards."})
+        for item in original_contributions:
+            if item.get("is_submitted") and not item.get("field_wide_impact"):
+                risks.append({"risk": "Original Contribution field-wide impact is thin", "severity": "high", "fix": "Add adoption, citations, expert letters, customer proof, or industry references."})
+        for flag in document_qa.get("flags", [])[:5]:
+            risks.append({"risk": flag["message"], "severity": flag["severity"], "fix": flag["recommended_fix"]})
+        score = min(100, sum(18 if item["severity"] == "high" else 9 if item["severity"] == "medium" else 4 for item in risks))
+        return {
+            "risk_score": score,
+            "risk_level": "High" if score >= 60 else "Moderate" if score >= 25 else "Low",
+            "risks": risks[:12],
+        }
+
+    def _petition_argument_bank(self, profile: dict, claim_map: list[dict]) -> dict:
+        profile_type = self._petition_profile_type(profile)
+        patterns = {
+            "product leader": [
+                "Frame impact through cross-functional leadership, shipped systems, adoption metrics, and executive reliance.",
+                "Use customer/user outcomes and business metrics to distinguish critical role from routine product ownership.",
+            ],
+            "engineer": [
+                "Frame originality through technical problem difficulty, system adoption, reliability gains, and independent validation.",
+                "Use architecture documents, patents, benchmarks, and peer recognition as source anchors.",
+            ],
+            "researcher": [
+                "Frame impact through publications, citations, peer review, invited talks, and adoption by other researchers.",
+                "Use independent expert letters to explain why the contribution is major in the field.",
+            ],
+            "executive": [
+                "Frame leadership through organizational scale, revenue or market outcomes, and decision authority.",
+                "Use board/executive letters, public company proof, and market evidence to show distinguished organization context.",
+            ],
+            "professional": [
+                "Lead with the strongest criteria and tie each claim to measurable, externally corroborated outcomes.",
+                "Avoid generic excellence language; use dates, metrics, selection standards, and third-party proof.",
+            ],
+        }
+        selected = [item for item in claim_map if item["status"] in {"petition_ready", "building"}][:4]
+        return {
+            "profile_type": profile_type,
+            "argument_patterns": patterns.get(profile_type, patterns["professional"]),
+            "criterion_examples": [
+                {
+                    "criterion_name": item["criterion_name"],
+                    "argument_angle": item["attorney_use"],
+                    "source_count": item["evidence_count"],
+                }
+                for item in selected
+            ],
+        }
+
+    def _petition_profile_type(self, profile: dict) -> str:
+        text = " ".join([profile.get("current_title", ""), profile.get("primary_field", ""), profile.get("specialization", "")]).lower()
+        if any(word in text for word in ["product", "program manager", "pm"]):
+            return "product leader"
+        if any(word in text for word in ["engineer", "architect", "developer", "software", "data"]):
+            return "engineer"
+        if any(word in text for word in ["research", "scientist", "professor", "scholar"]):
+            return "researcher"
+        if any(word in text for word in ["chief", "vp", "vice president", "director", "executive"]):
+            return "executive"
+        return "professional"
+
+    def _petition_criterion_playbooks(self, claim_map: list[dict]) -> list[dict]:
+        playbooks = {
+            "original_contributions": ["Capture contribution narrative", "Collect adoption or impact proof", "Request independent expert or adopter letter", "Map evidence to field-wide significance"],
+            "leading_critical_role": ["Capture organization distinction", "Document job title and project dates", "Quantify business value", "Secure executive corroboration"],
+            "judging": ["Collect invitation", "Upload participation proof", "Add thank-you/certificate", "Show selection standard"],
+            "high_salary": ["Upload compensation proof", "Find role/location benchmark", "Explain percentile or premium", "Redact sensitive details only as needed"],
+            "published_material": ["Upload article", "Document publication reputation", "Show article is about member/work", "Tie coverage to criterion claim"],
+            "memberships": ["Upload acceptance proof", "Collect bylaws/criteria", "Show outstanding-achievement requirement", "Document current standing"],
+        }
+        return [
+            {
+                "criterion_code": claim["criterion_code"],
+                "criterion_name": claim["criterion_name"],
+                "current_status": claim["status"],
+                "steps": playbooks.get(claim["criterion_code"], ["Clarify claim", "Collect official source document", "Add independent context", "Review with attorney"]),
+            }
+            for claim in claim_map
+        ]
+
+    def _petition_portfolio_heatmap(self) -> dict:
+        members = self.leader_dashboard().get("members", [])
+        criteria_rows = rows(self.conn, "SELECT code, name FROM criteria ORDER BY rowid")
+        heatmap_rows = []
+        for member in members:
+            counts = rows(
+                self.conn,
+                """
+                SELECT criterion_code, COUNT(*) AS count
+                FROM evidence_items
+                WHERE client_id = ? AND case_id = ? AND status != 'archived'
+                GROUP BY criterion_code
+                """,
+                (member["client_id"], member["case_id"]),
+            )
+            count_lookup = {item["criterion_code"]: int(item["count"] or 0) for item in counts}
+            heatmap_rows.append(
+                {
+                    "client_id": member["client_id"],
+                    "display_name": member["display_name"],
+                    "readiness_score": int(member.get("readiness_score") or 0),
+                    "risk_level": member.get("risk_level", ""),
+                    "stage_label": member.get("stage_label", ""),
+                    "criteria": {criterion["code"]: count_lookup.get(criterion["code"], 0) for criterion in criteria_rows},
+                }
+            )
+        return {
+            "criteria": criteria_rows,
+            "rows": heatmap_rows,
+        }
+
+    def _petition_sla_dashboard(self) -> dict:
+        members = self.leader_dashboard().get("members", [])
+        durations = {
+            "invite_to_registration": [],
+            "builder_assignment_to_first_evidence": [],
+            "attorney_assignment_to_petition_generation": [],
+        }
+        for member in members:
+            invite = one(self.conn, "SELECT invite_sent_at, registered_at FROM member_registration_invites WHERE client_id = ? AND case_id = ? ORDER BY invite_sent_at LIMIT 1", (member["client_id"], member["case_id"]))
+            if invite and invite.get("registered_at"):
+                durations["invite_to_registration"].append(self._duration_days(invite.get("invite_sent_at"), invite.get("registered_at")))
+            builder_assignment = one(self.conn, "SELECT created_at FROM builder_member_assignments WHERE client_id = ? AND case_id = ? AND status = 'active' ORDER BY created_at LIMIT 1", (member["client_id"], member["case_id"]))
+            first_evidence = one(self.conn, "SELECT MIN(created_at) AS created_at FROM evidence_items WHERE client_id = ? AND case_id = ? AND status != 'archived'", (member["client_id"], member["case_id"]))
+            if builder_assignment and first_evidence and first_evidence.get("created_at"):
+                durations["builder_assignment_to_first_evidence"].append(self._duration_days(builder_assignment.get("created_at"), first_evidence.get("created_at")))
+            attorney_assignment = one(self.conn, "SELECT created_at FROM attorney_member_assignments WHERE client_id = ? AND case_id = ? AND status = 'active' ORDER BY created_at LIMIT 1", (member["client_id"], member["case_id"]))
+            petition_event = one(self.conn, "SELECT MIN(created_at) AS created_at FROM operational_events WHERE client_id = ? AND case_id = ? AND event_type = 'petition_generator'", (member["client_id"], member["case_id"]))
+            if attorney_assignment and petition_event and petition_event.get("created_at"):
+                durations["attorney_assignment_to_petition_generation"].append(self._duration_days(attorney_assignment.get("created_at"), petition_event.get("created_at")))
+        targets = {
+            "invite_to_registration": 7,
+            "builder_assignment_to_first_evidence": 14,
+            "attorney_assignment_to_petition_generation": 7,
+        }
+        metrics = []
+        for key, values in durations.items():
+            avg_days = round(sum(values) / len(values), 1) if values else None
+            target = targets[key]
+            metrics.append(
+                {
+                    "metric": key,
+                    "average_days": avg_days,
+                    "sample_size": len(values),
+                    "target_days": target,
+                    "status": "not_enough_data" if avg_days is None else "on_track" if avg_days <= target else "watch",
+                }
+            )
+        return {"metrics": metrics}
+
+    def _duration_days(self, start_value: str | None, end_value: str | None) -> int:
+        start = self._parse_datetime(start_value)
+        end = self._parse_datetime(end_value)
+        if not start or not end:
+            return 0
+        return max(0, (end - start).days)
 
     def _iso_date(self, value: datetime | None) -> str:
         return value.date().isoformat() if value else ""
@@ -3802,10 +5144,39 @@ class EvidenceService:
         end_date = self._parse_datetime(stage.get("end_date"))
         if end_date and end_date.date() < today:
             return "late"
-        start_date = self._parse_datetime(stage.get("start_date"))
-        if start_date and start_date.date() <= today:
-            return "active"
+        if stage.get("start_date"):
+            start_date = self._parse_datetime(stage.get("start_date"))
+            if start_date and start_date.date() <= today:
+                return "active"
         return "upcoming"
+
+    def _timeline_summary_from_member(self, member: dict) -> dict:
+        evidence_count = int(member.get("evidence_count") or 0)
+        criteria_started = int(member.get("criteria_started") or 0)
+        readiness = int(member.get("readiness_score") or 0)
+        open_tasks = int(member.get("open_task_count") or 0)
+        case_created = self._parse_datetime(member.get("case_created_at") or member.get("created_at")) or datetime.utcnow()
+        target_days = 45
+        if readiness < 25:
+            target_days += 45
+        elif readiness < 50:
+            target_days += 30
+        elif readiness < 75:
+            target_days += 18
+        if evidence_count < 5:
+            target_days += 21
+        if criteria_started < 3:
+            target_days += 21
+        if open_tasks >= 3:
+            target_days += 10
+        baseline_file_date = case_created + timedelta(days=target_days)
+        late = datetime.utcnow().date() > baseline_file_date.date() and readiness < 90
+        return {
+            "target_filing_date": self._iso_date(baseline_file_date),
+            "days_to_target": (baseline_file_date.date() - datetime.utcnow().date()).days,
+            "status": "late" if late else "on_track" if readiness >= 65 or evidence_count >= 8 else "at_risk",
+            "late": late,
+        }
 
     def petition_delivery_timeline(
         self,
@@ -3818,11 +5189,14 @@ class EvidenceService:
         resolved_client_id = client_id.strip() or actor_client_id.strip() or self.config.default_client["client_id"]
         if role == "attorney":
             self.attorney_member_detail(resolved_client_id, actor_email)
+        elif role == "builder":
+            # Builder detail is assignment-scoped in the current service.
+            self.builder_member_detail(resolved_client_id)
         elif role == "member" and actor_client_id and actor_client_id != resolved_client_id:
             raise ValueError("Member cannot view another member timeline")
         elif role not in {"member", "leader", "admin", "builder", "attorney"}:
             raise ValueError("Unsupported actor role")
-        context = self._attorney_case_context(resolved_client_id, "leader" if role in {"leader", "admin", "member", "builder"} else "attorney", actor_email)
+        context = self._attorney_case_context(resolved_client_id)
         member = context["member"]
         profile = context["profile"]
         detail = context["detail"]
@@ -3832,6 +5206,8 @@ class EvidenceService:
         submitted_intakes = len([item for item in detail.get("critical_role_projects", []) + detail.get("original_contribution_entries", []) if item.get("is_submitted")])
         readiness = int(member.get("readiness_score") or 0)
         evidence_count = len(evidence_items)
+        case_start = self._parse_datetime(member.get("created_at")) or datetime.utcnow()
+        today = datetime.utcnow().date()
         remaining_days = 28
         if readiness < 25:
             remaining_days += 56
@@ -3845,9 +5221,8 @@ class EvidenceService:
             remaining_days += 18
         if submitted_intakes == 0:
             remaining_days += 10
-        open_tasks = [item for item in tasks if item.get("status") == "open"]
-        if open_tasks:
-            remaining_days += min(18, len(open_tasks) * 4)
+        if any(item.get("status") == "open" for item in tasks):
+            remaining_days += min(18, sum(1 for item in tasks if item.get("status") == "open") * 4)
         active_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         durations = [10, 18, 14, 12, 7, 6, 2]
         scale = max(1, remaining_days / sum(durations))
@@ -3860,7 +5235,6 @@ class EvidenceService:
             ("filing_qa", "Final QA and exhibit assembly", "Team checks dates, exhibit order, source links, document quality, and filing package completeness.", False),
             ("file_petition", "File petition", "Submit the final petition package after attorney approval and member signoff.", readiness >= 90),
         ]
-        today = datetime.utcnow().date()
         stages = []
         cursor = active_start
         for index, (key, label, description, completed) in enumerate(stage_defs):
@@ -3880,15 +5254,16 @@ class EvidenceService:
             stage["status"] = self._timeline_status_for_stage(stage, today)
             stages.append(stage)
             cursor = end + timedelta(days=1)
-        target_filing_date = stages[-1]["end_date"] if stages else ""
+        target_filing_date = stages[-1]["end_date"]
         late_stages = [item for item in stages if item["status"] == "late"]
-        rfe_start = (self._parse_datetime(target_filing_date) or cursor) + timedelta(days=90)
+        rfe_start = self._parse_datetime(target_filing_date) + timedelta(days=90) if target_filing_date else cursor + timedelta(days=90)
         rfe_end = rfe_start + timedelta(days=90)
         alerts = []
-        for task in open_tasks:
-            due_date = self._parse_datetime(task.get("due_date"))
-            if due_date and due_date.date() < today:
-                alerts.append({"severity": "high", "message": f"Task overdue: {task.get('title', 'Untitled task')}", "owner": "member"})
+        for task in tasks:
+            if task.get("status") == "open" and task.get("due_date"):
+                due_date = self._parse_datetime(task.get("due_date"))
+                if due_date and due_date.date() < today:
+                    alerts.append({"severity": "high", "message": f"Task overdue: {task.get('title', 'Untitled task')}", "owner": "member"})
         if evidence_count < 5:
             alerts.append({"severity": "medium", "message": "Evidence volume is still below a realistic filing path.", "owner": "member"})
         if criteria_started < 3:
@@ -3901,7 +5276,13 @@ class EvidenceService:
             "ok": True,
             "status": "late" if late_stages else "on_track" if not alerts else "at_risk",
             "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
-            "member": {"client_id": member["client_id"], "case_id": member["case_id"], "display_name": member.get("display_name", "Member"), "readiness_score": readiness, "target_filing_date": target_filing_date},
+            "member": {
+                "client_id": member["client_id"],
+                "case_id": member["case_id"],
+                "display_name": member.get("display_name", "Member"),
+                "readiness_score": readiness,
+                "target_filing_date": target_filing_date,
+            },
             "summary": {
                 "target_filing_date": target_filing_date,
                 "days_to_target": (self._parse_datetime(target_filing_date).date() - today).days if target_filing_date else 0,
@@ -3923,262 +5304,543 @@ class EvidenceService:
             "alerts": alerts[:8],
         }
 
-    def petition_acceleration_workspace(self, client_id: str = "", actor_role: str = "attorney", actor_email: str = "") -> dict:
-        context = self._attorney_case_context(client_id, "attorney" if actor_role == "attorney" else "leader", actor_email)
-        detail = context["detail"]
-        member = context["member"]
-        profile = context["profile"]
-        evidence = context["evidence_items"]
-        criteria = detail.get("criteria", [])
-        tasks = detail.get("tasks", [])
-        gaps = [
-            {
-                "criterion_code": item.get("code", ""),
-                "criterion_name": item.get("name", ""),
-                "severity": "high" if int(item.get("evidence_count") or 0) == 0 else "medium",
-                "issues": ["No evidence uploaded yet"] if int(item.get("evidence_count") or 0) == 0 else ["Needs attorney quality review"],
-            }
-            for item in criteria
-            if int(item.get("evidence_count") or 0) == 0
-        ]
-        claim_map = [
-            {
-                "criterion_code": item.get("code", ""),
-                "criterion_name": item.get("name", ""),
-                "status": "supported" if int(item.get("evidence_count") or 0) else "gap",
-                "evidence_count": int(item.get("evidence_count") or 0),
-            }
-            for item in criteria
-        ]
-        document_flags = [{"severity": "medium", "type": "review", "message": "Review AI fallback items manually.", "recommended_fix": "Confirm category, document type, and exhibit value before drafting."}] if any(item.get("analysis_source") == "fallback" for item in evidence) else []
-        recommendation_workspace = {
-            "recommended_targets": [
-                {"target_type": "Project recommendation", "purpose": "Corroborate Critical Role or Original Contribution project facts.", "linked_criteria": ["Leading or Critical Role", "Original Contributions"], "status": "needed"}
-            ] if detail.get("critical_role_projects") or detail.get("original_contribution_entries") else [],
-            "existing_letters": [],
+    def _petition_document_qa(self, evidence_items: list[dict]) -> dict:
+        flags = []
+        by_name: dict[str, list[dict]] = {}
+        for item in evidence_items:
+            by_name.setdefault(str(item.get("file_name", "")).strip().lower(), []).append(item)
+        for file_name, duplicates in by_name.items():
+            if file_name and len(duplicates) > 1:
+                flags.append(
+                    {
+                        "severity": "medium",
+                        "type": "duplicate_file_name",
+                        "message": f"Duplicate file name detected: {duplicates[0].get('file_name', file_name)}",
+                        "evidence_ids": [item.get("id", "") for item in duplicates],
+                        "recommended_fix": "Confirm whether duplicates are intentional versions or archive extras.",
+                    }
+                )
+        for item in evidence_items:
+            text = f"{item.get('title', '')} {item.get('file_name', '')} {item.get('description', '')}".lower()
+            quality = int(item.get("quality_score") or 0)
+            if quality and quality < 35:
+                flags.append(
+                    {
+                        "severity": "high",
+                        "type": "low_quality_scan",
+                        "message": f"{item.get('title') or item.get('file_name')} may be unreadable or too thin for filing.",
+                        "evidence_ids": [item.get("id", "")],
+                        "recommended_fix": "Replace with a clearer original or add a better corroborating document.",
+                    }
+                )
+            if any(token in text for token in ["spanish", "chinese", "hindi", "foreign language", "translation required"]) and "translation" not in text:
+                flags.append(
+                    {
+                        "severity": "medium",
+                        "type": "translation_check",
+                        "message": f"{item.get('title') or item.get('file_name')} may need certified translation review.",
+                        "evidence_ids": [item.get("id", "")],
+                        "recommended_fix": "Upload certified English translation or mark as English-language evidence.",
+                    }
+                )
+            if re.match(r"^(scan|image|document|untitled)[\s_\-\.]", str(item.get("file_name", "")).lower()):
+                flags.append(
+                    {
+                        "severity": "low",
+                        "type": "weak_file_name",
+                        "message": f"File name is not descriptive: {item.get('file_name', '')}",
+                        "evidence_ids": [item.get("id", "")],
+                        "recommended_fix": "Rename or title the evidence with date, issuer, and category context.",
+                    }
+                )
+        severity_counts = {
+            "high": sum(1 for item in flags if item["severity"] == "high"),
+            "medium": sum(1 for item in flags if item["severity"] == "medium"),
+            "low": sum(1 for item in flags if item["severity"] == "low"),
         }
+        return {"flag_count": len(flags), "severity_counts": severity_counts, "flags": flags}
+
+    def _petition_exhibit_assembly(self, criteria: list[dict], evidence_items: list[dict]) -> dict:
+        order = {criterion["code"]: index for index, criterion in enumerate(criteria)}
+        criteria_lookup = {criterion["code"]: criterion["name"] for criterion in criteria}
+        sorted_items = sorted(
+            evidence_items,
+            key=lambda item: (order.get(item.get("criterion_code", "other"), 99), item.get("created_at", ""), item.get("title", "")),
+        )
+        exhibits = []
+        for index, item in enumerate(sorted_items, start=1):
+            exhibits.append(
+                {
+                    "exhibit_number": f"ASC-{index:03d}",
+                    "evidence_id": item.get("id", ""),
+                    "criterion_code": item.get("criterion_code", ""),
+                    "criterion_name": criteria_lookup.get(item.get("criterion_code", ""), item.get("criterion_code", "")),
+                    "title": item.get("title", ""),
+                    "file_name": item.get("file_name", ""),
+                    "document_type": item.get("document_type", "Other"),
+                    "uploaded_at": item.get("created_at", ""),
+                    "open_url": item.get("open_url", ""),
+                }
+            )
+        grouped: dict[str, int] = {}
+        for exhibit in exhibits:
+            grouped[exhibit["criterion_name"]] = grouped.get(exhibit["criterion_name"], 0) + 1
         return {
-            "ok": True,
-            "status": "success",
-            "member": {"client_id": member["client_id"], "case_id": member["case_id"], "display_name": member.get("display_name", "Member")},
-            "snapshot": {
-                "evidence_count": len(evidence),
-                "criteria_started": sum(1 for item in criteria if int(item.get("evidence_count") or 0) > 0),
-                "high_severity_gaps": sum(1 for item in gaps if item["severity"] == "high"),
-                "qa_flags": len(document_flags),
-            },
-            "p0": {
-                "claim_map": claim_map,
-                "gap_detector": {"gaps": gaps},
-                "top_next_actions": [
-                    {"action": "Close highest evidence gap", "why_it_matters": "Attorney drafting is stronger when at least three criteria have corroborated support.", "priority": "high", "owner": "builder"},
-                    {"action": "Confirm recommendation targets", "why_it_matters": "Letters should map to specific projects and evidence facts.", "priority": "medium", "owner": "attorney"},
-                ],
-                "criterion_request_packs": [{"criterion_code": item["criterion_code"], "criterion_name": item["criterion_name"], "member_prompt": "Upload primary proof, third-party corroboration, and measurable outcome documents.", "upload_checklist": ["Primary proof", "Corroboration", "Metrics"]} for item in claim_map[:6]],
-                "recommendation_letter_workspace": recommendation_workspace,
-                "attorney_review_queue": {"counts": {"evidence": len(evidence), "tasks": len(tasks), "projects": len(detail.get("critical_role_projects", [])) + len(detail.get("original_contribution_entries", []))}},
-            },
-            "p1": {
-                "filing_qa_checklist": {"checks": [
-                    {"item": "Profile facts confirmed", "status": "pass" if profile.get("profile_confirmed") else "warn", "detail": "Member profile confirmation is required before final filing."},
-                    {"item": "Evidence exhibits available", "status": "pass" if len(evidence) >= 8 else "warn", "detail": "Build enough source-linked evidence for attorney review."},
-                    {"item": "Project narratives submitted", "status": "pass" if recommendation_workspace["recommended_targets"] else "warn", "detail": "Critical Role and Original Contributions narratives strengthen letters."},
-                ]},
-                "document_qa": {"flags": document_flags},
-                "exhibit_assembly_manager": {"exhibits": [{"exhibit_number": f"Exhibit {index}", "criterion_name": item.get("criterion_code", ""), "file_name": item.get("file_name", "")} for index, item in enumerate(evidence[:8], start=1)]},
-            },
+            "index_title": "Ascend exhibit assembly index",
+            "exhibits": exhibits,
+            "group_counts": [{"criterion_name": key, "count": value} for key, value in grouped.items()],
         }
 
-    def attorney_endeavor_letter_generator(self, client_id: str = "", prompt_config: dict | None = None, actor_role: str = "attorney", actor_email: str = "") -> dict:
-        context = self._attorney_case_context(client_id, "attorney" if actor_role == "attorney" else "leader", actor_email)
-        payload = self._attorney_case_payload(context)
-        parsed_evidence = []
-        for item in context["evidence_items"][:20]:
-            excerpt = ""
-            local_path = str(item.get("local_path", "") or "")
-            if local_path:
-                try:
-                    excerpt = extract_document_excerpt(Path(local_path))
-                except Exception:
-                    excerpt = ""
-            parsed_evidence.append({"title": item.get("title", ""), "file_name": item.get("file_name", ""), "excerpt": excerpt[:1200]})
-        payload["parsed_evidence"] = parsed_evidence
-        prepared_prompt = self.openai.normalize_endeavor_prompt_config(prompt_config or {}, payload) if hasattr(self.openai, "normalize_endeavor_prompt_config") else (prompt_config or {})
-        result = self.openai.generate_endeavor_letter(payload, prepared_prompt)
+    def _petition_upload_packager(self, exhibit_assembly: dict) -> dict:
+        bundles = []
+        current = {"bundle_name": "USCIS Upload Bundle 1", "estimated_bytes": 0, "exhibits": []}
+        max_bytes = 24 * 1024 * 1024
+        for exhibit in exhibit_assembly.get("exhibits", []):
+            estimated = 512 * 1024
+            if current["estimated_bytes"] + estimated > max_bytes and current["exhibits"]:
+                bundles.append(current)
+                current = {"bundle_name": f"USCIS Upload Bundle {len(bundles) + 1}", "estimated_bytes": 0, "exhibits": []}
+            current["estimated_bytes"] += estimated
+            current["exhibits"].append(
+                {
+                    "exhibit_number": exhibit["exhibit_number"],
+                    "upload_file_name": safe_file_name(f"{exhibit['exhibit_number']}-{exhibit['criterion_name']}-{exhibit['file_name']}"),
+                    "title": exhibit["title"],
+                }
+            )
+        if current["exhibits"]:
+            bundles.append(current)
+        return {
+            "mode": "online_upload_ready",
+            "bundle_size_limit_mb": 24,
+            "bundles": bundles,
+            "naming_rule": "Exhibit number, criterion, and original file name are preserved in upload order.",
+        }
+
+    def _petition_filing_qa_checklist(
+        self,
+        member: dict,
+        profile: dict,
+        claim_map: list[dict],
+        document_qa: dict,
+        exhibit_assembly: dict,
+        recommendation_workspace: dict,
+        critical_role_projects: list[dict],
+        original_contributions: list[dict],
+    ) -> dict:
+        supported_criteria = sum(1 for item in claim_map if item["status"] in {"petition_ready", "building"} and item["evidence_count"] > 0)
+        checks = [
+            {"item": "At least three EB1A criteria have active evidence", "status": "pass" if supported_criteria >= 3 else "fail", "detail": f"{supported_criteria} criteria currently have active support."},
+            {"item": "Final merits summary is drafted", "status": "pass" if profile.get("proposed_final_merits_summary") else "warn", "detail": "Needed for attorney synthesis and filing QA."},
+            {"item": "Exhibit index has generated entries", "status": "pass" if exhibit_assembly.get("exhibits") else "fail", "detail": f"{len(exhibit_assembly.get('exhibits', []))} exhibit(s) indexed."},
+            {"item": "Document QA high-risk flags cleared", "status": "pass" if not document_qa["severity_counts"].get("high") else "fail", "detail": f"{document_qa['severity_counts'].get('high', 0)} high-risk document flag(s)."},
+            {"item": "Recommendation targets identified", "status": "pass" if recommendation_workspace.get("existing_letters") or recommendation_workspace.get("recommended_targets") else "warn", "detail": "Letters may be needed for independence and corroboration."},
+            {"item": "Critical Role submissions exported when present", "status": "pass" if all((not item.get("is_submitted")) or item.get("export_evidence_id") for item in critical_role_projects) else "fail", "detail": "Submitted Critical Role entries should have stored PDF exports."},
+            {"item": "Original Contribution submissions exported when present", "status": "pass" if all((not item.get("is_submitted")) or item.get("export_evidence_id") for item in original_contributions) else "fail", "detail": "Submitted Original Contribution entries should have stored PDF exports."},
+            {"item": "Member profile confirmed", "status": "pass" if profile.get("profile_confirmed") else "warn", "detail": "Profile confirmation helps reduce biographical inconsistency before filing."},
+        ]
+        status = "ready" if all(item["status"] == "pass" for item in checks) else "blocked" if any(item["status"] == "fail" for item in checks) else "needs_review"
+        return {
+            "member_name": member.get("display_name", ""),
+            "status": status,
+            "checks": checks,
+        }
+
+    def attorney_endeavor_letter_generator(
+        self,
+        client_id: str = "",
+        prompt_config: dict | None = None,
+        actor_role: str = "attorney",
+        actor_email: str = "",
+    ) -> dict:
+        client_id = client_id.strip() or self.config.default_client["client_id"]
+        self._assert_member_batch_access(client_id, actor_role=actor_role, actor_email=actor_email)
+        case_context = self._attorney_case_context(client_id)
+        detail = case_context["detail"]
+        member = case_context["member"]
+        profile = case_context["profile"]
+        evidence_items = case_context["evidence_items"]
+        payload = self._attorney_case_payload(case_context)
+        payload["parsed_evidence"] = self._parsed_evidence_context(evidence_items)
+        try:
+            result = self.openai.generate_endeavor_letter(payload, prompt_config or {})
+            source = result.pop("source", "fallback")
+            compiled_prompt = result.pop("compiled_prompt", "")
+            normalized_prompt_config = result.pop("normalized_prompt_config", prompt_config or {})
+            status = "success" if source == "openai" else "fallback"
+        except Exception as exc:
+            result = {
+                "title": "Statement of Proposed Endeavor and Intention to Continue Work in the Area of Expertise",
+                "date_line": "Date: __________",
+                "re_line": "Re: Form I-140, EB-1A Extraordinary Ability Petition",
+                "beneficiary_line": f"Petitioner/Beneficiary: {member.get('display_name', 'Member')}",
+                "subject_line": f"Subject: Statement of Proposed Endeavor and Continuing Work in {profile.get('primary_field', '') or profile.get('industry_domain', '') or 'the area of expertise'}",
+                "salutation": "Dear Officer:",
+                "opening_paragraph": "The AI endeavor-letter path did not complete, so the attorney should review the case record and regenerate after the AI service is available.",
+                "sections": [
+                    {"heading": "1. My Field and Why It Matters", "body": "Use the member record to describe the field precisely and explain why it matters in the United States."},
+                    {"heading": "2. Continuity With My Established Work", "body": "Connect current work and prior documented achievements to the same field and future direction."},
+                    {"heading": "3. My Proposed Future Endeavor in the United States", "body": "Explain the specific future work the member plans to continue in the United States."},
+                    {"heading": "4. Why My Continued Work Will Benefit the United States", "body": f"AI endeavor-letter generation failed: {exc}"},
+                ],
+                "closing_paragraph": "This fallback outline should be reviewed and regenerated once the AI path is available.",
+                "signature_line": member.get("display_name", "Member"),
+                "plain_text": "",
+                "estimated_word_count": 0,
+                "estimated_page_count": 1,
+            }
+            source = "fallback"
+            compiled_prompt = ""
+            normalized_prompt_config = prompt_config or {}
+            status = "fallback"
+        self.record_operational_event(
+            "endeavor_letter_generator",
+            status=status,
+            portal="attorney",
+            client_id=member["client_id"],
+            case_id=member["case_id"],
+            endpoint="/api/attorney/endeavor-letter-generator",
+            message="Attorney endeavor letter generator completed.",
+            metadata={
+                "source": source,
+                "evidence_count": len(evidence_items),
+                "parsed_with_text": sum(1 for item in payload["parsed_evidence"] if item.get("excerpt_available")),
+            },
+        )
         return {
             "ok": True,
-            "status": "success" if result.get("source") == "openai" else "fallback",
-            "source": result.get("source", "fallback"),
+            "status": status,
+            "source": source,
             "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
-            "member": payload.get("member_name", ""),
-            "snapshot": {"parsed_documents": len(parsed_evidence), "parsed_with_text": sum(1 for item in parsed_evidence if item.get("excerpt"))},
-            "prompt_config": prepared_prompt,
-            "letter": result.get("letter", result),
+            "compiled_prompt": compiled_prompt,
+            "prompt_config": normalized_prompt_config,
+            "member": {
+                "client_id": member["client_id"],
+                "case_id": member["case_id"],
+                "display_name": member.get("display_name", "Member"),
+                "readiness_score": int(member.get("readiness_score") or 0),
+                "industry_domain": profile.get("industry_domain", ""),
+                "primary_field": profile.get("primary_field", ""),
+                "current_title": profile.get("current_title", ""),
+                "current_employer": profile.get("current_employer", ""),
+            },
+            "snapshot": {
+                "evidence_count": len(evidence_items),
+                "parsed_documents": len(payload["parsed_evidence"]),
+                "parsed_with_text": sum(1 for item in payload["parsed_evidence"] if item.get("excerpt_available")),
+                "criteria_started": sum(1 for item in detail.get("criteria", []) if int(item.get("evidence_count") or 0) > 0),
+                "open_tasks": sum(1 for item in detail.get("tasks", []) if item.get("status") == "open"),
+                "planner_items": len(case_context["planner_rows"]),
+            },
+            "parsed_evidence": payload["parsed_evidence"],
+            "letter": result,
         }
 
     def _recommendation_project_options(self, detail: dict) -> list[dict]:
-        options = []
+        projects = []
         for item in detail.get("critical_role_projects", []):
-            options.append({
-                "id": item["id"],
-                "project_type": "critical_role",
-                "criterion_code": "leading_critical_role",
-                "criterion_name": "Leading or Critical Role",
-                "title": item.get("project_name") or item.get("organization_name") or "Critical Role project",
-                "organization_name": item.get("organization_name", ""),
-                "summary": item.get("attorney_friendly_summary") or item.get("business_value_summary") or item.get("role_summary") or "",
-            })
-        for item in detail.get("original_contribution_entries", []):
-            options.append({
-                "id": item["id"],
-                "project_type": "original_contribution",
-                "criterion_code": "original_contributions",
-                "criterion_name": "Original Contributions",
-                "title": item.get("contribution_title") or item.get("project_name") or "Original Contribution",
-                "organization_name": item.get("organization_name", ""),
-                "summary": item.get("attorney_friendly_summary") or item.get("impact_metrics") or item.get("originality_summary") or "",
-            })
-        if not options:
-            for item in (detail.get("legal_workbench", {}).get("recommendation_letters", {}).get("project_options", []) or []):
-                options.append({
+            projects.append(
+                {
                     "id": item.get("id", ""),
-                    "project_type": "evidence",
-                    "criterion_code": item.get("criterion_code", ""),
-                    "criterion_name": item.get("criterion_name", ""),
-                    "title": item.get("title", "Project evidence"),
-                    "organization_name": "",
-                    "summary": "",
-                })
-        return options
+                    "project_type": "critical_role",
+                    "criterion_code": "leading_critical_role",
+                    "criterion_name": "Leading or Critical Role",
+                    "title": item.get("project_name") or item.get("summary_line") or "Critical Role project",
+                    "organization_name": item.get("organization_name", ""),
+                    "role_title": item.get("role_title", ""),
+                    "date_label": item.get("project_date_label") or item.get("role_date_label") or "",
+                    "workflow_status": item.get("workflow_status", "draft"),
+                    "summary": item.get("attorney_friendly_summary") or item.get("business_value_summary") or item.get("project_summary") or "",
+                    "impact": item.get("quantitative_metrics") or item.get("business_value_summary") or "",
+                    "source": item,
+                }
+            )
+        for item in detail.get("original_contribution_entries", []):
+            projects.append(
+                {
+                    "id": item.get("id", ""),
+                    "project_type": "original_contribution",
+                    "criterion_code": "original_contributions",
+                    "criterion_name": "Original Contributions",
+                    "title": item.get("contribution_title") or item.get("project_name") or item.get("summary_line") or "Original Contribution",
+                    "organization_name": item.get("organization_name", ""),
+                    "role_title": item.get("job_title", ""),
+                    "date_label": item.get("date_label") or "",
+                    "workflow_status": item.get("workflow_status", "draft"),
+                    "summary": item.get("attorney_friendly_summary") or item.get("distinct_contribution_summary") or item.get("originality_summary") or "",
+                    "impact": item.get("impact_metrics") or item.get("field_wide_impact") or item.get("adoption_scale") or "",
+                    "source": item,
+                }
+            )
+        return projects
 
     def _serialize_recommendation_letter(self, letter: dict | None) -> dict:
         if not letter:
             return {}
-        decorated = dict(letter)
         try:
-            decorated["letter"] = json.loads(letter.get("letter_json") or "{}")
+            letter_json = json.loads(letter.get("letter_json") or "{}")
         except json.JSONDecodeError:
-            decorated["letter"] = {}
+            letter_json = {}
         try:
-            decorated["prompt_config"] = json.loads(letter.get("prompt_config_json") or "{}")
+            prompt_config = json.loads(letter.get("prompt_config_json") or "{}")
         except json.JSONDecodeError:
-            decorated["prompt_config"] = {}
-        decorated["download_url"] = f"/api/recommendation-letters/{letter['id']}/download"
-        return decorated
+            prompt_config = {}
+        return {
+            **letter,
+            "letter": letter_json if isinstance(letter_json, dict) else {},
+            "prompt_config": prompt_config if isinstance(prompt_config, dict) else {},
+            "download_url": f"/api/recommendation-letters/{letter['id']}/download",
+        }
 
     def recommendation_letter_workspace(self, client_id: str = "", actor_role: str = "attorney", actor_email: str = "") -> dict:
-        context = self._attorney_case_context(client_id, "attorney" if actor_role == "attorney" else "leader", actor_email)
+        client_id = client_id.strip() or self.config.default_client["client_id"]
+        self._assert_member_batch_access(client_id, actor_role=actor_role, actor_email=actor_email)
+        context = self._attorney_case_context(client_id)
         detail = context["detail"]
         member = context["member"]
+        profile = context["profile"]
         project_options = self._recommendation_project_options(detail)
-        letter_rows = rows(self.conn, "SELECT * FROM recommendation_letters WHERE client_id = ? AND case_id = ? ORDER BY created_at DESC", (member["client_id"], member["case_id"]))
+        letter_rows = rows(
+            self.conn,
+            """
+            SELECT *
+            FROM recommendation_letters
+            WHERE client_id = ? AND case_id = ?
+            ORDER BY updated_at DESC, created_at DESC
+            """,
+            (member["client_id"], member["case_id"]),
+        )
         return {
             "ok": True,
-            "member": {"client_id": member["client_id"], "case_id": member["case_id"], "display_name": member.get("display_name", "Member")},
+            "member": {
+                "client_id": member["client_id"],
+                "case_id": member["case_id"],
+                "display_name": member.get("display_name", "Member"),
+                "primary_field": profile.get("primary_field", ""),
+                "current_title": profile.get("current_title", ""),
+                "current_employer": profile.get("current_employer", ""),
+            },
             "projects": project_options,
             "letters": [self._serialize_recommendation_letter(item) for item in letter_rows],
             "default_prompt": {
                 "who_you_are": "You are an expert EB1A attorney drafting a recommendation letter for review and signature by a recommender.",
+                "letter_kind": "independent",
+                "recommender_name": "",
+                "recommender_title": "",
+                "recommender_organization": "",
+                "recommender_relationship": "",
                 "facts_to_confirm": "Confirm dates, scope, personal contribution, measurable impact, and why this project matters.",
-                "independence_guidance": "For independent letters, explain independence and field authority; for dependent letters, explain firsthand project knowledge.",
-                "attorney_strategy_notes": "Ground the letter in the selected project and avoid generic praise.",
-                "tone_guidance": "Professional, factual, concrete, and suitable for recommender signature.",
-                "length_constraints": "Keep the letter around one to two pages.",
+                "attorney_strategy_notes": "Ground the letter in the selected Critical Role or Original Contribution project and avoid generic praise.",
+                "tone_guidance": "Professional, factual, and suitable for recommender signature.",
             },
         }
 
-    def attorney_recommendation_letter_generator(self, client_id: str = "", letter_kind: str = "independent", project_type: str = "", project_id: str = "", prompt_config: dict | None = None, actor_role: str = "attorney", actor_email: str = "") -> dict:
-        context = self._attorney_case_context(client_id, "attorney" if actor_role == "attorney" else "leader", actor_email)
-        detail = context["detail"]
+    def attorney_recommendation_letter_generator(
+        self,
+        client_id: str = "",
+        letter_kind: str = "independent",
+        project_type: str = "",
+        project_id: str = "",
+        prompt_config: dict | None = None,
+        actor_role: str = "attorney",
+        actor_email: str = "",
+    ) -> dict:
+        client_id = client_id.strip() or self.config.default_client["client_id"]
+        self._assert_member_batch_access(client_id, actor_role=actor_role, actor_email=actor_email)
+        context = self._attorney_case_context(client_id)
         member = context["member"]
+        detail = context["detail"]
+        evidence_items = context["evidence_items"]
         projects = self._recommendation_project_options(detail)
-        selected_project = next((item for item in projects if item.get("id") == project_id and item.get("project_type") == project_type), None)
+        selected_project = next((item for item in projects if item["id"] == project_id.strip() and item["project_type"] == project_type.strip()), None)
         if not selected_project:
             raise ValueError("Select a Critical Role or Original Contribution project before generating a recommendation letter")
+        normalized_kind = letter_kind.strip().lower() or "independent"
+        if normalized_kind not in {"independent", "dependent"}:
+            normalized_kind = "independent"
+        actor = self._actor_identity(actor_role, actor_email) if actor_role.strip().lower() in {"attorney", "leader"} else {"role": actor_role, "key": actor_email}
         payload = self._attorney_case_payload(context)
+        payload["parsed_evidence"] = self._parsed_evidence_context(evidence_items)
         payload["selected_project"] = selected_project
-        payload["letter_kind"] = letter_kind
+        payload["letter_kind"] = normalized_kind
         prepared_prompt = dict(prompt_config or {})
-        result = self.openai.generate_recommendation_letter(payload, prepared_prompt)
-        letter = result.get("letter", result)
-        plain_text = letter.get("plain_text") or "\n\n".join([letter.get("title", ""), letter.get("opening_paragraph", ""), *[section.get("body", "") for section in letter.get("sections", [])], letter.get("closing_paragraph", ""), letter.get("signature_line", "")])
+        prepared_prompt["letter_kind"] = normalized_kind
+        prepared_prompt["project_focus"] = prepared_prompt.get("project_focus") or f"Focus on {selected_project['title']} for {selected_project['criterion_name']}."
+        try:
+            result = self.openai.generate_recommendation_letter(payload, prepared_prompt)
+            source = result.pop("source", "fallback")
+            compiled_prompt = result.pop("compiled_prompt", "")
+            normalized_prompt_config = result.pop("normalized_prompt_config", prepared_prompt)
+            status = "success" if source == "openai" else "fallback"
+        except Exception as exc:
+            result = {
+                "title": "Recommendation Letter",
+                "date_line": "Date: __________",
+                "addressee_line": "U.S. Citizenship and Immigration Services",
+                "re_line": f"Re: Recommendation for {member.get('display_name', 'Member')}",
+                "salutation": "Dear Officer:",
+                "opening_paragraph": f"AI recommendation-letter generation failed: {exc}",
+                "sections": [
+                    {"heading": "Selected project", "body": selected_project["title"]},
+                    {"heading": "Facts to confirm", "body": prepared_prompt.get("facts_to_confirm", "")},
+                    {"heading": "Impact", "body": selected_project.get("impact", "") or "Add impact details before finalizing."},
+                    {"heading": "Petition relevance", "body": selected_project["criterion_name"]},
+                ],
+                "closing_paragraph": "Regenerate after the AI path is available.",
+                "signature_line": prepared_prompt.get("recommender_name", "Recommender Name"),
+                "plain_text": "",
+                "estimated_word_count": 0,
+                "estimated_page_count": 1,
+            }
+            source = "fallback"
+            compiled_prompt = ""
+            normalized_prompt_config = prepared_prompt
+            status = "fallback"
         letter_id = f"recltr_{uuid.uuid4().hex[:12]}"
-        actor = self._actor_identity(actor_role, actor_email)
+        plain_text = result.get("plain_text") or "\n\n".join(str(part) for part in [result.get("title"), result.get("opening_paragraph"), result.get("closing_paragraph"), result.get("signature_line")] if part)
         self.conn.execute(
             """
             INSERT INTO recommendation_letters(
               id, client_id, case_id, letter_kind, criterion_code, project_type, project_id,
               recommender_name, recommender_title, recommender_organization, recommender_relationship,
-              attorney_notes, prompt_config_json, letter_json, plain_text, status, generated_by_key
+              attorney_notes, prompt_config_json, letter_json, plain_text, status, source,
+              created_by_role, created_by_key
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'generated', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'generated', ?, ?, ?)
             """,
             (
                 letter_id,
                 member["client_id"],
                 member["case_id"],
-                letter_kind,
-                selected_project.get("criterion_code", ""),
-                project_type,
-                project_id,
-                prepared_prompt.get("recommender_name", ""),
-                prepared_prompt.get("recommender_title", ""),
-                prepared_prompt.get("recommender_organization", ""),
-                prepared_prompt.get("recommender_relationship", ""),
-                prepared_prompt.get("attorney_strategy_notes", ""),
-                json.dumps(prepared_prompt),
-                json.dumps(letter),
+                normalized_kind,
+                selected_project["criterion_code"],
+                selected_project["project_type"],
+                selected_project["id"],
+                str(normalized_prompt_config.get("recommender_name", "")).strip(),
+                str(normalized_prompt_config.get("recommender_title", "")).strip(),
+                str(normalized_prompt_config.get("recommender_organization", "")).strip(),
+                str(normalized_prompt_config.get("recommender_relationship", "")).strip(),
+                str(normalized_prompt_config.get("attorney_strategy_notes", "")).strip(),
+                json.dumps(normalized_prompt_config, ensure_ascii=True),
+                json.dumps(result, ensure_ascii=True),
                 plain_text,
-                actor["key"],
+                source,
+                actor.get("role", actor_role),
+                actor.get("key", actor_email),
             ),
         )
         self.conn.commit()
         saved = self._serialize_recommendation_letter(one(self.conn, "SELECT * FROM recommendation_letters WHERE id = ?", (letter_id,)))
-        return {"ok": True, "status": "generated", "source": result.get("source", "fallback"), "letter_record": saved}
+        self.record_operational_event(
+            "recommendation_letter_generated",
+            status=status,
+            portal=actor_role,
+            client_id=member["client_id"],
+            case_id=member["case_id"],
+            endpoint="/api/attorney/recommendation-letter-generator",
+            message="Attorney recommendation letter generated.",
+            metadata={"source": source, "project_type": selected_project["project_type"], "letter_kind": normalized_kind},
+            actor_role=actor.get("role", actor_role),
+            actor_key=actor.get("key", actor_email),
+        )
+        return {"ok": True, "status": status, "source": source, "generated_at": datetime.utcnow().isoformat(timespec="seconds"), "compiled_prompt": compiled_prompt, "letter_record": saved}
 
-    def update_recommendation_letter_status(self, letter_id: str, status: str = "", actor_role: str = "attorney", actor_email: str = "") -> dict:
+    def update_recommendation_letter_status(
+        self,
+        letter_id: str,
+        status: str,
+        actor_role: str = "attorney",
+        actor_email: str = "",
+    ) -> dict:
         letter = one(self.conn, "SELECT * FROM recommendation_letters WHERE id = ?", (letter_id.strip(),))
         if not letter:
             raise ValueError("Recommendation letter not found")
-        next_status = status.strip().lower()
-        if next_status not in {"generated", "approved", "sent_to_member"}:
+        self._assert_member_batch_access(letter["client_id"], actor_role=actor_role, actor_email=actor_email)
+        normalized_status = status.strip().lower()
+        if normalized_status not in {"generated", "approved", "sent_to_member"}:
             raise ValueError("Unsupported recommendation letter status")
-        approved_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if next_status == "approved" else letter.get("approved_at")
-        self.conn.execute("UPDATE recommendation_letters SET status = ?, approved_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (next_status, approved_at, letter["id"]))
+        self.conn.execute(
+            """
+            UPDATE recommendation_letters
+            SET status = ?,
+                approved_at = CASE WHEN ? = 'approved' THEN CURRENT_TIMESTAMP ELSE approved_at END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (normalized_status, normalized_status, letter["id"]),
+        )
         self.conn.commit()
         return self._serialize_recommendation_letter(one(self.conn, "SELECT * FROM recommendation_letters WHERE id = ?", (letter["id"],)))
 
-    def send_recommendation_letter_to_member(self, letter_id: str, actor_role: str = "attorney", actor_email: str = "") -> dict:
+    def send_recommendation_letter_to_member(
+        self,
+        letter_id: str,
+        actor_role: str = "attorney",
+        actor_email: str = "",
+    ) -> dict:
         letter = one(self.conn, "SELECT * FROM recommendation_letters WHERE id = ?", (letter_id.strip(),))
         if not letter:
             raise ValueError("Recommendation letter not found")
-        if letter.get("status") != "approved":
+        if letter["status"] != "approved":
             raise ValueError("Approve recommendation letter before sending it to the member")
+        self._assert_member_batch_access(letter["client_id"], actor_role=actor_role, actor_email=actor_email)
+        member = self._member_case(letter["client_id"])
         serialized = self._serialize_recommendation_letter(letter)
-        self.send_message(
+        project_label = "Critical Role project" if letter["project_type"] == "critical_role" else "Original Contribution project"
+        body = "\n".join(
+            [
+                "A recommendation letter draft is ready for your review and signature.",
+                f"Project category: {project_label}",
+                f"Letter type: {letter['letter_kind'].replace('_', ' ').title()}",
+                f"Download link: {serialized['download_url']}",
+                "Please review the letter carefully, confirm the facts, and coordinate signature next steps with your attorney.",
+            ]
+        )
+        message = self.send_message(
             actor_role,
             "Recommendation letter ready for review",
-            f"A recommendation letter draft is ready for your review and signature.\n\nDownload link: {serialized['download_url']}",
+            body,
             "member",
-            letter["client_id"],
-            False,
-            actor_email,
-            "",
-            "",
-            "",
+            member["client_id"],
+            urgent=True,
+            actor_email=actor_email,
         )
-        sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        self.conn.execute("UPDATE recommendation_letters SET status = 'sent_to_member', sent_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (sent_at, letter["id"]))
+        self.conn.execute(
+            """
+            UPDATE recommendation_letters
+            SET status = 'sent_to_member', sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (letter["id"],),
+        )
         self.conn.commit()
         updated = self._serialize_recommendation_letter(one(self.conn, "SELECT * FROM recommendation_letters WHERE id = ?", (letter["id"],)))
-        return {"ok": True, "status": "sent_to_member", "letter": updated}
+        self.record_operational_event(
+            "recommendation_letter_sent_to_member",
+            status="success",
+            portal=actor_role,
+            client_id=member["client_id"],
+            case_id=member["case_id"],
+            endpoint="/api/attorney/recommendation-letters/send-to-member",
+            message="Attorney sent recommendation letter to member for review.",
+            metadata={"letter_id": letter["id"], "thread_id": message.get("thread_id", "")},
+            actor_role=actor_role,
+            actor_key=self._actor_identity(actor_role, actor_email).get("key", ""),
+        )
+        return {"ok": True, "letter": updated, "message": message}
 
     def recommendation_letter_download(self, letter_id: str) -> dict:
         letter = one(self.conn, "SELECT * FROM recommendation_letters WHERE id = ?", (letter_id.strip(),))
         if not letter:
             raise ValueError("Recommendation letter not found")
-        file_name = safe_file_name(f"{letter.get('project_type', 'project')}-{letter.get('letter_kind', 'recommendation')}-{letter['id']}.txt")
-        return {"file_name": file_name, "content_type": "text/plain; charset=utf-8", "content": letter.get("plain_text", "")}
+        serialized = self._serialize_recommendation_letter(letter)
+        project_type = "Critical Role" if letter["project_type"] == "critical_role" else "Original Contribution"
+        file_name = safe_file_name(f"{project_type}-{letter['letter_kind']}-recommendation-{letter['id']}.txt")
+        return {
+            "file_name": file_name,
+            "content_type": "text/plain; charset=utf-8",
+            "content": serialized.get("plain_text") or serialized.get("letter", {}).get("plain_text", ""),
+        }
 
     def portal_assistant_reply(
         self,
@@ -4932,6 +6594,757 @@ class EvidenceService:
         self.conn.commit()
         return {"ok": True, "status": "password_updated"}
 
+    def _date_range_label(self, start_date: str, end_date: str, is_current: bool = False) -> str:
+        start = start_date.strip()
+        end = end_date.strip()
+        if start and end:
+            return f"{start} to {end}"
+        if start and is_current:
+            return f"{start} to Present"
+        if start:
+            return start
+        if end:
+            return end
+        return "Dates not added yet"
+
+    def _serialize_critical_role_project(self, project: dict | None) -> dict:
+        if not project:
+            return {}
+        return {
+            **project,
+            "is_current_role": bool(project.get("is_current_role")),
+            "workflow_status": str(project.get("workflow_status", "draft") or "draft"),
+            "is_submitted": str(project.get("workflow_status", "draft") or "draft") == "submitted",
+            "role_date_label": self._date_range_label(
+                str(project.get("role_start_date", "")),
+                str(project.get("role_end_date", "")),
+                bool(project.get("is_current_role")),
+            ),
+            "project_date_label": self._date_range_label(
+                str(project.get("project_start_date", "")),
+                str(project.get("project_end_date", "")),
+                False,
+            ),
+            "summary_line": " • ".join(
+                item
+                for item in [
+                    str(project.get("organization_name", "")).strip(),
+                    str(project.get("role_title", "")).strip(),
+                    str(project.get("project_name", "")).strip(),
+                ]
+                if item
+            ) or "Untitled critical role project",
+            "has_export_artifact": bool(str(project.get("export_evidence_id", "")).strip()),
+        }
+
+    def _critical_role_project(self, project_id: str, client_id: str | None = None, case_id: str | None = None) -> dict:
+        project = one(
+            self.conn,
+            """
+            SELECT *
+            FROM critical_role_projects
+            WHERE id = ? AND client_id = ? AND case_id = ?
+            """,
+            (
+                project_id,
+                (client_id or self.config.default_client["client_id"]).strip(),
+                (case_id or self.config.default_client["case_id"]).strip(),
+            ),
+        )
+        if not project:
+            raise ValueError("Critical role project not found")
+        return self._serialize_critical_role_project(project)
+
+    def critical_role_projects(self, client_id: str | None = None, case_id: str | None = None) -> list[dict]:
+        cleaned_client_id = (client_id or self.config.default_client["client_id"]).strip()
+        cleaned_case_id = (case_id or self.config.default_client["case_id"]).strip()
+        project_rows = rows(
+            self.conn,
+            """
+            SELECT *
+            FROM critical_role_projects
+            WHERE client_id = ? AND case_id = ?
+            ORDER BY is_current_role DESC, COALESCE(project_end_date, '') DESC, COALESCE(project_start_date, '') DESC, updated_at DESC
+            """,
+            (cleaned_client_id, cleaned_case_id),
+        )
+        return [self._serialize_critical_role_project(item) for item in project_rows]
+
+    def _normalized_critical_role_project_fields(self, fields: dict) -> dict:
+        cleaned: dict[str, object] = {}
+        tracked_fields = {
+            "organization_name",
+            "organization_unit",
+            "organization_location",
+            "organization_website",
+            "employment_type",
+            "role_title",
+            "role_start_date",
+            "role_end_date",
+            "is_current_role",
+            "project_name",
+            "project_start_date",
+            "project_end_date",
+            "project_status",
+            "organization_achievements",
+            "organization_distinctiveness",
+            "role_summary",
+            "role_responsibilities",
+            "role_evolution",
+            "leadership_scope",
+            "cross_functional_partners",
+            "project_summary",
+            "business_need",
+            "strategic_importance",
+            "contributions_summary",
+            "innovation_originality",
+            "business_value_summary",
+            "quantitative_metrics",
+            "revenue_impact",
+            "cost_savings",
+            "efficiency_gain",
+            "user_or_customer_impact",
+            "market_or_geographic_impact",
+            "compliance_or_risk_impact",
+            "peer_distinction_summary",
+            "mentorship_leadership",
+            "executive_visibility",
+            "evidence_available",
+            "attorney_friendly_summary",
+            "workflow_status",
+        }
+        for key in tracked_fields:
+            if key == "is_current_role":
+                cleaned[key] = 1 if bool(fields.get(key)) else 0
+            else:
+                cleaned[key] = str(fields.get(key, "") or "").strip()
+        if cleaned["is_current_role"]:
+            cleaned["role_end_date"] = ""
+        return cleaned
+
+    def _validate_critical_role_project(self, project: dict) -> None:
+        if str(project.get("workflow_status", "draft")) != "submitted":
+            return
+        if not str(project.get("organization_name", "")).strip():
+            raise ValueError("organization_name is required")
+        if not str(project.get("role_title", "")).strip():
+            raise ValueError("role_title is required")
+        if not str(project.get("project_name", "")).strip():
+            raise ValueError("project_name is required")
+        if not str(project.get("role_summary", "")).strip():
+            raise ValueError("role_summary is required")
+        if not str(project.get("contributions_summary", "")).strip():
+            raise ValueError("contributions_summary is required")
+        if not str(project.get("business_value_summary", "")).strip():
+            raise ValueError("business_value_summary is required")
+
+    def create_critical_role_project(self, client_id: str | None = None, case_id: str | None = None, **fields) -> dict:
+        cleaned_client_id = (client_id or self.config.default_client["client_id"]).strip()
+        cleaned_case_id = (case_id or self.config.default_client["case_id"]).strip()
+        payload = self._normalized_critical_role_project_fields(fields)
+        self._validate_critical_role_project(payload)
+        project_id = f"crp_{uuid.uuid4().hex[:12]}"
+        self.conn.execute(
+            """
+            INSERT INTO critical_role_projects(
+              id, client_id, case_id, organization_name, organization_unit, organization_location,
+              organization_website, employment_type, role_title, role_start_date, role_end_date,
+              is_current_role, project_name, project_start_date, project_end_date, project_status,
+              organization_achievements, organization_distinctiveness, role_summary, role_responsibilities,
+              role_evolution, leadership_scope, cross_functional_partners, project_summary,
+              business_need, strategic_importance, contributions_summary, innovation_originality,
+              business_value_summary, quantitative_metrics, revenue_impact, cost_savings,
+              efficiency_gain, user_or_customer_impact, market_or_geographic_impact,
+              compliance_or_risk_impact, peer_distinction_summary, mentorship_leadership,
+              executive_visibility, evidence_available, attorney_friendly_summary, workflow_status, submitted_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                project_id,
+                cleaned_client_id,
+                cleaned_case_id,
+                payload["organization_name"],
+                payload["organization_unit"],
+                payload["organization_location"],
+                payload["organization_website"],
+                payload["employment_type"],
+                payload["role_title"],
+                payload["role_start_date"],
+                payload["role_end_date"],
+                payload["is_current_role"],
+                payload["project_name"],
+                payload["project_start_date"],
+                payload["project_end_date"],
+                payload["project_status"],
+                payload["organization_achievements"],
+                payload["organization_distinctiveness"],
+                payload["role_summary"],
+                payload["role_responsibilities"],
+                payload["role_evolution"],
+                payload["leadership_scope"],
+                payload["cross_functional_partners"],
+                payload["project_summary"],
+                payload["business_need"],
+                payload["strategic_importance"],
+                payload["contributions_summary"],
+                payload["innovation_originality"],
+                payload["business_value_summary"],
+                payload["quantitative_metrics"],
+                payload["revenue_impact"],
+                payload["cost_savings"],
+                payload["efficiency_gain"],
+                payload["user_or_customer_impact"],
+                payload["market_or_geographic_impact"],
+                payload["compliance_or_risk_impact"],
+                payload["peer_distinction_summary"],
+                payload["mentorship_leadership"],
+                payload["executive_visibility"],
+                payload["evidence_available"],
+                payload["attorney_friendly_summary"],
+                payload["workflow_status"],
+                datetime.now(timezone.utc).isoformat(timespec="seconds") if payload["workflow_status"] == "submitted" else None,
+            ),
+        )
+        self.conn.commit()
+        saved = (
+            self._sync_critical_role_export(project_id, cleaned_client_id, cleaned_case_id)
+            if payload["workflow_status"] == "submitted"
+            else self._critical_role_project(project_id, cleaned_client_id, cleaned_case_id)
+        )
+        self.record_operational_event(
+            "critical_role_project_submitted" if payload["workflow_status"] == "submitted" else "critical_role_project_draft_saved",
+            status="success",
+            portal="member",
+            client_id=cleaned_client_id,
+            case_id=cleaned_case_id,
+            endpoint="/api/member/critical-role-projects",
+            message="Member submitted a critical role project." if payload["workflow_status"] == "submitted" else "Member saved a critical role draft.",
+            metadata={
+                "project_id": project_id,
+                "project_name": payload["project_name"],
+                "organization_name": payload["organization_name"],
+                "workflow_status": payload["workflow_status"],
+                "export_generated": payload["workflow_status"] == "submitted",
+            },
+            actor_role="member",
+            actor_key=cleaned_client_id,
+        )
+        return saved
+
+    def update_critical_role_project(self, project_id: str, client_id: str | None = None, case_id: str | None = None, **fields) -> dict:
+        existing = self._critical_role_project(project_id, client_id, case_id)
+        payload = self._normalized_critical_role_project_fields({**existing, **fields})
+        self._validate_critical_role_project(payload)
+        self.conn.execute(
+            """
+            UPDATE critical_role_projects
+            SET organization_name = ?,
+                organization_unit = ?,
+                organization_location = ?,
+                organization_website = ?,
+                employment_type = ?,
+                role_title = ?,
+                role_start_date = ?,
+                role_end_date = ?,
+                is_current_role = ?,
+                project_name = ?,
+                project_start_date = ?,
+                project_end_date = ?,
+                project_status = ?,
+                organization_achievements = ?,
+                organization_distinctiveness = ?,
+                role_summary = ?,
+                role_responsibilities = ?,
+                role_evolution = ?,
+                leadership_scope = ?,
+                cross_functional_partners = ?,
+                project_summary = ?,
+                business_need = ?,
+                strategic_importance = ?,
+                contributions_summary = ?,
+                innovation_originality = ?,
+                business_value_summary = ?,
+                quantitative_metrics = ?,
+                revenue_impact = ?,
+                cost_savings = ?,
+                efficiency_gain = ?,
+                user_or_customer_impact = ?,
+                market_or_geographic_impact = ?,
+                compliance_or_risk_impact = ?,
+                peer_distinction_summary = ?,
+                mentorship_leadership = ?,
+                executive_visibility = ?,
+                evidence_available = ?,
+                attorney_friendly_summary = ?,
+                workflow_status = ?,
+                submitted_at = CASE WHEN ? = 'submitted' THEN COALESCE(submitted_at, CURRENT_TIMESTAMP) ELSE NULL END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND client_id = ? AND case_id = ?
+            """,
+            (
+                payload["organization_name"],
+                payload["organization_unit"],
+                payload["organization_location"],
+                payload["organization_website"],
+                payload["employment_type"],
+                payload["role_title"],
+                payload["role_start_date"],
+                payload["role_end_date"],
+                payload["is_current_role"],
+                payload["project_name"],
+                payload["project_start_date"],
+                payload["project_end_date"],
+                payload["project_status"],
+                payload["organization_achievements"],
+                payload["organization_distinctiveness"],
+                payload["role_summary"],
+                payload["role_responsibilities"],
+                payload["role_evolution"],
+                payload["leadership_scope"],
+                payload["cross_functional_partners"],
+                payload["project_summary"],
+                payload["business_need"],
+                payload["strategic_importance"],
+                payload["contributions_summary"],
+                payload["innovation_originality"],
+                payload["business_value_summary"],
+                payload["quantitative_metrics"],
+                payload["revenue_impact"],
+                payload["cost_savings"],
+                payload["efficiency_gain"],
+                payload["user_or_customer_impact"],
+                payload["market_or_geographic_impact"],
+                payload["compliance_or_risk_impact"],
+                payload["peer_distinction_summary"],
+                payload["mentorship_leadership"],
+                payload["executive_visibility"],
+                payload["evidence_available"],
+                payload["attorney_friendly_summary"],
+                payload["workflow_status"],
+                payload["workflow_status"],
+                project_id,
+                existing["client_id"],
+                existing["case_id"],
+            ),
+        )
+        self.conn.commit()
+        if payload["workflow_status"] == "submitted":
+            saved = self._sync_critical_role_export(project_id, existing["client_id"], existing["case_id"])
+        else:
+            if str(existing.get("export_evidence_id", "")).strip():
+                self._clear_critical_role_export(existing, "critical_role_reverted_to_draft")
+            saved = self._critical_role_project(project_id, existing["client_id"], existing["case_id"])
+        self.record_operational_event(
+            "critical_role_project_submitted" if payload["workflow_status"] == "submitted" else "critical_role_project_draft_saved",
+            status="success",
+            portal="member",
+            client_id=existing["client_id"],
+            case_id=existing["case_id"],
+            endpoint=f"/api/member/critical-role-projects/{project_id}",
+            message="Member updated and submitted a critical role project." if payload["workflow_status"] == "submitted" else "Member updated a critical role draft.",
+            metadata={
+                "project_id": project_id,
+                "project_name": payload["project_name"],
+                "organization_name": payload["organization_name"],
+                "workflow_status": payload["workflow_status"],
+                "export_generated": payload["workflow_status"] == "submitted",
+            },
+            actor_role="member",
+            actor_key=existing["client_id"],
+        )
+        return saved
+
+    def delete_critical_role_project(self, project_id: str, client_id: str | None = None, case_id: str | None = None) -> dict:
+        project = self._critical_role_project(project_id, client_id, case_id)
+        export_evidence_id = str(project.get("export_evidence_id", "")).strip()
+        if export_evidence_id:
+            record = one(self.conn, "SELECT * FROM evidence_items WHERE id = ? AND status != 'archived'", (export_evidence_id,))
+            if record:
+                self.archive_evidence_record(record, "critical_role_export_deleted")
+        self.conn.execute(
+            "DELETE FROM critical_role_projects WHERE id = ? AND client_id = ? AND case_id = ?",
+            (project_id, project["client_id"], project["case_id"]),
+        )
+        self.conn.commit()
+        self.record_operational_event(
+            "critical_role_project_deleted",
+            status="success",
+            portal="member",
+            client_id=project["client_id"],
+            case_id=project["case_id"],
+            endpoint=f"/api/member/critical-role-projects/{project_id}",
+            message="Member deleted a critical role project.",
+            metadata={
+                "project_id": project_id,
+                "project_name": project.get("project_name", ""),
+                "organization_name": project.get("organization_name", ""),
+                "archived_export_evidence_id": export_evidence_id,
+                "deleted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            },
+            actor_role="member",
+            actor_key=project["client_id"],
+        )
+        return {"ok": True, "status": "deleted", "project_id": project_id}
+
+    def _serialize_original_contribution_entry(self, entry: dict | None) -> dict:
+        if not entry:
+            return {}
+        return {
+            **entry,
+            "workflow_status": str(entry.get("workflow_status", "draft") or "draft"),
+            "is_submitted": str(entry.get("workflow_status", "draft") or "draft") == "submitted",
+            "date_label": self._date_range_label(
+                str(entry.get("contribution_start_date", "")),
+                str(entry.get("contribution_end_date", "")),
+                False,
+            ),
+            "summary_line": " • ".join(
+                item
+                for item in [
+                    str(entry.get("contribution_title", "")).strip(),
+                    str(entry.get("organization_name", "")).strip(),
+                    str(entry.get("contribution_category", "")).strip(),
+                ]
+                if item
+            ) or "Untitled original contribution",
+            "has_export_artifact": bool(str(entry.get("export_evidence_id", "")).strip()),
+        }
+
+    def _original_contribution_entry(self, entry_id: str, client_id: str | None = None, case_id: str | None = None) -> dict:
+        entry = one(
+            self.conn,
+            """
+            SELECT *
+            FROM original_contribution_entries
+            WHERE id = ? AND client_id = ? AND case_id = ?
+            """,
+            (
+                entry_id,
+                (client_id or self.config.default_client["client_id"]).strip(),
+                (case_id or self.config.default_client["case_id"]).strip(),
+            ),
+        )
+        if not entry:
+            raise ValueError("Original contribution entry not found")
+        return self._serialize_original_contribution_entry(entry)
+
+    def original_contribution_entries(self, client_id: str | None = None, case_id: str | None = None) -> list[dict]:
+        cleaned_client_id = (client_id or self.config.default_client["client_id"]).strip()
+        cleaned_case_id = (case_id or self.config.default_client["case_id"]).strip()
+        entry_rows = rows(
+            self.conn,
+            """
+            SELECT *
+            FROM original_contribution_entries
+            WHERE client_id = ? AND case_id = ?
+            ORDER BY COALESCE(contribution_end_date, '') DESC, COALESCE(contribution_start_date, '') DESC, updated_at DESC
+            """,
+            (cleaned_client_id, cleaned_case_id),
+        )
+        return [self._serialize_original_contribution_entry(item) for item in entry_rows]
+
+    def _normalized_original_contribution_fields(self, fields: dict) -> dict:
+        cleaned: dict[str, str] = {}
+        tracked_fields = {
+            "contribution_title",
+            "contribution_category",
+            "field_of_expertise",
+            "job_title",
+            "organization_name",
+            "project_name",
+            "contribution_start_date",
+            "contribution_end_date",
+            "contribution_status",
+            "originality_summary",
+            "challenging_paradigms",
+            "prior_state_of_field",
+            "work_vs_external_context",
+            "personal_role",
+            "distinct_contribution_summary",
+            "technical_or_business_problem",
+            "solution_or_innovation",
+            "unique_features",
+            "impact_metrics",
+            "adoption_scale",
+            "beneficiary_summary",
+            "time_savings",
+            "cost_savings",
+            "revenue_impact",
+            "quality_or_risk_impact",
+            "field_wide_impact",
+            "recognition_and_influence",
+            "media_or_public_mentions",
+            "adoption_letters_targets",
+            "evidence_available",
+            "attorney_friendly_summary",
+            "workflow_status",
+        }
+        for key in tracked_fields:
+            cleaned[key] = str(fields.get(key, "") or "").strip()
+        return cleaned
+
+    def _validate_original_contribution_entry(self, entry: dict) -> None:
+        if str(entry.get("workflow_status", "draft")) != "submitted":
+            return
+        if not str(entry.get("contribution_title", "")).strip():
+            raise ValueError("contribution_title is required")
+        if not str(entry.get("originality_summary", "")).strip():
+            raise ValueError("originality_summary is required")
+        if not str(entry.get("distinct_contribution_summary", "")).strip():
+            raise ValueError("distinct_contribution_summary is required")
+        if not str(entry.get("impact_metrics", "")).strip():
+            raise ValueError("impact_metrics is required")
+        if not str(entry.get("field_wide_impact", "")).strip():
+            raise ValueError("field_wide_impact is required")
+
+    def create_original_contribution_entry(self, client_id: str | None = None, case_id: str | None = None, **fields) -> dict:
+        cleaned_client_id = (client_id or self.config.default_client["client_id"]).strip()
+        cleaned_case_id = (case_id or self.config.default_client["case_id"]).strip()
+        payload = self._normalized_original_contribution_fields(fields)
+        self._validate_original_contribution_entry(payload)
+        entry_id = f"oce_{uuid.uuid4().hex[:12]}"
+        self.conn.execute(
+            """
+            INSERT INTO original_contribution_entries(
+              id, client_id, case_id, contribution_title, contribution_category, field_of_expertise,
+              job_title, organization_name, project_name, contribution_start_date, contribution_end_date,
+              contribution_status, originality_summary, challenging_paradigms, prior_state_of_field,
+              work_vs_external_context, personal_role, distinct_contribution_summary,
+              technical_or_business_problem, solution_or_innovation, unique_features,
+              impact_metrics, adoption_scale, beneficiary_summary, time_savings, cost_savings,
+              revenue_impact, quality_or_risk_impact, field_wide_impact, recognition_and_influence,
+              media_or_public_mentions, adoption_letters_targets, evidence_available, attorney_friendly_summary, workflow_status, submitted_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                entry_id,
+                cleaned_client_id,
+                cleaned_case_id,
+                payload["contribution_title"],
+                payload["contribution_category"],
+                payload["field_of_expertise"],
+                payload["job_title"],
+                payload["organization_name"],
+                payload["project_name"],
+                payload["contribution_start_date"],
+                payload["contribution_end_date"],
+                payload["contribution_status"],
+                payload["originality_summary"],
+                payload["challenging_paradigms"],
+                payload["prior_state_of_field"],
+                payload["work_vs_external_context"],
+                payload["personal_role"],
+                payload["distinct_contribution_summary"],
+                payload["technical_or_business_problem"],
+                payload["solution_or_innovation"],
+                payload["unique_features"],
+                payload["impact_metrics"],
+                payload["adoption_scale"],
+                payload["beneficiary_summary"],
+                payload["time_savings"],
+                payload["cost_savings"],
+                payload["revenue_impact"],
+                payload["quality_or_risk_impact"],
+                payload["field_wide_impact"],
+                payload["recognition_and_influence"],
+                payload["media_or_public_mentions"],
+                payload["adoption_letters_targets"],
+                payload["evidence_available"],
+                payload["attorney_friendly_summary"],
+                payload["workflow_status"],
+                datetime.now(timezone.utc).isoformat(timespec="seconds") if payload["workflow_status"] == "submitted" else None,
+            ),
+        )
+        self.conn.commit()
+        saved = (
+            self._sync_original_contribution_export(entry_id, cleaned_client_id, cleaned_case_id)
+            if payload["workflow_status"] == "submitted"
+            else self._original_contribution_entry(entry_id, cleaned_client_id, cleaned_case_id)
+        )
+        self.record_operational_event(
+            "original_contribution_submitted" if payload["workflow_status"] == "submitted" else "original_contribution_draft_saved",
+            status="success",
+            portal="member",
+            client_id=cleaned_client_id,
+            case_id=cleaned_case_id,
+            endpoint="/api/member/original-contributions",
+            message="Member submitted an original contribution." if payload["workflow_status"] == "submitted" else "Member saved an original contribution draft.",
+            metadata={
+                "entry_id": entry_id,
+                "contribution_title": payload["contribution_title"],
+                "organization_name": payload["organization_name"],
+                "workflow_status": payload["workflow_status"],
+                "export_generated": payload["workflow_status"] == "submitted",
+            },
+            actor_role="member",
+            actor_key=cleaned_client_id,
+        )
+        return saved
+
+    def update_original_contribution_entry(self, entry_id: str, client_id: str | None = None, case_id: str | None = None, **fields) -> dict:
+        existing = self._original_contribution_entry(entry_id, client_id, case_id)
+        payload = self._normalized_original_contribution_fields({**existing, **fields})
+        self._validate_original_contribution_entry(payload)
+        self.conn.execute(
+            """
+            UPDATE original_contribution_entries
+            SET contribution_title = ?,
+                contribution_category = ?,
+                field_of_expertise = ?,
+                job_title = ?,
+                organization_name = ?,
+                project_name = ?,
+                contribution_start_date = ?,
+                contribution_end_date = ?,
+                contribution_status = ?,
+                originality_summary = ?,
+                challenging_paradigms = ?,
+                prior_state_of_field = ?,
+                work_vs_external_context = ?,
+                personal_role = ?,
+                distinct_contribution_summary = ?,
+                technical_or_business_problem = ?,
+                solution_or_innovation = ?,
+                unique_features = ?,
+                impact_metrics = ?,
+                adoption_scale = ?,
+                beneficiary_summary = ?,
+                time_savings = ?,
+                cost_savings = ?,
+                revenue_impact = ?,
+                quality_or_risk_impact = ?,
+                field_wide_impact = ?,
+                recognition_and_influence = ?,
+                media_or_public_mentions = ?,
+                adoption_letters_targets = ?,
+                evidence_available = ?,
+                attorney_friendly_summary = ?,
+                workflow_status = ?,
+                submitted_at = CASE WHEN ? = 'submitted' THEN COALESCE(submitted_at, CURRENT_TIMESTAMP) ELSE NULL END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND client_id = ? AND case_id = ?
+            """,
+            (
+                payload["contribution_title"],
+                payload["contribution_category"],
+                payload["field_of_expertise"],
+                payload["job_title"],
+                payload["organization_name"],
+                payload["project_name"],
+                payload["contribution_start_date"],
+                payload["contribution_end_date"],
+                payload["contribution_status"],
+                payload["originality_summary"],
+                payload["challenging_paradigms"],
+                payload["prior_state_of_field"],
+                payload["work_vs_external_context"],
+                payload["personal_role"],
+                payload["distinct_contribution_summary"],
+                payload["technical_or_business_problem"],
+                payload["solution_or_innovation"],
+                payload["unique_features"],
+                payload["impact_metrics"],
+                payload["adoption_scale"],
+                payload["beneficiary_summary"],
+                payload["time_savings"],
+                payload["cost_savings"],
+                payload["revenue_impact"],
+                payload["quality_or_risk_impact"],
+                payload["field_wide_impact"],
+                payload["recognition_and_influence"],
+                payload["media_or_public_mentions"],
+                payload["adoption_letters_targets"],
+                payload["evidence_available"],
+                payload["attorney_friendly_summary"],
+                payload["workflow_status"],
+                payload["workflow_status"],
+                entry_id,
+                existing["client_id"],
+                existing["case_id"],
+            ),
+        )
+        self.conn.commit()
+        if payload["workflow_status"] == "submitted":
+            saved = self._sync_original_contribution_export(entry_id, existing["client_id"], existing["case_id"])
+        else:
+            if str(existing.get("export_evidence_id", "")).strip():
+                self._clear_original_contribution_export(existing, "original_contribution_reverted_to_draft")
+            saved = self._original_contribution_entry(entry_id, existing["client_id"], existing["case_id"])
+        self.record_operational_event(
+            "original_contribution_submitted" if payload["workflow_status"] == "submitted" else "original_contribution_draft_saved",
+            status="success",
+            portal="member",
+            client_id=existing["client_id"],
+            case_id=existing["case_id"],
+            endpoint=f"/api/member/original-contributions/{entry_id}",
+            message="Member updated and submitted an original contribution." if payload["workflow_status"] == "submitted" else "Member updated an original contribution draft.",
+            metadata={
+                "entry_id": entry_id,
+                "contribution_title": payload["contribution_title"],
+                "organization_name": payload["organization_name"],
+                "workflow_status": payload["workflow_status"],
+                "export_generated": payload["workflow_status"] == "submitted",
+            },
+            actor_role="member",
+            actor_key=existing["client_id"],
+        )
+        return saved
+
+    def delete_original_contribution_entry(self, entry_id: str, client_id: str | None = None, case_id: str | None = None) -> dict:
+        entry = self._original_contribution_entry(entry_id, client_id, case_id)
+        export_evidence_id = str(entry.get("export_evidence_id", "")).strip()
+        if export_evidence_id:
+            record = one(self.conn, "SELECT * FROM evidence_items WHERE id = ? AND status != 'archived'", (export_evidence_id,))
+            if record:
+                self.archive_evidence_record(record, "original_contribution_export_deleted")
+        self.conn.execute(
+            "DELETE FROM original_contribution_entries WHERE id = ? AND client_id = ? AND case_id = ?",
+            (entry_id, entry["client_id"], entry["case_id"]),
+        )
+        self.conn.commit()
+        self.record_operational_event(
+            "original_contribution_deleted",
+            status="success",
+            portal="member",
+            client_id=entry["client_id"],
+            case_id=entry["case_id"],
+            endpoint=f"/api/member/original-contributions/{entry_id}",
+            message="Member deleted an original contribution.",
+            metadata={
+                "entry_id": entry_id,
+                "contribution_title": entry.get("contribution_title", ""),
+                "organization_name": entry.get("organization_name", ""),
+                "archived_export_evidence_id": export_evidence_id,
+                "deleted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            },
+            actor_role="member",
+            actor_key=entry["client_id"],
+        )
+        return {"ok": True, "status": "deleted", "entry_id": entry_id}
+
+    def _decorate_export_records(self, records: list[dict], evidence_lookup: dict[str, dict]) -> list[dict]:
+        decorated_records: list[dict] = []
+        for record in records:
+            enriched = dict(record)
+            export_id = str(record.get("export_evidence_id", "")).strip()
+            export = evidence_lookup.get(export_id)
+            if export:
+                enriched["export_title"] = export.get("title", "")
+                enriched["export_file_name"] = export.get("file_name", "")
+                enriched["export_open_url"] = export.get("open_url", "")
+                enriched["export_drive_web_url"] = export.get("drive_web_url", "")
+                enriched["export_created_at"] = export.get("created_at", "")
+            else:
+                enriched["export_title"] = ""
+                enriched["export_file_name"] = ""
+                enriched["export_open_url"] = ""
+                enriched["export_drive_web_url"] = ""
+                enriched["export_created_at"] = ""
+            decorated_records.append(enriched)
+        return decorated_records
+
     def member_profile(self, client_id: str | None = None, case_id: str | None = None) -> dict:
         client = {
             "client_id": (client_id or self.config.default_client["client_id"]).strip(),
@@ -4945,128 +7358,21 @@ class EvidenceService:
         if not profile:
             raise ValueError("Member profile not found")
         profile["profile_confirmed"] = bool(profile.get("profile_confirmed"))
+        self._backfill_missing_narrative_exports(client["client_id"], client["case_id"])
+        evidence = self._assistant_evidence(client["client_id"], client["case_id"])
+        evidence_lookup = {item["id"]: item for item in evidence}
+        profile["critical_role_projects"] = self._decorate_export_records(
+            self.critical_role_projects(client["client_id"], client["case_id"]),
+            evidence_lookup,
+        )
+        profile["critical_role_project_count"] = len(profile["critical_role_projects"])
+        profile["original_contribution_entries"] = self._decorate_export_records(
+            self.original_contribution_entries(client["client_id"], client["case_id"]),
+            evidence_lookup,
+        )
+        profile["original_contribution_entry_count"] = len(profile["original_contribution_entries"])
         profile["completion_score"] = self._profile_completion_score(profile)
-        profile["critical_role_projects"] = self.critical_role_projects(client["client_id"], client["case_id"])
-        profile["original_contribution_entries"] = self.original_contribution_entries(client["client_id"], client["case_id"])
         return profile
-
-    def _project_date_label(self, start: str, end: str, is_current: bool = False) -> str:
-        if start and (end or is_current):
-            return f"{start} to {'Present' if is_current else end}"
-        return start or end or "Dates not added yet"
-
-    def _serialize_critical_role_project(self, item: dict | None) -> dict:
-        if not item:
-            return {}
-        decorated = dict(item)
-        decorated["is_current_role"] = bool(decorated.get("is_current_role"))
-        decorated["is_submitted"] = decorated.get("workflow_status") == "submitted"
-        decorated["role_date_label"] = self._project_date_label(decorated.get("role_start_date", ""), decorated.get("role_end_date", ""), decorated["is_current_role"])
-        decorated["project_date_label"] = self._project_date_label(decorated.get("project_start_date", ""), decorated.get("project_end_date", ""))
-        return decorated
-
-    def _serialize_original_contribution(self, item: dict | None) -> dict:
-        if not item:
-            return {}
-        decorated = dict(item)
-        decorated["is_submitted"] = decorated.get("workflow_status") == "submitted"
-        decorated["date_label"] = self._project_date_label(decorated.get("contribution_start_date", ""), decorated.get("contribution_end_date", ""))
-        decorated["summary_line"] = decorated.get("impact_metrics") or decorated.get("field_wide_impact") or decorated.get("adoption_scale") or ""
-        return decorated
-
-    def critical_role_projects(self, client_id: str, case_id: str) -> list[dict]:
-        records = rows(
-            self.conn,
-            """
-            SELECT *
-            FROM critical_role_projects
-            WHERE client_id = ? AND case_id = ? AND (deleted_at IS NULL OR deleted_at = '')
-            ORDER BY updated_at DESC, created_at DESC
-            """,
-            (client_id, case_id),
-        )
-        return [self._serialize_critical_role_project(item) for item in records]
-
-    def original_contribution_entries(self, client_id: str, case_id: str) -> list[dict]:
-        records = rows(
-            self.conn,
-            """
-            SELECT *
-            FROM original_contribution_entries
-            WHERE client_id = ? AND case_id = ? AND (deleted_at IS NULL OR deleted_at = '')
-            ORDER BY updated_at DESC, created_at DESC
-            """,
-            (client_id, case_id),
-        )
-        return [self._serialize_original_contribution(item) for item in records]
-
-    def save_critical_role_project(self, client_id: str, case_id: str, project_id: str = "", **fields) -> dict:
-        self._member_case(client_id)
-        cleaned = {key: (1 if str(fields.get(key, "")).lower() in {"true", "1", "yes", "on"} else 0) if key == "is_current_role" else str(fields.get(key, "") or "").strip() for key in CRITICAL_ROLE_FIELDS}
-        cleaned["workflow_status"] = cleaned.get("workflow_status") if cleaned.get("workflow_status") in {"draft", "submitted"} else "draft"
-        submitted_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if cleaned["workflow_status"] == "submitted" else None
-        if project_id:
-            existing = one(self.conn, "SELECT * FROM critical_role_projects WHERE id = ? AND client_id = ? AND case_id = ? AND (deleted_at IS NULL OR deleted_at = '')", (project_id, client_id, case_id))
-            if not existing:
-                raise ValueError("Critical role project not found")
-            assignments = ", ".join([f"{key} = ?" for key in CRITICAL_ROLE_FIELDS] + ["submitted_at = ?", "updated_at = CURRENT_TIMESTAMP"])
-            self.conn.execute(
-                f"UPDATE critical_role_projects SET {assignments} WHERE id = ?",
-                tuple(cleaned[key] for key in CRITICAL_ROLE_FIELDS) + (submitted_at if submitted_at else existing.get("submitted_at"), project_id),
-            )
-            saved_id = project_id
-        else:
-            saved_id = f"crp_{uuid.uuid4().hex[:12]}"
-            columns = ["id", "client_id", "case_id"] + CRITICAL_ROLE_FIELDS + ["submitted_at"]
-            placeholders = ", ".join(["?"] * len(columns))
-            self.conn.execute(
-                f"INSERT INTO critical_role_projects({', '.join(columns)}) VALUES ({placeholders})",
-                (saved_id, client_id, case_id) + tuple(cleaned[key] for key in CRITICAL_ROLE_FIELDS) + (submitted_at,),
-            )
-        self.conn.commit()
-        return self._serialize_critical_role_project(one(self.conn, "SELECT * FROM critical_role_projects WHERE id = ?", (saved_id,)))
-
-    def delete_critical_role_project(self, client_id: str, case_id: str, project_id: str) -> dict:
-        existing = one(self.conn, "SELECT * FROM critical_role_projects WHERE id = ? AND client_id = ? AND case_id = ? AND (deleted_at IS NULL OR deleted_at = '')", (project_id, client_id, case_id))
-        if not existing:
-            raise ValueError("Critical role project not found")
-        self.conn.execute("UPDATE critical_role_projects SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (project_id,))
-        self.conn.commit()
-        return {"ok": True, "status": "archived", "id": project_id}
-
-    def save_original_contribution(self, client_id: str, case_id: str, entry_id: str = "", **fields) -> dict:
-        self._member_case(client_id)
-        cleaned = {key: str(fields.get(key, "") or "").strip() for key in ORIGINAL_CONTRIBUTION_FIELDS}
-        cleaned["workflow_status"] = cleaned.get("workflow_status") if cleaned.get("workflow_status") in {"draft", "submitted"} else "draft"
-        submitted_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if cleaned["workflow_status"] == "submitted" else None
-        if entry_id:
-            existing = one(self.conn, "SELECT * FROM original_contribution_entries WHERE id = ? AND client_id = ? AND case_id = ? AND (deleted_at IS NULL OR deleted_at = '')", (entry_id, client_id, case_id))
-            if not existing:
-                raise ValueError("Original contribution not found")
-            assignments = ", ".join([f"{key} = ?" for key in ORIGINAL_CONTRIBUTION_FIELDS] + ["submitted_at = ?", "updated_at = CURRENT_TIMESTAMP"])
-            self.conn.execute(
-                f"UPDATE original_contribution_entries SET {assignments} WHERE id = ?",
-                tuple(cleaned[key] for key in ORIGINAL_CONTRIBUTION_FIELDS) + (submitted_at if submitted_at else existing.get("submitted_at"), entry_id),
-            )
-            saved_id = entry_id
-        else:
-            saved_id = f"ocp_{uuid.uuid4().hex[:12]}"
-            columns = ["id", "client_id", "case_id"] + ORIGINAL_CONTRIBUTION_FIELDS + ["submitted_at"]
-            placeholders = ", ".join(["?"] * len(columns))
-            self.conn.execute(
-                f"INSERT INTO original_contribution_entries({', '.join(columns)}) VALUES ({placeholders})",
-                (saved_id, client_id, case_id) + tuple(cleaned[key] for key in ORIGINAL_CONTRIBUTION_FIELDS) + (submitted_at,),
-            )
-        self.conn.commit()
-        return self._serialize_original_contribution(one(self.conn, "SELECT * FROM original_contribution_entries WHERE id = ?", (saved_id,)))
-
-    def delete_original_contribution(self, client_id: str, case_id: str, entry_id: str) -> dict:
-        existing = one(self.conn, "SELECT * FROM original_contribution_entries WHERE id = ? AND client_id = ? AND case_id = ? AND (deleted_at IS NULL OR deleted_at = '')", (entry_id, client_id, case_id))
-        if not existing:
-            raise ValueError("Original contribution not found")
-        self.conn.execute("UPDATE original_contribution_entries SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (entry_id,))
-        self.conn.commit()
-        return {"ok": True, "status": "archived", "id": entry_id}
 
     def update_member_profile(self, client_id: str | None = None, case_id: str | None = None, **fields) -> dict:
         existing = self.member_profile(client_id=client_id, case_id=case_id)
@@ -5233,34 +7539,16 @@ class EvidenceService:
 
     def evidence(self, search: str = "") -> list[dict]:
         if search:
-            tokens = [token.strip().lower() for token in search.split() if token.strip()]
-            if not tokens:
-                return rows(self.conn, "SELECT * FROM evidence_items WHERE status != 'archived' ORDER BY created_at DESC")
-            token_clause = " AND ".join(
-                [
-                    "("
-                    "LOWER(COALESCE(s.title, '')) LIKE ? OR "
-                    "LOWER(COALESCE(s.description, '')) LIKE ? OR "
-                    "LOWER(COALESCE(s.file_name, '')) LIKE ? OR "
-                    "LOWER(COALESCE(s.ai_summary, '')) LIKE ?"
-                    ")"
-                    for _ in tokens
-                ]
-            )
-            params: list[str] = []
-            for token in tokens:
-                like = f"%{token}%"
-                params.extend([like, like, like, like])
             return rows(
                 self.conn,
-                f"""
+                """
                 SELECT e.*
                 FROM evidence_search s
                 JOIN evidence_items e ON e.id = s.evidence_id
-                WHERE e.status != 'archived' AND {token_clause}
+                WHERE evidence_search MATCH ? AND e.status != 'archived'
                 ORDER BY e.created_at DESC
                 """,
-                tuple(params),
+                (search,),
             )
         return rows(self.conn, "SELECT * FROM evidence_items WHERE status != 'archived' ORDER BY created_at DESC")
 
@@ -5519,7 +7807,22 @@ class EvidenceService:
         with tempfile.NamedTemporaryFile(delete=True) as tmp:
             tmp.write(file_bytes)
             tmp.flush()
-            stored = self.storage.store(client_id, case_id, criterion_code, file_name, Path(tmp.name))
+            try:
+                stored = self.storage.store(client_id, case_id, criterion_code, file_name, Path(tmp.name))
+            except (GoogleDriveConfigError, GoogleDriveUploadError) as exc:
+                local_storage = EvidenceStorage(self.config.upload_root, self.config.drive_mirror_root, None)
+                stored = local_storage.store(client_id, case_id, criterion_code, file_name, Path(tmp.name))
+                self.record_operational_event(
+                    "evidence_storage_fallback",
+                    status="fallback",
+                    portal="member",
+                    client_id=client_id,
+                    case_id=case_id,
+                    endpoint="/api/evidence",
+                    error_code=exc.__class__.__name__,
+                    message="Evidence stored in local mirror because remote storage was unavailable.",
+                    metadata={"criterion_code": criterion_code, "file_name": file_name},
+                )
 
         if ai_summary:
             summary = ai_summary
@@ -5609,6 +7912,232 @@ class EvidenceService:
             "drive_file_id": stored.drive_file_id,
             "drive_web_url": stored.drive_web_url,
         }
+
+    def _generated_export_file_name(self, prefix: str, *parts: str) -> str:
+        tokens = [safe_file_name(part).strip("-") for part in parts if str(part or "").strip()]
+        stem = "-".join(token for token in tokens if token) or prefix
+        return safe_file_name(f"{prefix}-{stem}.pdf")
+
+    def _store_generated_export_evidence(
+        self,
+        *,
+        criterion_code: str,
+        title: str,
+        description: str,
+        file_name: str,
+        file_bytes: bytes,
+        ai_summary: str,
+        client_id: str,
+        case_id: str,
+        replace_evidence_id: str = "",
+    ) -> dict:
+        existing_id = replace_evidence_id.strip()
+        if existing_id:
+            existing = one(
+                self.conn,
+                "SELECT * FROM evidence_items WHERE id = ? AND client_id = ? AND case_id = ? AND status != 'archived'",
+                (existing_id, client_id, case_id),
+            )
+            if existing:
+                self.archive_evidence_record(existing, "regenerated_questionnaire_export")
+
+        with tempfile.NamedTemporaryFile(delete=True, suffix=".pdf") as tmp:
+            tmp.write(file_bytes)
+            tmp.flush()
+            try:
+                stored = self.storage.store(client_id, case_id, criterion_code, file_name, Path(tmp.name))
+            except (GoogleDriveConfigError, GoogleDriveUploadError):
+                local_storage = EvidenceStorage(self.config.upload_root, self.config.drive_mirror_root, None)
+                stored = local_storage.store(client_id, case_id, criterion_code, file_name, Path(tmp.name))
+
+        content_type = "application/pdf"
+        self.conn.execute(
+            """
+            INSERT INTO evidence_items(
+              id, client_id, case_id, criterion_code, document_type, title, description, file_name,
+              content_type, local_path, drive_mirror_path, drive_path, drive_file_id,
+              drive_web_url, ai_summary, quality_score, folder_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                stored.evidence_id,
+                client_id,
+                case_id,
+                criterion_code,
+                "Other",
+                title.strip(),
+                description.strip(),
+                stored.file_name,
+                content_type,
+                stored.local_path,
+                stored.drive_path,
+                stored.drive_path,
+                stored.drive_file_id,
+                stored.drive_web_url,
+                ai_summary.strip(),
+                100,
+                None,
+            ),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO evidence_search(
+              title, description, file_name, ai_summary, client_id, case_id, evidence_id, criterion_code
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                title.strip(),
+                description.strip(),
+                stored.file_name,
+                ai_summary.strip(),
+                client_id,
+                case_id,
+                stored.evidence_id,
+                criterion_code,
+            ),
+        )
+        self.conn.commit()
+        return {
+            "evidence_id": stored.evidence_id,
+            "file_name": stored.file_name,
+            "drive_web_url": stored.drive_web_url,
+            "drive_path": stored.drive_path,
+        }
+
+    def _sync_critical_role_export(self, project_id: str, client_id: str, case_id: str) -> dict:
+        project = self._critical_role_project(project_id, client_id, case_id)
+        member = self._member_case(client_id)
+        file_bytes = render_critical_role_pdf(member.get("display_name", ""), project)
+        artifact = self._store_generated_export_evidence(
+            criterion_code="leading_critical_role",
+            title=f"Critical Role Export - {project.get('project_name') or project.get('organization_name') or 'Untitled Project'}",
+            description=(
+                "Generated from the member's Critical Role portal intake. "
+                f"Organization: {project.get('organization_name', '')}. "
+                f"Role: {project.get('role_title', '')}. "
+                f"Workflow status: {project.get('workflow_status', 'draft')}."
+            ),
+            file_name=self._generated_export_file_name(
+                "critical-role-export",
+                project.get("organization_name", ""),
+                project.get("project_name", ""),
+            ),
+            file_bytes=file_bytes,
+            ai_summary=(
+                "Generated questionnaire export for the Leading or Critical Role criterion. "
+                "This PDF captures the member-submitted role, project, business value, metrics, and evidence notes."
+            ),
+            client_id=client_id,
+            case_id=case_id,
+            replace_evidence_id=str(project.get("export_evidence_id", "")),
+        )
+        self.conn.execute(
+            """
+            UPDATE critical_role_projects
+            SET export_evidence_id = ?, export_generated_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND client_id = ? AND case_id = ?
+            """,
+            (artifact["evidence_id"], project_id, client_id, case_id),
+        )
+        self.conn.commit()
+        return self._critical_role_project(project_id, client_id, case_id)
+
+    def _sync_original_contribution_export(self, entry_id: str, client_id: str, case_id: str) -> dict:
+        entry = self._original_contribution_entry(entry_id, client_id, case_id)
+        member = self._member_case(client_id)
+        file_bytes = render_original_contribution_pdf(member.get("display_name", ""), entry)
+        artifact = self._store_generated_export_evidence(
+            criterion_code="original_contributions",
+            title=f"Original Contribution Export - {entry.get('contribution_title') or 'Untitled Contribution'}",
+            description=(
+                "Generated from the member's Original Contributions portal intake. "
+                f"Contribution: {entry.get('contribution_title', '')}. "
+                f"Organization: {entry.get('organization_name', '')}. "
+                f"Workflow status: {entry.get('workflow_status', 'draft')}."
+            ),
+            file_name=self._generated_export_file_name(
+                "original-contribution-export",
+                entry.get("organization_name", ""),
+                entry.get("contribution_title", ""),
+            ),
+            file_bytes=file_bytes,
+            ai_summary=(
+                "Generated questionnaire export for the Original Contributions criterion. "
+                "This PDF captures the member-submitted originality, significance, metrics, and supporting evidence notes."
+            ),
+            client_id=client_id,
+            case_id=case_id,
+            replace_evidence_id=str(entry.get("export_evidence_id", "")),
+        )
+        self.conn.execute(
+            """
+            UPDATE original_contribution_entries
+            SET export_evidence_id = ?, export_generated_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND client_id = ? AND case_id = ?
+            """,
+            (artifact["evidence_id"], entry_id, client_id, case_id),
+        )
+        self.conn.commit()
+        return self._original_contribution_entry(entry_id, client_id, case_id)
+
+    def _clear_critical_role_export(self, project: dict, reason: str) -> None:
+        export_evidence_id = str(project.get("export_evidence_id", "")).strip()
+        if export_evidence_id:
+            record = one(self.conn, "SELECT * FROM evidence_items WHERE id = ? AND status != 'archived'", (export_evidence_id,))
+            if record:
+                self.archive_evidence_record(record, reason)
+        self.conn.execute(
+            """
+            UPDATE critical_role_projects
+            SET export_evidence_id = '', export_generated_at = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND client_id = ? AND case_id = ?
+            """,
+            (project["id"], project["client_id"], project["case_id"]),
+        )
+        self.conn.commit()
+
+    def _clear_original_contribution_export(self, entry: dict, reason: str) -> None:
+        export_evidence_id = str(entry.get("export_evidence_id", "")).strip()
+        if export_evidence_id:
+            record = one(self.conn, "SELECT * FROM evidence_items WHERE id = ? AND status != 'archived'", (export_evidence_id,))
+            if record:
+                self.archive_evidence_record(record, reason)
+        self.conn.execute(
+            """
+            UPDATE original_contribution_entries
+            SET export_evidence_id = '', export_generated_at = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND client_id = ? AND case_id = ?
+            """,
+            (entry["id"], entry["client_id"], entry["case_id"]),
+        )
+        self.conn.commit()
+
+    def _backfill_missing_narrative_exports(self, client_id: str, case_id: str) -> None:
+        missing_critical_role = rows(
+            self.conn,
+            """
+            SELECT id
+            FROM critical_role_projects
+            WHERE client_id = ? AND case_id = ? AND workflow_status = 'submitted' AND COALESCE(export_evidence_id, '') = ''
+            """,
+            (client_id, case_id),
+        )
+        for item in missing_critical_role:
+            self._sync_critical_role_export(item["id"], client_id, case_id)
+
+        missing_original_contributions = rows(
+            self.conn,
+            """
+            SELECT id
+            FROM original_contribution_entries
+            WHERE client_id = ? AND case_id = ? AND workflow_status = 'submitted' AND COALESCE(export_evidence_id, '') = ''
+            """,
+            (client_id, case_id),
+        )
+        for item in missing_original_contributions:
+            self._sync_original_contribution_export(item["id"], client_id, case_id)
 
     def analyze_evidence(self, member_context: str, file_name: str, content_type: str, file_bytes: bytes) -> dict:
         if not file_name:
@@ -5727,7 +8256,7 @@ class EvidenceService:
             raise ValueError("Folder not found")
         parent_id = folder["parent_id"]
         self.conn.execute("UPDATE evidence_folders SET parent_id = ?, updated_at = CURRENT_TIMESTAMP WHERE parent_id = ?", (parent_id, folder_id))
-        self.conn.execute("UPDATE evidence_items SET folder_id = ? WHERE folder_id = ? AND status != 'archived'", (parent_id, folder_id))
+        self.conn.execute("UPDATE evidence_items SET folder_id = ?, updated_at = CURRENT_TIMESTAMP WHERE folder_id = ? AND status != 'archived'", (parent_id, folder_id))
         self.conn.execute("DELETE FROM evidence_folders WHERE id = ?", (folder_id,))
         self.conn.commit()
         return {"ok": True, "status": "deleted", "folder_id": folder_id}
@@ -5748,7 +8277,7 @@ class EvidenceService:
             if case_id and folder["case_id"] != case_id:
                 raise ValueError("Folder not found")
             target_folder_id = folder["id"]
-        self.conn.execute("UPDATE evidence_items SET folder_id = ? WHERE id = ?", (target_folder_id, evidence_id))
+        self.conn.execute("UPDATE evidence_items SET folder_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (target_folder_id, evidence_id))
         self.conn.commit()
         updated = one(self.conn, "SELECT * FROM evidence_items WHERE id = ?", (evidence_id,))
         folders = rows(
@@ -5771,33 +8300,62 @@ class EvidenceService:
         return self.archive_evidence_record(record, reason)
 
     def archive_evidence_record(self, record: dict, reason: str) -> dict:
-        archive_path = archive_path_for(record["drive_path"] or record["drive_mirror_path"])
         try:
             if record.get("drive_file_id"):
-                if not self.storage.object_storage:
-                    raise S3ConfigError("Storage provider is not configured.")
-                archive_folder_id = self.storage.object_storage.ensure_folder_path(archive_path.split("/")[:-1])
-                moved = self.storage.object_storage.move_file_to_folder(record["drive_file_id"], archive_folder_id)
+                if not self.storage.google_drive:
+                    raise GoogleDriveConfigError("Storage provider is not configured.")
+                archive_path = archive_path_for(record["drive_path"] or record["drive_mirror_path"])
+                archive_folder_id = self.storage.google_drive.ensure_folder_path(archive_path.split("/")[:-1])
+                moved = self.storage.google_drive.move_file_to_folder(record["drive_file_id"], archive_folder_id)
                 archive_web_url = moved.get("webViewLink", record.get("drive_web_url", ""))
+                updated_local_path = str(record.get("local_path", "")).strip()
+                updated_drive_mirror_path = str(record.get("drive_mirror_path", "")).strip()
+                updated_drive_path = archive_path
             else:
-                archive_web_url = record.get("drive_web_url", "")
-        except (S3ConfigError, S3StorageError) as exc:
+                archived = self.storage.archive(record)
+                archive_path = archived["archive_path"]
+                archive_web_url = archived.get("drive_web_url", record.get("drive_web_url", ""))
+                updated_local_path = archived.get("local_path", str(record.get("local_path", "")).strip())
+                updated_drive_mirror_path = archived.get("drive_mirror_path", str(record.get("drive_mirror_path", "")).strip())
+                updated_drive_path = archived.get("drive_path", str(record.get("drive_path", "")).strip())
+        except (GoogleDriveConfigError, GoogleDriveUploadError, ClientError, OSError) as exc:
             return {"ok": False, "status": "failed", "error": str(exc)}
 
         self.conn.execute(
             """
             UPDATE evidence_items
             SET status = 'archived',
+                local_path = ?,
+                drive_mirror_path = ?,
+                drive_path = ?,
                 archive_path = ?,
                 archived_at = CURRENT_TIMESTAMP,
                 archive_reason = ?,
-                drive_web_url = ?
+                drive_web_url = ?,
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (archive_path, reason, archive_web_url, record["id"]),
+            (updated_local_path, updated_drive_mirror_path, updated_drive_path, archive_path, reason, archive_web_url, record["id"]),
         )
         self.conn.execute("DELETE FROM evidence_search WHERE evidence_id = ?", (record["id"],))
         self.conn.commit()
+        self.record_operational_event(
+            "evidence_archived",
+            status="success",
+            portal="system",
+            client_id=record["client_id"],
+            case_id=record["case_id"],
+            endpoint="/storage/archive",
+            message="Evidence moved to archive storage.",
+            metadata={
+                "evidence_id": record["id"],
+                "reason": reason,
+                "archive_path": archive_path,
+                "archived_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            },
+            actor_role="system",
+            actor_key="storage",
+        )
         return {
             "ok": True,
             "status": "archived",
@@ -6168,7 +8726,7 @@ class EvidenceService:
             )
         return references
 
-    def _storage_folder_parts_for_record(self, record: dict) -> list[str]:
+    def _drive_folder_parts_for_record(self, record: dict) -> list[str]:
         for key in ("local_path", "drive_path", "drive_mirror_path"):
             raw_path = str(record.get(key, "")).strip()
             if not raw_path:
@@ -6181,34 +8739,33 @@ class EvidenceService:
                     return relative[:-1]
         return []
 
-    def _ensure_storage_link(self, record: dict) -> dict:
+    def _ensure_drive_link(self, record: dict) -> dict:
         updated = dict(record)
-        object_storage = self.storage.object_storage
-        existing_file_id = str(updated.get("drive_file_id", "")).strip()
-        if existing_file_id and object_storage and object_storage.enabled:
-            try:
-                updated["drive_web_url"] = object_storage.build_file_url(existing_file_id)
-            except S3StorageError:
-                pass
-            return updated
+        drive = self.storage.google_drive
         existing_url = str(updated.get("drive_web_url", "")).strip()
-        if existing_url or not object_storage or not object_storage.enabled:
+        existing_file_id = str(updated.get("drive_file_id", "")).strip()
+        if existing_file_id and not existing_url and drive:
+            existing_url = drive.build_file_url(existing_file_id)
+            self.conn.execute("UPDATE evidence_items SET drive_web_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (existing_url, updated["id"]))
+            self.conn.commit()
+            updated["drive_web_url"] = existing_url
+        if existing_url or not drive or not drive.enabled:
             return updated
         source_path = Path(str(updated.get("local_path", "")).strip() or str(updated.get("drive_path", "")).strip() or str(updated.get("drive_mirror_path", "")).strip())
         if not source_path.exists() or not source_path.is_file():
             return updated
-        folder_parts = self._storage_folder_parts_for_record(updated)
+        folder_parts = self._drive_folder_parts_for_record(updated)
         if not folder_parts:
             return updated
         try:
-            parent_id = object_storage.ensure_folder_path(folder_parts)
-            uploaded = object_storage.upload_file(parent_id, source_path, str(updated.get("file_name", "")).strip() or source_path.name)
-        except (S3ConfigError, S3StorageError, OSError):
+            parent_id = drive.ensure_folder_path(folder_parts)
+            uploaded = drive.upload_file(parent_id, source_path, str(updated.get("file_name", "")).strip() or source_path.name)
+        except (GoogleDriveConfigError, GoogleDriveUploadError, OSError):
             return updated
         drive_file_id = str(uploaded.get("id", "")).strip()
-        drive_web_url = str(uploaded.get("webViewLink", "")).strip() or (object_storage.build_file_url(drive_file_id) if drive_file_id else "")
+        drive_web_url = str(uploaded.get("webViewLink", "")).strip() or (drive.build_file_url(drive_file_id) if drive_file_id else "")
         self.conn.execute(
-            "UPDATE evidence_items SET drive_file_id = ?, drive_web_url = ? WHERE id = ?",
+            "UPDATE evidence_items SET drive_file_id = ?, drive_web_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (drive_file_id, drive_web_url, updated["id"]),
         )
         self.conn.commit()
@@ -6323,7 +8880,7 @@ class EvidenceService:
         return decorated
 
     def _decorate_file(self, item: dict, folders: list[dict]) -> dict:
-        decorated = self._ensure_storage_link(item)
+        decorated = self._ensure_drive_link(item)
         if item.get("folder_id"):
             decorated["folder_path"] = self._folder_path(item["folder_id"], folders)
         else:
@@ -6349,7 +8906,7 @@ class EvidenceService:
         member = one(
             self.conn,
             """
-            SELECT c.id AS client_id, c.display_name, cs.id AS case_id, cs.readiness_score, cs.status
+            SELECT c.id AS client_id, c.member_uid, c.display_name, cs.id AS case_id, cs.readiness_score, cs.status
             FROM clients c
             JOIN cases cs ON cs.client_id = c.id
             WHERE c.id = ?
@@ -6595,15 +9152,10 @@ class EvidenceService:
                 self.conn.commit()
             return
         first_name, _, last_name = client["display_name"].partition(" ")
-        self._insert_ignore(
-            """
-            INSERT OR IGNORE INTO member_profiles(client_id, case_id, first_name, last_name, preferred_name, email)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
+        self.conn.execute(
             """
             INSERT INTO member_profiles(client_id, case_id, first_name, last_name, preferred_name, email)
             VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT DO NOTHING
             """,
             (
                 client["client_id"],
@@ -6636,16 +9188,11 @@ class EvidenceService:
                 self.conn.commit()
             return
         profile = self.member_profile()
-        account_id = self._stable_id("acct", f"{client['client_id']}:{client['case_id']}")
-        self._insert_ignore(
-            """
-            INSERT OR IGNORE INTO member_accounts(id, client_id, case_id, username, email, password_hash, last_password_changed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
+        account_id = f"acct_{uuid.uuid4().hex[:12]}"
+        self.conn.execute(
             """
             INSERT INTO member_accounts(id, client_id, case_id, username, email, password_hash, last_password_changed_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT DO NOTHING
             """,
             (
                 account_id,
@@ -6665,38 +9212,30 @@ class EvidenceService:
             raise ValueError("Profile builder not found")
         return {
             "builder_id": builder["id"],
+            "builder_uid": builder.get("builder_uid", 0),
+            "numeric_identifier": int(builder.get("builder_uid") or 0),
             "display_name": builder["display_name"],
             "email": builder["email"],
         }
 
     def _ensure_default_builder(self) -> None:
-        builder = one(self.conn, "SELECT * FROM profile_builders ORDER BY created_at LIMIT 1")
-        if not builder:
-            builder_id = self._stable_id("bld", "builder@ascendhsi.com")
-            self._insert_ignore(
-                "INSERT OR IGNORE INTO profile_builders(id, display_name, email) VALUES (?, ?, ?)",
-                "INSERT INTO profile_builders(id, display_name, email) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-                (builder_id, "Ava Morales", "builder@ascendhsi.com"),
-            )
-            builder = one(self.conn, "SELECT * FROM profile_builders WHERE id = ?", (builder_id,)) or self.default_builder()
-        account = one(self.conn, "SELECT id FROM profile_builder_accounts WHERE username = ?", ("builder@ascendhsi.com",))
-        if account:
-            self.conn.commit()
+        existing = one(self.conn, "SELECT id FROM profile_builders LIMIT 1")
+        if existing:
             return
-        account_id = self._stable_id("bact", "builder@ascendhsi.com")
-        self._insert_ignore(
-            """
-            INSERT OR IGNORE INTO profile_builder_accounts(id, builder_id, username, email, password_hash, last_password_changed_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
+        builder_id = f"bld_{uuid.uuid4().hex[:12]}"
+        account_id = f"bact_{uuid.uuid4().hex[:12]}"
+        self.conn.execute(
+            "INSERT INTO profile_builders(id, builder_uid, display_name, email) VALUES (?, ?, ?, ?)",
+            (builder_id, next_numeric_identifier(self.conn, "profile_builders", "builder_uid"), "Ava Morales", "builder@ascendhsi.com"),
+        )
+        self.conn.execute(
             """
             INSERT INTO profile_builder_accounts(id, builder_id, username, email, password_hash, last_password_changed_at)
             VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT DO NOTHING
             """,
             (
                 account_id,
-                builder["id"],
+                builder_id,
                 "builder@ascendhsi.com",
                 "builder@ascendhsi.com",
                 self._hash_password(DEFAULT_MEMBER_PASSWORD),
@@ -6715,18 +9254,12 @@ class EvidenceService:
         )
         if existing:
             return
-        assignment_id = self._stable_id("asg", f"{builder['builder_id']}:{client['client_id']}:{client['case_id']}")
-        self._insert_ignore(
-            """
-            INSERT OR IGNORE INTO builder_member_assignments(id, builder_id, client_id, case_id, status)
-            VALUES (?, ?, ?, ?, 'active')
-            """,
+        self.conn.execute(
             """
             INSERT INTO builder_member_assignments(id, builder_id, client_id, case_id, status)
             VALUES (?, ?, ?, ?, 'active')
-            ON CONFLICT DO NOTHING
             """,
-            (assignment_id, builder["builder_id"], client["client_id"], client["case_id"]),
+            (f"asg_{uuid.uuid4().hex[:12]}", builder["builder_id"], client["client_id"], client["case_id"]),
         )
         self.conn.commit()
 
@@ -6740,11 +9273,9 @@ class EvidenceService:
             existing = one(self.conn, "SELECT id FROM attorneys WHERE email = ?", (email,))
             if existing:
                 continue
-            attorney_id = self._stable_id("att", email.strip().lower())
-            self._insert_ignore(
-                "INSERT OR IGNORE INTO attorneys(id, display_name, email, focus_domains) VALUES (?, ?, ?, ?)",
-                "INSERT INTO attorneys(id, display_name, email, focus_domains) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
-                (attorney_id, display_name, email, focus_domains),
+            self.conn.execute(
+                "INSERT INTO attorneys(id, attorney_uid, display_name, email, focus_domains) VALUES (?, ?, ?, ?, ?)",
+                (f"att_{uuid.uuid4().hex[:12]}", next_numeric_identifier(self.conn, "attorneys", "attorney_uid"), display_name, email, focus_domains),
             )
         self.conn.commit()
 
@@ -6755,25 +9286,15 @@ class EvidenceService:
         for user in self._system_users():
             accounts.append((user["role"], user["key"], user["email"].strip().lower()))
         for role, actor_key, email in accounts:
-            existing = one(
-                self.conn,
-                "SELECT id FROM staff_accounts WHERE username = ? OR (role = ? AND actor_key = ?)",
-                (email, role, actor_key),
-            )
+            existing = one(self.conn, "SELECT id FROM staff_accounts WHERE role = ? AND actor_key = ?", (role, actor_key))
             if existing:
                 continue
-            staff_id = self._stable_id("staff", f"{role}:{actor_key}")
-            self._insert_ignore(
+            self.conn.execute(
                 """
-                INSERT OR IGNORE INTO staff_accounts(id, role, actor_key, username, email, password_hash, last_password_changed_at)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO staff_accounts(id, staff_uid, role, actor_key, username, email, password_hash, last_password_changed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
-                """
-                INSERT INTO staff_accounts(id, role, actor_key, username, email, password_hash, last_password_changed_at)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT DO NOTHING
-                """,
-                (staff_id, role, actor_key, email, email, self._hash_password(DEFAULT_MEMBER_PASSWORD)),
+                (f"staff_{uuid.uuid4().hex[:12]}", next_numeric_identifier(self.conn, "staff_accounts", "staff_uid"), role, actor_key, email, email, self._hash_password(DEFAULT_MEMBER_PASSWORD)),
             )
         self.conn.commit()
 
@@ -6789,18 +9310,12 @@ class EvidenceService:
         attorney = one(self.conn, "SELECT * FROM attorneys ORDER BY created_at LIMIT 1")
         if not attorney:
             return
-        assignment_id = self._stable_id("aat", f"{attorney['id']}:{client['client_id']}:{client['case_id']}")
-        self._insert_ignore(
-            """
-            INSERT OR IGNORE INTO attorney_member_assignments(id, attorney_id, client_id, case_id, status)
-            VALUES (?, ?, ?, ?, 'active')
-            """,
+        self.conn.execute(
             """
             INSERT INTO attorney_member_assignments(id, attorney_id, client_id, case_id, status)
             VALUES (?, ?, ?, ?, 'active')
-            ON CONFLICT DO NOTHING
             """,
-            (assignment_id, attorney["id"], client["client_id"], client["case_id"]),
+            (f"aat_{uuid.uuid4().hex[:12]}", attorney["id"], client["client_id"], client["case_id"]),
         )
         self.conn.commit()
 
@@ -6816,18 +9331,12 @@ class EvidenceService:
             existing = one(self.conn, "SELECT id FROM opportunity_library WHERE criterion_code = ? AND title = ?", (criterion_code, title))
             if existing:
                 continue
-            opportunity_id = self._stable_id("opp", f"{criterion_code}:{title}")
-            self._insert_ignore(
-                """
-                INSERT OR IGNORE INTO opportunity_library(id, criterion_code, title, description, target_evidence_type, suggested_due_days, status)
-                VALUES (?, ?, ?, ?, ?, ?, 'active')
-                """,
+            self.conn.execute(
                 """
                 INSERT INTO opportunity_library(id, criterion_code, title, description, target_evidence_type, suggested_due_days, status)
                 VALUES (?, ?, ?, ?, ?, ?, 'active')
-                ON CONFLICT DO NOTHING
                 """,
-                (opportunity_id, criterion_code, title, description, doc_type, due_days),
+                (f"opp_{uuid.uuid4().hex[:12]}", criterion_code, title, description, doc_type, due_days),
             )
         self.conn.commit()
 
@@ -6836,362 +9345,15 @@ class EvidenceService:
         return {
             "account_id": account["id"],
             "builder_id": account["builder_id"],
+            "builder_uid": builder.get("builder_uid", 0) if builder else 0,
+            "numeric_identifier": int(builder.get("builder_uid") or 0) if builder else 0,
+            "storage_key": self._numeric_key(builder.get("builder_uid") if builder else 0),
+            "legacy_key": account["email"].strip().lower(),
             "username": account["username"],
             "email": account["email"],
             "display_name": builder["display_name"] if builder else "Profile Builder",
             "role": "builder",
             "last_login_at": account.get("last_login_at", ""),
-        }
-
-    def _criterion_tracker(self, criteria: list[dict]) -> list[dict]:
-        tracker = []
-        for item in criteria:
-            evidence_count = int(item.get("evidence_count") or 0)
-            try:
-                average_score = round(float(item.get("average_score") or 0))
-            except (TypeError, ValueError):
-                average_score = 0
-            tracker.append(
-                {
-                    "code": item.get("code", ""),
-                    "name": item.get("name", ""),
-                    "evidence_count": evidence_count,
-                    "average_score": average_score,
-                    "strength_label": self._criterion_strength_label(evidence_count, average_score),
-                    "next_prompt": self._criterion_next_prompt(item.get("code", ""), item.get("name", ""), evidence_count),
-                }
-            )
-        return tracker
-
-    def _criterion_strength_label(self, evidence_count: int, average_score: int) -> str:
-        if evidence_count <= 0:
-            return "Not started"
-        if evidence_count >= 4 and average_score >= 78:
-            return "Exceptional"
-        if evidence_count >= 2 and average_score >= 60:
-            return "Strong"
-        return "Developing"
-
-    def _criterion_next_prompt(self, code: str, name: str, evidence_count: int) -> str:
-        prompts = {
-            "awards": "Add official award notices, nomination criteria, issuer prestige, rankings, and proof that the recognition is national or international.",
-            "memberships": "Show selective membership criteria, acceptance proof, reviewer or nomination requirements, and why the association admits outstanding achievers.",
-            "published_material": "Upload articles about you or your work, publication reach, author credibility, screenshots, links, and independent context.",
-            "judging": "Group invitations, participation proof, thank-you notes, certificates, score sheets, and organizer letters for each judging activity.",
-            "original_contributions": "Connect each contribution to adoption, measurable industry value, patents, citations, revenue, users, standards, or independent expert support.",
-            "scholarly_articles": "Add publications, venue reputation, citation context, peer-review details, indexing, and downstream usage by others.",
-            "leading_critical_role": "Capture job title, dates, organization distinction, critical project scope, exact responsibilities, and quantified business value.",
-            "high_salary": "Upload compensation proof and credible market comparables for title, field, geography, and seniority.",
-            "comparable_evidence": "Explain why standard criteria do not fit and upload equivalent proof that shows sustained acclaim in the field.",
-            "other": "Review whether this document belongs in a stronger criterion bucket or needs clearer context before attorney review.",
-        }
-        if evidence_count <= 0:
-            return f"Start {name} with one strong primary document and a short note explaining why it matters."
-        return prompts.get(code, f"Add corroboration for {name}: official proof, independent validation, dates, and measurable impact.")
-
-    def _case_command_center(self, client: dict, case: dict, profile: dict, criterion_tracker: list[dict]) -> dict:
-        readiness = int(case.get("readiness_score") or 0)
-        evidence_count = sum(item["evidence_count"] for item in criterion_tracker)
-        started = sum(1 for item in criterion_tracker if item["evidence_count"] > 0)
-        strong = sum(1 for item in criterion_tracker if item["strength_label"] in {"Strong", "Exceptional"})
-        gaps = [item for item in criterion_tracker if item["evidence_count"] == 0]
-        open_tasks = rows(
-            self.conn,
-            """
-            SELECT title, description, criterion_code, due_date, status, created_at
-            FROM tasks
-            WHERE client_id = ? AND case_id = ? AND status = 'open'
-            ORDER BY due_date, created_at DESC
-            LIMIT 6
-            """,
-            (client["client_id"], client["case_id"]),
-        )
-        recent_evidence = rows(
-            self.conn,
-            """
-            SELECT e.id, e.title, e.file_name, e.document_type, e.criterion_code, c.name AS criterion_name, e.created_at, e.status
-            FROM evidence_items e
-            LEFT JOIN criteria c ON c.code = e.criterion_code
-            WHERE e.client_id = ? AND e.case_id = ? AND e.status != 'archived'
-            ORDER BY e.created_at DESC
-            LIMIT 8
-            """,
-            (client["client_id"], client["case_id"]),
-        )
-        notifications = []
-        for task in open_tasks[:3]:
-            notifications.append(
-                {
-                    "title": task.get("title", "Open task"),
-                    "detail": task.get("description") or "Ascend has requested an evidence-building action.",
-                    "due_date": task.get("due_date", ""),
-                    "type": "task",
-                }
-            )
-        if gaps:
-            notifications.append(
-                {
-                    "title": f"{len(gaps)} EB1A criteria still need first evidence",
-                    "detail": f"Start with {gaps[0]['name']} unless Ascend has given you a different priority.",
-                    "due_date": "",
-                    "type": "gap",
-                }
-            )
-        if not bool(profile.get("profile_confirmed")):
-            notifications.append(
-                {
-                    "title": "Confirm your profile facts",
-                    "detail": "Attorney drafting depends on current title, employer, field, biography, and final merits positioning being accurate.",
-                    "due_date": "",
-                    "type": "profile",
-                }
-            )
-        return {
-            "criterion_tracker": criterion_tracker,
-            "timeline": self._filing_timeline(case, criterion_tracker),
-            "onboarding": self._member_onboarding_sections(profile, criterion_tracker, evidence_count),
-            "notifications": notifications[:5],
-            "profile_actions": self._profile_gap_actions(profile, criterion_tracker),
-            "summary": {
-                "readiness_score": readiness,
-                "criteria_started": started,
-                "strong_criteria": strong,
-                "evidence_count": evidence_count,
-                "target_state": "Attorney-ready packet" if readiness >= 80 and strong >= 3 else "Evidence-building in progress",
-            },
-            "version_history": [
-                {
-                    "id": item.get("id", ""),
-                    "title": item.get("title", ""),
-                    "file_name": item.get("file_name", ""),
-                    "document_type": item.get("document_type", "Other"),
-                    "criterion_name": item.get("criterion_name", item.get("criterion_code", "")),
-                    "status": item.get("status", "uploaded"),
-                    "created_at": item.get("created_at", ""),
-                }
-                for item in recent_evidence
-            ],
-            "export_actions": [
-                {
-                    "label": "Petition PDF Package",
-                    "status": "Ready to generate" if readiness >= 80 else "Build more evidence first",
-                    "detail": "Attorney can generate a structured petition packet with exhibit list once the case reaches filing posture.",
-                },
-                {
-                    "label": "Secure Packaged Export",
-                    "status": "Available from organized evidence",
-                    "detail": "Evidence remains grouped by EB1A criterion with archive support for deleted material.",
-                },
-            ],
-            "support_letters": {
-                "status": "Project mapping ready" if started else "Needs project evidence",
-                "detail": "Critical Role and Original Contributions projects can be used by attorneys to request or draft dependent recommendation letters.",
-            },
-            "priority_date": {
-                "status": "Monitor with attorney",
-                "detail": "Keep visa bulletin and filing-window checks in the legal workflow; member view stays focused on evidence collection.",
-            },
-        }
-
-    def _filing_timeline(self, case: dict, criterion_tracker: list[dict]) -> list[dict]:
-        created = self._parse_datetime(case.get("created_at")) or datetime.utcnow()
-        readiness = int(case.get("readiness_score") or 0)
-        started = sum(1 for item in criterion_tracker if item["evidence_count"] > 0)
-        strong = sum(1 for item in criterion_tracker if item["strength_label"] in {"Strong", "Exceptional"})
-        stage_rules = [
-            ("Member Intake", created, started >= 1),
-            ("Evidence Collection", created + timedelta(days=21), started >= 5),
-            ("Profile Builder Review", created + timedelta(days=35), strong >= 2),
-            ("Attorney Drafting", created + timedelta(days=49), readiness >= 70),
-            ("Pre-filing Audit", created + timedelta(days=63), readiness >= 80 and strong >= 3),
-            ("I-140 Filing", created + timedelta(days=77), str(case.get("status", "")).lower() == "completed"),
-            ("RFE Support", created + timedelta(days=120), False),
-        ]
-        timeline = []
-        for label, target, done in stage_rules:
-            optional = label == "RFE Support"
-            status = "optional" if optional else "complete" if done else "in_progress" if not timeline or timeline[-1]["status"] == "complete" else "planned"
-            timeline.append(
-                {
-                    "label": label,
-                    "target_date": target.date().isoformat(),
-                    "status": status,
-                    "optional": optional,
-                    "detail": "Dotted contingency path if USCIS issues an RFE." if optional else "Generated from current readiness, criteria coverage, and case start date.",
-                }
-            )
-        return timeline
-
-    def _member_onboarding_sections(self, profile: dict, criterion_tracker: list[dict], evidence_count: int) -> list[dict]:
-        identity_fields = ["first_name", "last_name", "email", "current_title", "current_employer"]
-        positioning_fields = ["industry_domain", "primary_field", "specialization", "biography", "top_achievements", "proposed_final_merits_summary"]
-        identity_done = sum(1 for field in identity_fields if str(profile.get(field, "")).strip())
-        positioning_done = sum(1 for field in positioning_fields if str(profile.get(field, "")).strip())
-        started = sum(1 for item in criterion_tracker if item["evidence_count"] > 0)
-        return [
-            {
-                "label": "Identity and current role",
-                "progress": round(identity_done / len(identity_fields) * 100),
-                "status": "complete" if identity_done == len(identity_fields) else "needs_input",
-                "next_step": "Confirm legal name, email, job title, and employer.",
-            },
-            {
-                "label": "Field and final merits positioning",
-                "progress": round(positioning_done / len(positioning_fields) * 100),
-                "status": "complete" if positioning_done >= len(positioning_fields) - 1 else "needs_input",
-                "next_step": "Explain field, specialization, top achievements, and why your work matters.",
-            },
-            {
-                "label": "EB1A criterion questionnaire",
-                "progress": min(100, started * 10),
-                "status": "complete" if started >= 7 else "in_progress",
-                "next_step": "Work criterion-by-criterion and keep each company or project separate.",
-            },
-            {
-                "label": "Evidence upload and version history",
-                "progress": min(100, evidence_count * 8),
-                "status": "complete" if evidence_count >= 12 else "in_progress",
-                "next_step": "Upload primary proof first, then add corroborating screenshots, emails, certificates, and letters.",
-            },
-        ]
-
-    def _profile_gap_actions(self, profile: dict, criterion_tracker: list[dict]) -> list[dict]:
-        actions = []
-        if not str(profile.get("current_title", "")).strip():
-            actions.append({"label": "Add current job title", "detail": "This title appears in attorney drafting and support-letter prompts."})
-        if not str(profile.get("proposed_final_merits_summary", "")).strip():
-            actions.append({"label": "Draft final merits positioning", "detail": "Summarize why your work is nationally important and distinguished in the field."})
-        for item in criterion_tracker:
-            if item["evidence_count"] == 0:
-                actions.append({"label": f"Start {item['name']}", "detail": item["next_prompt"]})
-            if len(actions) >= 4:
-                break
-        return actions[:4]
-
-    def _builder_workbench(self, member: dict, profile: dict, criterion_tracker: list[dict], tasks: list[dict]) -> dict:
-        narrative_source = sorted(
-            [item for item in criterion_tracker if item["evidence_count"] > 0],
-            key=lambda item: (-item["evidence_count"], -item["average_score"], item["name"]),
-        )
-        if not narrative_source:
-            narrative_source = criterion_tracker[:4]
-        open_tasks = [item for item in tasks if item.get("status") == "open"]
-        gaps = [item for item in criterion_tracker if item["evidence_count"] == 0]
-        request_queue = [
-            {
-                "title": task.get("title", "Open task"),
-                "criterion_code": task.get("criterion_code", ""),
-                "criterion_name": next((item["name"] for item in criterion_tracker if item["code"] == task.get("criterion_code")), "General profile"),
-                "due_date": task.get("due_date", ""),
-                "priority": "Member request",
-                "detail": task.get("description") or "Follow up with the member to close this request.",
-            }
-            for task in open_tasks[:4]
-        ]
-        for gap in gaps:
-            if len(request_queue) >= 6:
-                break
-            request_queue.append(
-                {
-                    "title": f"Request first evidence for {gap['name']}",
-                    "criterion_code": gap["code"],
-                    "criterion_name": gap["name"],
-                    "due_date": "",
-                    "priority": "Coverage gap",
-                    "detail": gap["next_prompt"],
-                }
-            )
-        return {
-            "narrative_queue": [
-                {
-                    "criterion_code": item["code"],
-                    "criterion_name": item["name"],
-                    "evidence_count": item["evidence_count"],
-                    "strength_label": item["strength_label"],
-                    "draft_focus": f"Turn {item['name']} evidence into a concise EB1A-ready narrative.",
-                    "suggested_prompt": f"Summarize {profile.get('preferred_name') or member.get('display_name', 'the member')}'s {item['name']} evidence with dates, role, independent validation, and measurable impact.",
-                }
-                for item in narrative_source[:5]
-            ],
-            "evidence_request_queue": request_queue,
-            "gap_analysis": [
-                {
-                    "criterion_name": item["name"],
-                    "strength_label": item["strength_label"],
-                    "next_step": item["next_prompt"],
-                }
-                for item in criterion_tracker[:10]
-            ],
-        }
-
-    def _legal_workbench(self, member: dict, profile: dict, criterion_tracker: list[dict], tasks: list[dict], evidence: list[dict]) -> dict:
-        readiness = int(member.get("readiness_score") or 0)
-        evidence_count = sum(item["evidence_count"] for item in criterion_tracker) or len(evidence)
-        started = sum(1 for item in criterion_tracker if item["evidence_count"] > 0)
-        strong = sum(1 for item in criterion_tracker if item["strength_label"] in {"Strong", "Exceptional"})
-        open_tasks = [item for item in tasks if item.get("status") == "open"]
-        project_options = [
-            {
-                "id": item.get("id", item.get("file_name", "")),
-                "title": item.get("title") or item.get("file_name", "Project evidence"),
-                "criterion_code": item.get("criterion_code", ""),
-                "criterion_name": next((criterion["name"] for criterion in criterion_tracker if criterion["code"] == item.get("criterion_code")), item.get("criterion_code", "")),
-            }
-            for item in evidence
-            if item.get("criterion_code") in {"leading_critical_role", "original_contributions"}
-        ][:6]
-        if not project_options:
-            project_options = [
-                {
-                    "id": item["code"],
-                    "title": f"{item['name']} project mapping",
-                    "criterion_code": item["code"],
-                    "criterion_name": item["name"],
-                }
-                for item in criterion_tracker
-                if item["code"] in {"leading_critical_role", "original_contributions"}
-            ]
-        checklist = [
-            ("Profile facts confirmed", bool(profile.get("profile_confirmed")), "Member confirms identity, title, employer, field, and final merits facts."),
-            ("At least 3 strong criteria identified", strong >= 3, f"{strong} criteria are currently strong or exceptional."),
-            ("Evidence exhibit pool available", evidence_count >= 10, f"{evidence_count} active evidence items are available."),
-            ("Member dependencies cleared", not open_tasks, f"{len(open_tasks)} open member-facing tasks remain."),
-            ("Critical/Original project mapped", bool(project_options), "Recommendation letters can be tied to a project or contribution."),
-        ]
-        return {
-            "case_management": {
-                "stage": "Pre-filing audit" if readiness >= 80 else "Attorney review" if readiness >= 60 else "Evidence build",
-                "readiness_score": readiness,
-                "criteria_started": started,
-                "strong_criteria": strong,
-                "next_action": "Run pre-submission audit" if readiness >= 80 else "Close evidence and profile gaps before drafting final petition.",
-            },
-            "pre_filing_checklist": [
-                {
-                    "label": label,
-                    "status": "complete" if complete else "needs_work",
-                    "detail": detail,
-                }
-                for label, complete, detail in checklist
-            ],
-            "rfe_response": {
-                "status": "RFE-ready baseline" if strong >= 3 and evidence_count >= 10 else "Needs packet hardening",
-                "detail": "Dotted timeline keeps RFE support visible without making it part of the normal filing path.",
-                "dotted_timeline": [
-                    {"label": "RFE received", "target_days": 0},
-                    {"label": "Evidence gap triage", "target_days": 7},
-                    {"label": "AI-assisted response draft", "target_days": 21},
-                    {"label": "Attorney final review", "target_days": 45},
-                ],
-            },
-            "recommendation_letters": {
-                "project_options": project_options,
-                "detail": "Dependent recommendation letters should be generated only after selecting a Critical Role or Original Contributions project.",
-            },
-            "time_tracking_summary": {
-                "estimated_review_hours": round(1.5 + evidence_count * 0.18 + len(open_tasks) * 0.2, 1),
-                "billing_note": "Planning estimate for attorney workload; not an invoice.",
-            },
         }
 
     def _criteria_started(self, case_id: str) -> int:
@@ -7505,65 +9667,25 @@ class EvidenceService:
             },
         ]
 
-    def _leader_attorney_performance(self, members: list[dict], attorneys: list[dict]) -> list[dict]:
-        performance = []
-        for attorney in attorneys:
-            assigned = [item for item in members if item.get("attorney_name") == attorney.get("display_name")]
-            ready = sum(1 for item in assigned if int(item.get("readiness_score") or 0) >= 80)
-            high_risk = sum(1 for item in assigned if item.get("risk_level") == "High")
-            stale = sum(1 for item in assigned if int(item.get("days_since_activity") or 0) >= 14)
-            avg_readiness = round(sum(int(item.get("readiness_score") or 0) for item in assigned) / len(assigned)) if assigned else 0
-            performance.append(
-                {
-                    "id": attorney.get("id", ""),
-                    "display_name": attorney.get("display_name", ""),
-                    "assigned_cases": len(assigned),
-                    "petition_ready_cases": ready,
-                    "high_risk_cases": high_risk,
-                    "stale_cases": stale,
-                    "avg_readiness": avg_readiness,
-                    "capacity_signal": "Overloaded" if len(assigned) >= 8 or high_risk >= 3 else "Healthy" if assigned else "Available",
-                }
-            )
-        return sorted(performance, key=lambda item: (-item["assigned_cases"], -item["petition_ready_cases"], item["display_name"]))
-
-    def _leader_revenue_analytics(self, members: list[dict]) -> dict:
-        active_cases = [item for item in members if str(item.get("status", "")).strip().lower() != "completed"]
-        petition_ready = [item for item in active_cases if int(item.get("readiness_score") or 0) >= 80]
-        at_risk = [item for item in active_cases if item.get("risk_level") == "High"]
-        planning_value_per_case = 4500
-        return {
-            "currency": "USD",
-            "assumption": f"Planning estimate only at ${planning_value_per_case:,} per active case.",
-            "rows": [
-                {
-                    "label": "Active case pipeline",
-                    "value": len(active_cases) * planning_value_per_case,
-                    "detail": f"{len(active_cases)} cases still in motion.",
-                },
-                {
-                    "label": "Petition-ready opportunity",
-                    "value": len(petition_ready) * planning_value_per_case,
-                    "detail": f"{len(petition_ready)} cases can move toward filing work fastest.",
-                },
-                {
-                    "label": "At-risk revenue exposure",
-                    "value": len(at_risk) * planning_value_per_case,
-                    "detail": f"{len(at_risk)} high-risk cases need intervention to protect delivery velocity.",
-                },
-            ],
-        }
-
     def _member_payload(self, account: dict) -> dict:
         profile = one(
             self.conn,
-            "SELECT * FROM member_profiles WHERE client_id = ? AND case_id = ?",
+            """
+            SELECT mp.*, c.member_uid
+            FROM member_profiles mp
+            JOIN clients c ON c.id = mp.client_id
+            WHERE mp.client_id = ? AND mp.case_id = ?
+            """,
             (account["client_id"], account["case_id"]),
         ) or self.member_profile()
         return {
             "account_id": account["id"],
             "client_id": account["client_id"],
             "case_id": account["case_id"],
+            "member_uid": profile.get("member_uid", 0),
+            "numeric_identifier": int(profile.get("member_uid") or 0),
+            "storage_key": self._numeric_key(profile.get("member_uid", 0)),
+            "legacy_key": account["client_id"],
             "username": account["username"],
             "email": account["email"],
             "display_name": profile.get("preferred_name") or profile.get("first_name") or self.config.default_client["display_name"],
@@ -7763,7 +9885,11 @@ class EvidenceService:
             "salary_summary",
         ]
         completed = sum(1 for field in tracked_fields if str(profile.get(field, "")).strip())
-        return round((completed / len(tracked_fields)) * 100)
+        if int(profile.get("critical_role_project_count") or 0) > 0:
+            completed += 1
+        if int(profile.get("original_contribution_entry_count") or 0) > 0:
+            completed += 1
+        return round((completed / (len(tracked_fields) + 2)) * 100)
 
 
 def archive_path_for(original_path: str) -> str:

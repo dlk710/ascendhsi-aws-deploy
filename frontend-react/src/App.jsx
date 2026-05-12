@@ -73,7 +73,7 @@ const DOMAIN_OPTIONS = ["Healthcare", "Insurance", "Pharma", "Technology", "Othe
 const EMPLOYMENT_TYPE_OPTIONS = ["W-2 / Full-time", "Contract", "Part-time", "Consulting", "Volunteer", "Founder", "Other"];
 const PROJECT_STATUS_OPTIONS = ["Active", "Completed", "Launched", "In planning", "On hold", "Other"];
 const CONTRIBUTION_CATEGORY_OPTIONS = ["Work-related", "Research", "Grant work", "Entrepreneurship", "External collaboration", "Nonprofit", "Other"];
-const MEMBER_VIEW_TYPES = new Set(["home", "workspace", "profile", "critical_roles", "original_contributions", "planner", "intake", "messages"]);
+const MEMBER_VIEW_TYPES = new Set(["home", "workspace", "profile", "critical_roles", "original_contributions", "planner", "intake", "referrals", "messages"]);
 const MEMBER_PAGE_ALIASES = {
   "critical-role": "critical_roles",
   "critical-role-projects": "critical_roles",
@@ -88,7 +88,7 @@ const GUIDED_MEMBER_CRITERION_FORM_LABELS = {
 };
 const BUILDER_SECTIONS = new Set(["home", "members", "opportunities", "messages"]);
 const ATTORNEY_SECTIONS = new Set(["home", "dossier", "petition", "endeavor", "recommendations", "batch", "evidence", "messages"]);
-const LEADER_EXEC_SECTIONS = new Set(["home", "invite", "members", "risks", "capacity", "timeline", "backlog", "oversight", "opportunities", "batch", "messages"]);
+const LEADER_EXEC_SECTIONS = new Set(["home", "invite", "members", "risks", "capacity", "timeline", "backlog", "oversight", "referrals", "opportunities", "batch", "messages"]);
 const ADMIN_SECTIONS = new Set(["home", "health", "costs", "support", "issues", "debug", "messages"]);
 const LEADER_PERSPECTIVES = new Set(["leader", "builder", "attorney"]);
 const PATH_PORTALS = new Set(["builder", "leader", "attorney", "admin"]);
@@ -124,6 +124,7 @@ const SECTION_SUBTITLES = {
     timeline: "Track realistic petition delivery timelines",
     backlog: "Capture product suite feature requests",
     oversight: "Assign members to profile builders and attorneys",
+    referrals: "Configure referral incentives and track referral payouts",
     opportunities: "Review strategic opportunities across members",
     batch: "Monitor batch intake and evidence routing",
     messages: "Lead team collaboration",
@@ -367,6 +368,19 @@ function authToken() {
 function authHeaders() {
   const token = authToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function apiRequestUrl(path, params) {
+  const basePath = `${API_URL}${path}`;
+  const url = new URL(basePath, window.location.origin);
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") {
+        url.searchParams.set(key, value);
+      }
+    });
+  }
+  return url;
 }
 
 function persistAuth(token, member) {
@@ -830,14 +844,7 @@ function devLoginOptions(role) {
 }
 
 async function getJson(path, params) {
-  const url = new URL(`${API_URL}${path}`);
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== "") {
-        url.searchParams.set(key, value);
-      }
-    });
-  }
+  const url = apiRequestUrl(path, params);
   const response = await fetch(url, { headers: { ...authHeaders() } });
   const payload = await response.json();
   if (!response.ok) throw payload.detail || payload;
@@ -2103,6 +2110,34 @@ function caseStatusLabel(value) {
   return String(value || "unknown").replaceAll("_", " ");
 }
 
+function referralStatusClass(value) {
+  const status = String(value || "").toLowerCase();
+  if (status === "paid" || status === "qualified") return "completed";
+  if (status === "contract_signed" || status === "contacted") return "planned";
+  if (status === "disqualified") return "blocked";
+  return "in_progress";
+}
+
+function emptyMemberReferralForm() {
+  return {
+    prospect_name: "",
+    prospect_email: "",
+    prospect_phone: "",
+    relationship: "",
+    notes: "",
+  };
+}
+
+function emptyReferralSettingsForm(settings = {}) {
+  return {
+    is_enabled: settings.is_enabled === false ? "false" : "true",
+    referred_bonus_amount: String(settings.referred_bonus_amount ?? 500),
+    referrer_bonus_amount: String(settings.referrer_bonus_amount ?? 250),
+    promotion_name: settings.promotion_name || "Standard referral program",
+    eligibility_note: settings.eligibility_note || "Paid after referred member signs the contract and completes at least 6 months with Ascend.",
+  };
+}
+
 function supportPriorityLabel(value) {
   const normalized = String(value || "normal").trim().toLowerCase();
   return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : "Normal";
@@ -2216,6 +2251,162 @@ function LeaderRecentInvitesPanel({ invites = [] }) {
           </article>
         )) : <p className="empty-state">No member invites yet.</p>}
       </div>
+    </section>
+  );
+}
+
+function MemberReferralPanel({ program, form, busy, onFieldChange, onSubmit }) {
+  const settings = program?.settings || {};
+  const referrals = program?.referrals || [];
+  const metrics = program?.metrics || {};
+  const currency = settings.currency || "USD";
+  const isEnabled = settings.is_enabled !== false;
+  return (
+    <section className="referral-panel">
+      <header className={`referral-hero ${isEnabled ? "" : "paused"}`}>
+        <div>
+          <div className="section-kicker">Ascend Referrals</div>
+          <h2>{isEnabled ? "Refer friends and family to Ascend." : "Referral program is currently paused."}</h2>
+          <p>
+            {isEnabled
+              ? `Your referred member receives ${formatMoney(settings.referred_bonus_amount || 500, currency)} and you receive ${formatMoney(settings.referrer_bonus_amount || 250, currency)} after they sign the contract and complete at least 6 months with Ascend.`
+              : "Leadership has paused new referral submissions for now. Your previous referral history remains visible below."}
+          </p>
+        </div>
+        <div className="referral-bonus-card">
+          <span>Referred member</span>
+          <strong>{formatMoney(settings.referred_bonus_amount || 0, currency)}</strong>
+          <span>Referrer member</span>
+          <strong>{formatMoney(settings.referrer_bonus_amount || 0, currency)}</strong>
+        </div>
+      </header>
+
+      {isEnabled ? (
+        <section className="panel referral-submit-panel">
+          <div className="panel-header">
+            <div>
+              <div className="section-kicker">Submit Referral</div>
+              <h3 className="section-title">Potential member contact</h3>
+              <p className="section-intro">Add their name plus either email or phone. Ascend will track eligibility and payout once the contract and six-month condition are met.</p>
+            </div>
+          </div>
+          <form className="stacked-form referral-form" onSubmit={onSubmit}>
+            <label>Potential customer name *<input value={form.prospect_name} onChange={(event) => onFieldChange("prospect_name", event.target.value)} placeholder="Example: Priya Shah" required /></label>
+            <label>Email<input type="email" value={form.prospect_email} onChange={(event) => onFieldChange("prospect_email", event.target.value)} placeholder="example@email.com" /></label>
+            <label>Phone<input value={form.prospect_phone} onChange={(event) => onFieldChange("prospect_phone", event.target.value)} placeholder="Optional if email is added" /></label>
+            <label>Relationship<input value={form.relationship} onChange={(event) => onFieldChange("relationship", event.target.value)} placeholder="Friend, sibling, colleague, spouse, cousin" /></label>
+            <label className="profile-span-2">Notes<textarea value={form.notes} onChange={(event) => onFieldChange("notes", event.target.value)} placeholder="Optional context that helps Ascend follow up respectfully." /></label>
+            <div className="form-actions profile-span-2">
+              <button className="primary compact-btn" type="submit" disabled={busy}>{busy ? "Saving referral..." : "Submit Referral"}</button>
+            </div>
+          </form>
+        </section>
+      ) : (
+        <section className="panel referral-paused-message">
+          <div className="section-kicker">Referral Pause</div>
+          <h3 className="section-title">New referrals are disabled right now</h3>
+          <p className="section-intro">Ascend may reopen the program during the next promotion season. Existing referral status and payout tracking remain available for transparency.</p>
+        </section>
+      )}
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <div className="section-kicker">Referral History</div>
+            <h3 className="section-title">Your submitted referrals</h3>
+            <p className="section-intro">One row per relationship, with status, eligibility, and payout visibility.</p>
+          </div>
+          <span className="status-pill planned">{metrics.total_referrals || referrals.length} total</span>
+        </div>
+        <div className="referral-history-table">
+          <div className="referral-history-row referral-history-head"><span>Name</span><span>Contact</span><span>Status</span><span>Eligibility</span><span>Bonus</span></div>
+          {referrals.length ? referrals.map((item) => (
+            <article key={item.id} className="referral-history-row">
+              <strong>{item.prospect_name}</strong>
+              <span>{item.prospect_email || item.prospect_phone || "Contact pending"}</span>
+              <span className={`status-pill ${referralStatusClass(item.status)}`}>{item.status_label || caseStatusLabel(item.status)}</span>
+              <span>{item.paid_at ? `Paid ${formatDateTime(item.paid_at)}` : item.eligible_at ? `Eligible ${formatDateTime(item.eligible_at)}` : item.contract_signed_at ? "Contract signed, waiting for 6 months" : "Waiting for contract"}</span>
+              <span>{formatMoney(item.referrer_bonus_amount || 0, item.currency || currency)}</span>
+            </article>
+          )) : <p className="empty-state">No referrals submitted yet.</p>}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function LeaderReferralPanel({ data, form, busy, onFieldChange, onSubmit, onStatusChange }) {
+  const settings = data?.settings || {};
+  const metrics = data?.metrics || {};
+  const referrals = data?.referrals || [];
+  const currency = settings.currency || "USD";
+  return (
+    <section className="leader-referral-page">
+      <section className="metrics-grid">
+        <MetricCard label="Total referrals" value={metrics.total_referrals || 0} />
+        <MetricCard label="Active referrals" value={metrics.active_referrals || 0} />
+        <MetricCard label="Qualified" value={metrics.qualified || 0} />
+        <MetricCard label="Pending payout" value={formatMoney(metrics.pending_payout_amount || 0, currency)} />
+      </section>
+
+      <section className="builder-layout referral-admin-layout">
+        <section className="panel">
+          <div className="section-kicker">Referral Controls</div>
+          <h3 className="section-title">Promotion settings</h3>
+          <p className="section-intro">Leaders can adjust incentive amounts for promotion seasons or pause new member submissions at any time.</p>
+          <form className="stacked-form referral-settings-form" onSubmit={onSubmit}>
+            <label>Referral program<select value={form.is_enabled} onChange={(event) => onFieldChange("is_enabled", event.target.value)}><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
+            <label>Referred member bonus<input value={form.referred_bonus_amount} onChange={(event) => onFieldChange("referred_bonus_amount", event.target.value)} /></label>
+            <label>Referrer member bonus<input value={form.referrer_bonus_amount} onChange={(event) => onFieldChange("referrer_bonus_amount", event.target.value)} /></label>
+            <label>Promotion name<input value={form.promotion_name} onChange={(event) => onFieldChange("promotion_name", event.target.value)} /></label>
+            <label className="profile-span-2">Eligibility note<textarea value={form.eligibility_note} onChange={(event) => onFieldChange("eligibility_note", event.target.value)} /></label>
+            <div className="form-actions profile-span-2">
+              <button className="primary compact-btn" type="submit" disabled={busy}>{busy ? "Saving..." : "Save Referral Settings"}</button>
+            </div>
+          </form>
+        </section>
+
+        <section className="panel">
+          <div className="section-kicker">Current Offer</div>
+          <h3 className="section-title">{settings.promotion_name || "Standard referral program"}</h3>
+          <div className="referral-offer-grid">
+            <article><span>Program status</span><strong>{settings.is_enabled ? "Enabled" : "Disabled"}</strong></article>
+            <article><span>Referred member</span><strong>{formatMoney(settings.referred_bonus_amount || 0, currency)}</strong></article>
+            <article><span>Referrer member</span><strong>{formatMoney(settings.referrer_bonus_amount || 0, currency)}</strong></article>
+          </div>
+          <p className="section-intro">{settings.eligibility_note}</p>
+        </section>
+      </section>
+
+      <section className="panel admin-table-panel referral-table-panel">
+        <div className="panel-header">
+          <div>
+            <div className="section-kicker">Referral Register</div>
+            <h3 className="section-title">Relationship and payout tracking</h3>
+            <p className="section-intro">Track every referral from submitted lead through contract, six-month eligibility, and payout.</p>
+          </div>
+        </div>
+        <div className="referral-admin-table">
+          <div className="referral-admin-row referral-admin-head"><span>Referrer</span><span>Prospect</span><span>Contact</span><span>Status</span><span>Eligibility</span><span>Bonus liability</span></div>
+          {referrals.length ? referrals.map((item) => (
+            <article key={item.id} className="referral-admin-row">
+              <div><strong>{item.referrer_display_name || item.referrer_name}</strong><small>Member #{item.referrer_member_uid || "pending"}</small></div>
+              <div><strong>{item.prospect_name}</strong><small>{item.relationship || "Relationship not added"}</small></div>
+              <span>{item.prospect_email || item.prospect_phone || "Contact pending"}</span>
+              <select value={item.status} onChange={(event) => onStatusChange(item, event.target.value)}>
+                <option value="submitted">Submitted</option>
+                <option value="contacted">Contacted</option>
+                <option value="contract_signed">Contract signed</option>
+                <option value="qualified">6 months complete</option>
+                <option value="paid">Paid</option>
+                <option value="disqualified">Disqualified</option>
+              </select>
+              <span>{item.paid_at ? `Paid ${formatDateTime(item.paid_at)}` : item.eligible_at ? `Eligible ${formatDateTime(item.eligible_at)}` : item.contract_signed_at ? "Waiting for 6 months" : "Not eligible yet"}</span>
+              <strong>{formatMoney(item.total_bonus_amount || 0, item.currency || currency)}</strong>
+            </article>
+          )) : <p className="empty-state">No member referrals have been submitted yet.</p>}
+        </div>
+      </section>
     </section>
   );
 }
@@ -2496,6 +2687,8 @@ function NavIcon({ name }) {
       return <svg {...commonProps}><path d="M3 11.5 12 4l9 7.5" /><path d="M6.5 10.5V20h11V10.5" /></svg>;
     case "members":
       return <svg {...commonProps}><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" /><path d="M16 12a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" /><path d="M3.5 19a4.5 4.5 0 0 1 9 0" /><path d="M13.5 19a3.5 3.5 0 0 1 7 0" /></svg>;
+    case "referrals":
+      return <svg {...commonProps}><circle cx="8" cy="8" r="3" /><circle cx="16" cy="16" r="3" /><path d="M10.5 10.5 13.5 13.5" /><path d="M15 7.5h3.5V11" /><path d="M18.5 7.5 14 12" /></svg>;
     case "invite":
       return <svg {...commonProps}><path d="M4 7h16v10H4z" /><path d="m4.5 7.5 7.5 5 7.5-5" /><path d="M18 4.5v5" /><path d="M15.5 7h5" /></svg>;
     case "batch":
@@ -2577,6 +2770,7 @@ function SidebarNav({ items, value, onChange }) {
     if (itemValue === "home") return "home";
     if (itemValue === "invite") return "invite";
     if (itemValue === "members") return "members";
+    if (itemValue === "referrals") return "referrals";
     if (itemValue === "batch") return "batch";
     if (itemValue === "opportunities") return "opportunities";
     if (itemValue === "oversight") return "oversight";
@@ -4341,6 +4535,12 @@ function App() {
   const [leaderInsights, setLeaderInsights] = useState(null);
   const [leaderPerspective, setLeaderPerspective] = useState("leader");
   const [leaderInviteForm, setLeaderInviteForm] = useState(emptyLeaderInviteForm());
+  const [memberReferralProgram, setMemberReferralProgram] = useState({ settings: { is_enabled: true, referred_bonus_amount: 500, referrer_bonus_amount: 250, currency: "USD" }, referrals: [], metrics: {} });
+  const [memberReferralForm, setMemberReferralForm] = useState(emptyMemberReferralForm());
+  const [memberReferralBusy, setMemberReferralBusy] = useState(false);
+  const [leaderReferralProgram, setLeaderReferralProgram] = useState({ settings: { is_enabled: true, referred_bonus_amount: 500, referrer_bonus_amount: 250, currency: "USD" }, referrals: [], metrics: {}, statuses: [] });
+  const [leaderReferralSettingsForm, setLeaderReferralSettingsForm] = useState(emptyReferralSettingsForm());
+  const [leaderReferralBusy, setLeaderReferralBusy] = useState(false);
   const [registrationToken, setRegistrationToken] = useState(initialRoute.registrationToken || "");
   const [registrationInfo, setRegistrationInfo] = useState(null);
   const [registrationForm, setRegistrationForm] = useState({ password: "", confirm_password: "", phone: "" });
@@ -4537,6 +4737,7 @@ function App() {
       if (view.type === "profile") return "Profile";
       if (view.type === "planner") return "Event Planner";
       if (view.type === "intake") return "Evidence Intake";
+      if (view.type === "referrals") return "Referrals";
       if (view.type === "messages") return "Messages";
       return "Member Home";
     }
@@ -4564,6 +4765,7 @@ function App() {
       if (portalSection === "timeline") return "Delivery Timeline";
       if (portalSection === "backlog") return "Product Backlog";
       if (portalSection === "oversight") return "Assignment Oversight";
+      if (portalSection === "referrals") return "Referral Program";
       if (portalSection === "opportunities") return "Opportunities";
       if (portalSection === "batch") return "Batch Intake";
       if (portalSection === "messages") return "Messages";
@@ -4862,18 +5064,20 @@ function App() {
     setLoading(true);
     setMessage(null);
     try {
-      const [dashboardData, evidenceData, plannerData, profileData, criteriaData] = await Promise.all([
+      const [dashboardData, evidenceData, plannerData, profileData, criteriaData, referralData] = await Promise.all([
         getJson("/api/member/dashboard"),
         getJson("/api/evidence"),
         getJson("/api/member/planner"),
         getJson("/api/member/profile"),
         getJson("/api/criteria"),
+        getJson("/api/member/referrals"),
       ]);
       setDashboard(dashboardData);
       setCriteriaList(criteriaData);
       setEvidenceItems(evidenceData);
       setPlannerItems(plannerData);
       setProfile(profileData);
+      setMemberReferralProgram(referralData || dashboardData.referral_program || { settings: {}, referrals: [], metrics: {} });
       setProfileForm({
         ...emptyProfileForm(),
         ...profileData,
@@ -5094,10 +5298,11 @@ function App() {
     setLoading(true);
     setMessage(null);
     try {
-      const [leaderData, criteriaData, opportunitiesData] = await Promise.all([
+      const [leaderData, criteriaData, opportunitiesData, referralData] = await Promise.all([
         getJson("/api/leader/dashboard"),
         getJson("/api/criteria"),
         getJson("/api/builder/opportunities"),
+        getJson("/api/leader/referrals"),
       ]);
       setBuilderDashboard({ metrics: { ...leaderData.metrics, opportunity_count: opportunitiesData.length } });
       setBuilderMembers(leaderData.members || []);
@@ -5106,6 +5311,8 @@ function App() {
       setLeaderInvites(leaderData.invites || []);
       setLeaderDomainSummary(leaderData.domain_summary || []);
       setLeaderInsights(leaderData);
+      setLeaderReferralProgram(referralData || leaderData.referrals || { settings: {}, referrals: [], metrics: {}, statuses: [] });
+      setLeaderReferralSettingsForm(emptyReferralSettingsForm((referralData || leaderData.referrals || {}).settings || {}));
       setBuilderOpportunities(opportunitiesData || []);
       setCriteriaList(criteriaData);
       setLeaderAssignments(
@@ -6164,6 +6371,75 @@ function App() {
     setLeaderInviteForm((current) => ({ ...current, [field]: value }));
   }
 
+  function setMemberReferralField(field, value) {
+    setMemberReferralForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function setLeaderReferralSettingsField(field, value) {
+    setLeaderReferralSettingsForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function submitMemberReferral(event) {
+    event.preventDefault();
+    setMessage(null);
+    setMemberReferralBusy(true);
+    try {
+      const formData = new FormData();
+      Object.entries(memberReferralForm).forEach(([key, value]) => formData.set(key, value));
+      const result = await sendForm("/api/member/referrals", formData);
+      if (result.ok) {
+        setMemberReferralProgram(result.payload);
+        setMemberReferralForm(emptyMemberReferralForm());
+        setMessage({ type: "success", text: "Referral saved. Ascend will track contract, six-month eligibility, and payout status." });
+      } else {
+        setMessage({ type: "error", text: result.payload.error || "Could not submit referral." });
+      }
+    } finally {
+      setMemberReferralBusy(false);
+    }
+  }
+
+  async function submitLeaderReferralSettings(event) {
+    event.preventDefault();
+    setMessage(null);
+    setLeaderReferralBusy(true);
+    try {
+      const formData = new FormData();
+      Object.entries(leaderReferralSettingsForm).forEach(([key, value]) => formData.set(key, value));
+      formData.set("actor_email", authMember?.email || "");
+      const result = await sendForm("/api/leader/referrals/settings", formData, "PATCH");
+      if (result.ok) {
+        setLeaderReferralProgram(result.payload);
+        setLeaderReferralSettingsForm(emptyReferralSettingsForm(result.payload.settings || {}));
+        setMessage({ type: "success", text: result.payload.settings?.is_enabled ? "Referral program settings updated." : "Referral program disabled for members." });
+      } else {
+        setMessage({ type: "error", text: result.payload.error || "Could not update referral settings." });
+      }
+    } finally {
+      setLeaderReferralBusy(false);
+    }
+  }
+
+  async function updateLeaderReferralStatus(item, status) {
+    if (!item?.id || !status) return;
+    setMessage(null);
+    setLeaderReferralBusy(true);
+    try {
+      const formData = new FormData();
+      formData.set("status", status);
+      formData.set("actor_email", authMember?.email || "");
+      const result = await sendForm(`/api/leader/referrals/${item.id}`, formData, "PATCH");
+      if (result.ok) {
+        setLeaderReferralProgram(result.payload);
+        setMessage({ type: "success", text: `Referral status updated to ${caseStatusLabel(status)}.` });
+      } else {
+        setMessage({ type: "error", text: result.payload.error || "Could not update referral status." });
+      }
+    } finally {
+      setLeaderReferralBusy(false);
+    }
+  }
+
   async function setLeaderPerspectiveMode(nextPerspective) {
     setLeaderPerspective(nextPerspective);
     setPortalSection("home");
@@ -7154,15 +7430,60 @@ function App() {
     }
   }
 
+  async function retryPortalLoad() {
+    if (!authMember?.role) return;
+    if (authMember.role === "member") {
+      await loadHome();
+      return;
+    }
+    if (authMember.role === "builder") {
+      await loadBuilderDashboard(selectedBuilderMemberId);
+      return;
+    }
+    if (authMember.role === "leader") {
+      await loadLeaderPortal(selectedBuilderMemberId);
+      return;
+    }
+    if (authMember.role === "attorney") {
+      await loadReviewPortals(selectedBuilderMemberId, authMember.email || "");
+      return;
+    }
+    if (authMember.role === "admin") {
+      await loadAdminPortal(selectedBuilderMemberId);
+    }
+  }
+
   const waitingForBuilderPortal = authMember?.role === "builder" && (loading || !builderDashboard);
   const waitingForLeaderPortal = authMember?.role === "leader" && (loading || !builderDashboard);
   const waitingForAttorneyPortal = authMember?.role === "attorney" && (loading || !dashboard);
   const waitingForAdminPortal = authMember?.role === "admin" && (loading || !adminDashboard);
   const waitingForMemberPortal = authMember?.role === "member" && (loading || !dashboard);
+  const portalLoadFailed = Boolean(authMember && !loading && message?.type === "error" && (
+    (authMember.role === "member" && !dashboard) ||
+    (authMember.role === "builder" && !builderDashboard) ||
+    (authMember.role === "leader" && !builderDashboard) ||
+    (authMember.role === "attorney" && !dashboard) ||
+    (authMember.role === "admin" && !adminDashboard)
+  ));
   const liveRoute = readPortalRoute();
 
   if (liveRoute.portal === "assessment" && liveRoute.page !== "leads") {
     return <AssessmentPublicPortal initialPage={liveRoute.page || "home"} />;
+  }
+
+  if (portalLoadFailed) {
+    return (
+      <main className="shell auth-shell">
+        <div className="loading portal-load-failed">
+          <strong>{message.text || "Could not load this portal."}</strong>
+          <span>Please retry. If it still fails, sign out and open the portal again.</span>
+          <div className="form-actions">
+            <button className="primary compact-btn" type="button" onClick={retryPortalLoad}>Retry</button>
+            <button className="ghost compact-btn" type="button" onClick={handleLogout}>Sign out</button>
+          </div>
+        </div>
+      </main>
+    );
   }
 
   if (!authReady || loading || waitingForBuilderPortal || waitingForLeaderPortal || waitingForAttorneyPortal || waitingForAdminPortal || waitingForMemberPortal) {
@@ -7272,7 +7593,7 @@ function App() {
   const isLeaderAttorneyView = authMember.role === "leader" && leaderPerspective === "attorney";
   const showingBuilderWorkspace = authMember.role === "builder" || isLeaderBuilderView;
   const builderLabel = showingBuilderWorkspace ? "Profile Builder" : "Leader";
-  const memberSection = view.type === "messages" ? "messages" : view.type === "profile" ? "profile" : view.type === "workspace" ? "workspace" : view.type === "critical_roles" ? "critical_roles" : view.type === "original_contributions" ? "original_contributions" : view.type === "planner" ? "planner" : view.type === "intake" ? "intake" : "home";
+  const memberSection = view.type === "messages" ? "messages" : view.type === "profile" ? "profile" : view.type === "workspace" ? "workspace" : view.type === "critical_roles" ? "critical_roles" : view.type === "original_contributions" ? "original_contributions" : view.type === "planner" ? "planner" : view.type === "intake" ? "intake" : view.type === "referrals" ? "referrals" : "home";
   function goToPortalHome() {
     setMessage(null);
     setMemberMenuOpen(false);
@@ -7568,6 +7889,7 @@ function App() {
   if (authMember.role === "builder" || (authMember.role === "leader" && !isLeaderAttorneyView)) {
     const builderInitials = (authMember.display_name || "B").split(" ").map((part) => part.slice(0, 1)).join("").slice(0, 2).toUpperCase();
     const leaderMetrics = leaderInsights?.metrics || builderDashboard?.metrics || {};
+    const referralMetrics = leaderReferralProgram?.metrics || {};
     const builderSidebarItems = [
       { value: "home", label: "Builder Home", icon: "H" },
       ...(authMember.role === "leader" ? [{ value: "invite", label: "Invite Member" }] : []),
@@ -7584,6 +7906,7 @@ function App() {
       { value: "timeline", label: "Delivery Timeline", icon: "T" },
       { value: "backlog", label: "Product Backlog", icon: "P" },
       { value: "oversight", label: "Assignment Oversight", icon: "A" },
+      { value: "referrals", label: "Referral Program", icon: "R" },
       { value: "opportunities", label: "Opportunities", icon: "O" },
       { value: "batch", label: "Batch Intake", icon: "D" },
       { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}`, icon: "M" },
@@ -7616,7 +7939,7 @@ function App() {
               <React.Fragment>
                 <p>Members count: {leaderMetrics.member_count || builderMembers.length || 0}</p>
                 <p>Late cases: {leaderMetrics.late_timeline_cases || 0}</p>
-                <p>Open backlog: {(productBacklog.items || []).filter((item) => !["shipped", "closed"].includes(String(item.status || "").toLowerCase())).length}</p>
+                <p>Referrals: {referralMetrics.total_referrals || 0}</p>
               </React.Fragment>
             ) : (
               <React.Fragment>
@@ -7696,6 +8019,27 @@ function App() {
                 />
                 <LeaderRecentInvitesPanel invites={leaderInvites} />
               </section>
+            </React.Fragment>
+          ) : isLeaderExecutiveView && portalSection === "referrals" ? (
+            <React.Fragment>
+              <header className="hero">
+                <p className="eyebrow">Referral Program</p>
+                <h1>Configure incentives and track payouts.</h1>
+                <p>Set seasonal referral amounts, pause the program when needed, and track every relationship from submitted referral to contract, six-month eligibility, and payout.</p>
+                <div className="hero-chips">
+                  <span className="hero-chip">Promotion controls</span>
+                  <span className="hero-chip">Member history</span>
+                  <span className="hero-chip">Eligibility tracking</span>
+                </div>
+              </header>
+              <LeaderReferralPanel
+                data={leaderReferralProgram}
+                form={leaderReferralSettingsForm}
+                busy={leaderReferralBusy}
+                onFieldChange={setLeaderReferralSettingsField}
+                onSubmit={submitLeaderReferralSettings}
+                onStatusChange={updateLeaderReferralStatus}
+              />
             </React.Fragment>
           ) : portalSection === "messages" ? (
             <React.Fragment>
@@ -9471,6 +9815,7 @@ function App() {
             { value: "workspace", label: "Evidence Workspace", icon: "W" },
             { value: "critical_roles", label: "Critical Role Projects", icon: "C" },
             { value: "original_contributions", label: "Original Contributions", icon: "O" },
+            ...(memberReferralProgram?.settings?.is_enabled === false ? [] : [{ value: "referrals", label: "Refer & Earn", icon: "R" }]),
             { value: "messages", label: `Messages${messageCenter.unread_count ? ` (${messageCenter.unread_count})` : ""}`, icon: "M" },
           ]}
           value={memberSection}
@@ -9489,6 +9834,8 @@ function App() {
               setView({ type: "critical_roles", criterionCode: "" });
             } else if (next === "original_contributions") {
               setView({ type: "original_contributions", criterionCode: "" });
+            } else if (next === "referrals") {
+              setView({ type: "referrals", criterionCode: "" });
             } else if (next === "messages") {
               setView({ type: "messages", criterionCode: "" });
             } else {
@@ -9520,9 +9867,9 @@ function App() {
       <section className="main">
         <div className="topbar">
           <div className="topbar-copy">
-            <span className="topbar-label">{view.type === "workspace" ? "Evidence Workspace" : view.type === "profile" ? "Member Profile" : view.type === "critical_roles" ? "Critical Role Projects" : view.type === "original_contributions" ? "Original Contributions" : view.type === "planner" ? "Event Planner" : view.type === "intake" ? "Evidence Intake" : view.type === "messages" ? "Messages" : "Member Home"}</span>
+            <span className="topbar-label">{view.type === "workspace" ? "Evidence Workspace" : view.type === "profile" ? "Member Profile" : view.type === "critical_roles" ? "Critical Role Projects" : view.type === "original_contributions" ? "Original Contributions" : view.type === "planner" ? "Event Planner" : view.type === "intake" ? "Evidence Intake" : view.type === "referrals" ? "Referrals" : view.type === "messages" ? "Messages" : "Member Home"}</span>
             <div className="topbar-welcome">Welcome {(authMember.display_name || "").split(" ")[0] || authMember.display_name}.</div>
-            <strong>{view.type === "workspace" ? "Organize files and folders by EB1A criterion" : view.type === "profile" ? "Keep your attorney-ready profile current" : view.type === "critical_roles" ? "Capture one detailed project at a time" : view.type === "original_contributions" ? "Document originality, significance, and adoption" : view.type === "planner" ? "Track upcoming opportunities and target dates" : view.type === "intake" ? "Upload and review evidence in a focused intake page" : view.type === "messages" ? "Keep conversations in one dedicated workspace" : "Evidence intake, planning, and organization"}</strong>
+            <strong>{view.type === "workspace" ? "Organize files and folders by EB1A criterion" : view.type === "profile" ? "Keep your attorney-ready profile current" : view.type === "critical_roles" ? "Capture one detailed project at a time" : view.type === "original_contributions" ? "Document originality, significance, and adoption" : view.type === "planner" ? "Track upcoming opportunities and target dates" : view.type === "intake" ? "Upload and review evidence in a focused intake page" : view.type === "referrals" ? "Refer friends and track incentive eligibility" : view.type === "messages" ? "Keep conversations in one dedicated workspace" : "Evidence intake, planning, and organization"}</strong>
           </div>
           <div className="member-menu-wrap">
             <button className="member-menu-trigger" type="button" onClick={() => setMemberMenuOpen((current) => !current)}>
@@ -10339,6 +10686,26 @@ function App() {
             </div>
             {messagePanel}
           </section>
+        ) : view.type === "referrals" ? (
+          <React.Fragment>
+            <header className="hero">
+              <p className="eyebrow">Referrals</p>
+              <h1>Share Ascend with friends and family.</h1>
+              <p>Submit potential members and track each referral from intake to contract, six-month eligibility, and payout.</p>
+              <div className="hero-chips">
+                <span className="hero-chip">Email or phone</span>
+                <span className="hero-chip">Contract tracked</span>
+                <span className="hero-chip">6-month eligibility</span>
+              </div>
+            </header>
+            <MemberReferralPanel
+              program={memberReferralProgram}
+              form={memberReferralForm}
+              busy={memberReferralBusy}
+              onFieldChange={setMemberReferralField}
+              onSubmit={submitMemberReferral}
+            />
+          </React.Fragment>
         ) : view.type === "profile" ? (
           <section className="profile-panel">
             <div className="panel-header profile-header">

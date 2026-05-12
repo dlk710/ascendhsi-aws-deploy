@@ -3,8 +3,7 @@ import json
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import load_cors_origins
-from app.s3_storage import S3ConfigError, S3StorageError
+from app.google_drive import GoogleDriveConfigError, GoogleDriveUploadError
 from app.services import DuplicateEvidenceError, EvidenceService
 
 
@@ -16,7 +15,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=load_cors_origins(),
+    allow_origins=[
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+    ],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -27,39 +34,9 @@ def service() -> EvidenceService:
     return EvidenceService()
 
 
-@app.get("/")
-def root() -> dict:
-    return {
-        "ok": True,
-        "service": "ascend-suite-api",
-        "message": "Ascend API is running. This endpoint is the backend API origin, not the product suite web UI.",
-        "endpoints": {
-            "health": "/health",
-            "readiness": "/ready",
-            "docs": "/docs",
-            "openapi": "/openapi.json",
-        },
-    }
-
-
 @app.get("/health")
 def health() -> dict:
     return {"ok": True, "service": "ascend-suite-api"}
-
-
-@app.get("/ready")
-def ready() -> dict:
-    try:
-        dashboard = service().admin_operational_dashboard()
-    except Exception as exc:  # pragma: no cover - defensive readiness guard
-        raise HTTPException(status_code=503, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
-    storage_health = next((item for item in dashboard.get("portal_health", []) if item.get("name") == "Amazon S3"), {})
-    return {
-        "ok": True,
-        "service": "ascend-suite-api",
-        "storage": storage_health,
-        "openai": next((item for item in dashboard.get("portal_health", []) if item.get("name") == "OpenAI"), {}),
-    }
 
 
 @app.post("/api/marketing/leads/visa-compass")
@@ -98,15 +75,13 @@ def _auth_error(error: str, status_code: int = 401) -> None:
     raise HTTPException(status_code=status_code, detail={"ok": False, "status": "failed", "error": error})
 
 
-def optional_member_user(token: str = "") -> dict | None:
-    parsed = token.removeprefix("Bearer ").strip()
-    if not parsed:
-        return None
-    try:
-        return service().member_session(parsed)
-    except ValueError as exc:
-        _auth_error(str(exc))
-    return None
+def _strict_bearer_token(authorization: str) -> str:
+    scheme, _, token = authorization.partition(" ")
+    if not authorization:
+        _auth_error("Authorization required")
+    if scheme.lower() != "bearer" or not token.strip():
+        _auth_error("Invalid authorization header")
+    return token.strip()
 
 
 def require_member_user(authorization: str | None = Header(None)) -> dict:
@@ -309,6 +284,59 @@ def leader_invite_member(
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
+@app.get("/api/leader/referrals")
+def leader_referrals(_leader_user: dict = Depends(require_leader_user)) -> dict:
+    return service().leader_referral_dashboard()
+
+
+@app.patch("/api/leader/referrals/settings")
+def update_leader_referral_settings(
+    is_enabled: str = Form(...),
+    referred_bonus_amount: str = Form(...),
+    referrer_bonus_amount: str = Form(...),
+    promotion_name: str = Form(""),
+    eligibility_note: str = Form(""),
+    actor_email: str = Form(""),
+    _leader_user: dict = Depends(require_leader_user),
+) -> dict:
+    try:
+        return service().update_referral_settings(
+            is_enabled,
+            referred_bonus_amount,
+            referrer_bonus_amount,
+            promotion_name=promotion_name,
+            eligibility_note=eligibility_note,
+            actor_email=actor_email,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
+@app.patch("/api/leader/referrals/{referral_id}")
+def update_leader_referral_status(
+    referral_id: str,
+    status: str = Form(...),
+    contract_signed_at: str = Form(""),
+    six_months_completed_at: str = Form(""),
+    paid_at: str = Form(""),
+    disqualification_reason: str = Form(""),
+    actor_email: str = Form(""),
+    _leader_user: dict = Depends(require_leader_user),
+) -> dict:
+    try:
+        return service().update_referral_status(
+            referral_id,
+            status,
+            contract_signed_at=contract_signed_at,
+            six_months_completed_at=six_months_completed_at,
+            paid_at=paid_at,
+            disqualification_reason=disqualification_reason,
+            actor_email=actor_email,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+
+
 @app.get("/api/member/registration-invite")
 def member_registration_invite(token: str) -> dict:
     try:
@@ -401,12 +429,14 @@ def update_leader_product_backlog_item(
 
 
 @app.get("/api/admin/operations")
-def admin_operations(_admin_user: dict = Depends(require_admin_user)) -> dict:
+def admin_operations(token: str = Header(alias="Authorization", default="")) -> dict:
+    require_admin_user(token)
     return service().admin_operational_dashboard()
 
 
 @app.get("/api/admin/issue-log")
-def admin_issue_log(_admin_user: dict = Depends(require_admin_user)) -> dict:
+def admin_issue_log(token: str = Header(alias="Authorization", default="")) -> dict:
+    require_admin_user(token)
     return service().issue_log_backlog()
 
 
@@ -420,8 +450,9 @@ def create_admin_issue_log(
     description: str = Form(...),
     reported_by: str = Form(""),
     actor_email: str = Form(""),
-    _admin_user: dict = Depends(require_admin_user),
+    token: str = Header(alias="Authorization", default=""),
 ) -> dict:
+    require_admin_user(token)
     try:
         return service().create_issue_log(
             actor_email=actor_email,
@@ -443,8 +474,9 @@ def update_admin_issue_log(
     priority: str = Form(""),
     status: str = Form(""),
     actor_email: str = Form(""),
-    _admin_user: dict = Depends(require_admin_user),
+    token: str = Header(alias="Authorization", default=""),
 ) -> dict:
+    require_admin_user(token)
     try:
         return service().update_issue_log(bug_id, priority=priority, status=status, actor_email=actor_email)
     except ValueError as exc:
@@ -455,8 +487,9 @@ def update_admin_issue_log(
 def remove_admin_issue_log(
     bug_id: str,
     actor_email: str = Form(""),
-    _admin_user: dict = Depends(require_admin_user),
+    token: str = Header(alias="Authorization", default=""),
 ) -> dict:
+    require_admin_user(token)
     try:
         return service().remove_issue_log(bug_id, actor_email=actor_email)
     except ValueError as exc:
@@ -464,12 +497,14 @@ def remove_admin_issue_log(
 
 
 @app.get("/api/admin/costs")
-def admin_costs(_admin_user: dict = Depends(require_admin_user)) -> dict:
+def admin_costs(token: str = Header(alias="Authorization", default="")) -> dict:
+    require_admin_user(token)
     return service().admin_cost_dashboard()
 
 
 @app.post("/api/admin/costs/refresh")
-def admin_costs_refresh(_admin_user: dict = Depends(require_admin_user)) -> dict:
+def admin_costs_refresh(token: str = Header(alias="Authorization", default="")) -> dict:
+    require_admin_user(token)
     return service().refresh_admin_cost_dashboard()
 
 
@@ -484,9 +519,7 @@ def attorney_petition_generator(client_id: str = "", _attorney_user: dict = Depe
 @app.get("/api/petition-acceleration")
 def petition_acceleration(client_id: str = "", actor_role: str = "attorney", actor_email: str = "", _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
     try:
-        role = _legal_user.get("role", actor_role)
-        email = _legal_user.get("email", actor_email)
-        return service().petition_acceleration_workspace(client_id, actor_role=role, actor_email=email)
+        return service().petition_acceleration_workspace(client_id, actor_role=_legal_user.get("role", actor_role), actor_email=_legal_user.get("email", actor_email))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -500,17 +533,17 @@ def member_petition_acceleration(_member_user: dict = Depends(require_member_use
 
 
 @app.get("/api/builder/members/{client_id}/petition-acceleration")
-def builder_petition_acceleration(client_id: str, _builder_user: dict = Depends(require_builder_user)) -> dict:
+def builder_petition_acceleration(client_id: str, actor_email: str = "", _builder_user: dict = Depends(require_builder_user)) -> dict:
     try:
-        return service().petition_acceleration_workspace(client_id, actor_role="builder", actor_email=_builder_user.get("email", ""))
+        return service().petition_acceleration_workspace(client_id, actor_role="builder", actor_email=actor_email or _builder_user.get("email", ""))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.get("/api/attorney/members/{client_id}/petition-acceleration")
-def attorney_petition_acceleration(client_id: str, _attorney_user: dict = Depends(require_attorney_user)) -> dict:
+def attorney_petition_acceleration(client_id: str, attorney_email: str = "", _attorney_user: dict = Depends(require_attorney_user)) -> dict:
     try:
-        return service().petition_acceleration_workspace(client_id, actor_role="attorney", actor_email=_attorney_user.get("email", ""))
+        return service().petition_acceleration_workspace(client_id, actor_role="attorney", actor_email=attorney_email or _attorney_user.get("email", ""))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -524,9 +557,10 @@ def leader_petition_acceleration(client_id: str, _leader_user: dict = Depends(re
 
 
 @app.get("/api/admin/petition-acceleration")
-def admin_petition_acceleration(client_id: str = "", _admin_user: dict = Depends(require_admin_user)) -> dict:
+def admin_petition_acceleration(client_id: str = "", token: str = Header(alias="Authorization", default="")) -> dict:
+    require_admin_user(token)
     try:
-        return service().petition_acceleration_workspace(client_id, actor_role="admin", actor_email=_admin_user.get("email", ""))
+        return service().petition_acceleration_workspace(client_id, actor_role="admin")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -542,22 +576,20 @@ def member_filing_timeline(client_id: str, actor_role: str = "member", actor_ema
 @app.post("/api/attorney/endeavor-letter-generator")
 def attorney_endeavor_letter_generator(payload: dict = Body(...), _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
     try:
-        role = _legal_user.get("role", payload.get("actor_role", "attorney"))
-        email = _legal_user.get("email", payload.get("actor_email", ""))
         return service().attorney_endeavor_letter_generator(
             payload.get("client_id", ""),
             prompt_config=payload.get("prompt_config", {}),
-            actor_role=role,
-            actor_email=email,
+            actor_role=_legal_user.get("role", payload.get("actor_role", "attorney")),
+            actor_email=_legal_user.get("email", payload.get("actor_email", "")),
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.get("/api/attorney/members/{client_id}/recommendation-letter-workspace")
-def attorney_recommendation_letter_workspace(client_id: str, _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
+def attorney_recommendation_letter_workspace(client_id: str, actor_role: str = "attorney", actor_email: str = "", _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
     try:
-        return service().recommendation_letter_workspace(client_id, actor_role=_legal_user.get("role", "attorney"), actor_email=_legal_user.get("email", ""))
+        return service().recommendation_letter_workspace(client_id, actor_role=_legal_user.get("role", actor_role), actor_email=_legal_user.get("email", actor_email))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -565,16 +597,14 @@ def attorney_recommendation_letter_workspace(client_id: str, _legal_user: dict =
 @app.post("/api/attorney/recommendation-letter-generator")
 def attorney_recommendation_letter_generator(payload: dict = Body(...), _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
     try:
-        role = _legal_user.get("role", payload.get("actor_role", "attorney"))
-        email = _legal_user.get("email", payload.get("actor_email", ""))
         return service().attorney_recommendation_letter_generator(
             payload.get("client_id", ""),
             letter_kind=payload.get("letter_kind", "independent"),
             project_type=payload.get("project_type", ""),
             project_id=payload.get("project_id", ""),
             prompt_config=payload.get("prompt_config", {}),
-            actor_role=role,
-            actor_email=email,
+            actor_role=_legal_user.get("role", payload.get("actor_role", "attorney")),
+            actor_email=_legal_user.get("email", payload.get("actor_email", "")),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
@@ -586,17 +616,21 @@ def update_recommendation_letter(letter_id: str, payload: dict = Body(...), _leg
         return service().update_recommendation_letter_status(
             letter_id,
             payload.get("status", ""),
-            actor_role=_legal_user.get("role", "attorney"),
-            actor_email=_legal_user.get("email", ""),
+            actor_role=_legal_user.get("role", payload.get("actor_role", "attorney")),
+            actor_email=_legal_user.get("email", payload.get("actor_email", "")),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.post("/api/attorney/recommendation-letters/{letter_id}/send-to-member")
-def send_recommendation_letter_to_member(letter_id: str, _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
+def send_recommendation_letter_to_member(letter_id: str, payload: dict = Body(default={}), _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
     try:
-        return service().send_recommendation_letter_to_member(letter_id, actor_role=_legal_user.get("role", "attorney"), actor_email=_legal_user.get("email", ""))
+        return service().send_recommendation_letter_to_member(
+            letter_id,
+            actor_role=_legal_user.get("role", payload.get("actor_role", "attorney")),
+            actor_email=_legal_user.get("email", payload.get("actor_email", "")),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -719,17 +753,17 @@ def attorney_member_detail(client_id: str, _attorney_user: dict = Depends(requir
 
 
 @app.get("/api/attorney/members/{client_id}/evidence")
-def attorney_member_evidence(client_id: str, _legal_user: dict = Depends(require_legal_staff_user)) -> list[dict]:
+def attorney_member_evidence(client_id: str, actor_role: str = "attorney", actor_email: str = "", _legal_user: dict = Depends(require_legal_staff_user)) -> list[dict]:
     try:
-        return service().attorney_member_evidence(client_id, actor_role=_legal_user.get("role", "attorney"), actor_email=_legal_user.get("email", ""))
+        return service().attorney_member_evidence(client_id, actor_role=_legal_user.get("role", actor_role), actor_email=_legal_user.get("email", actor_email))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.get("/api/batch-intake/sessions")
-def batch_intake_sessions(client_id: str, _legal_user: dict = Depends(require_legal_staff_user)) -> list[dict]:
+def batch_intake_sessions(client_id: str, actor_role: str = "attorney", actor_email: str = "", _legal_user: dict = Depends(require_legal_staff_user)) -> list[dict]:
     try:
-        return service().batch_intake_sessions(client_id, actor_role=_legal_user.get("role", "attorney"), actor_email=_legal_user.get("email", ""))
+        return service().batch_intake_sessions(client_id, actor_role=_legal_user.get("role", actor_role), actor_email=_legal_user.get("email", actor_email))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -761,9 +795,9 @@ async def attorney_batch_intake_create(
 
 
 @app.get("/api/attorney/batch-intake/{session_id}")
-def attorney_batch_intake_session(session_id: str, _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
+def attorney_batch_intake_session(session_id: str, actor_role: str = "attorney", actor_email: str = "", _legal_user: dict = Depends(require_legal_staff_user)) -> dict:
     try:
-        return service().attorney_batch_intake_session(session_id, actor_role=_legal_user.get("role", "attorney"), actor_email=_legal_user.get("email", ""))
+        return service().attorney_batch_intake_session(session_id, actor_role=_legal_user.get("role", actor_role), actor_email=_legal_user.get("email", actor_email))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -900,7 +934,8 @@ def delete_message(message_id: str, actor_role: str, actor_email: str = "", acto
 
 
 @app.get("/api/admin/members/{client_id}/debug")
-def admin_member_debug(client_id: str, _admin_user: dict = Depends(require_admin_user)) -> dict:
+def admin_member_debug(client_id: str, token: str = Header(alias="Authorization", default="")) -> dict:
+    require_admin_user(token)
     try:
         return service().member_issue_debug(client_id)
     except ValueError as exc:
@@ -908,7 +943,8 @@ def admin_member_debug(client_id: str, _admin_user: dict = Depends(require_admin
 
 
 @app.post("/api/admin/members/{client_id}/reset-session")
-def admin_reset_member_session(client_id: str, _admin_user: dict = Depends(require_admin_user)) -> dict:
+def admin_reset_member_session(client_id: str, token: str = Header(alias="Authorization", default="")) -> dict:
+    require_admin_user(token)
     try:
         return service().reset_member_sessions(client_id)
     except ValueError as exc:
@@ -978,6 +1014,34 @@ def update_builder_task(task_id: str, status: str = Form(""), due_date: str = Fo
 @app.get("/api/member/dashboard")
 def dashboard(member: dict = Depends(require_member_user)) -> dict:
     return service().member_dashboard(member["client_id"], member["case_id"], member.get("display_name", ""))
+
+
+@app.get("/api/member/referrals")
+def member_referrals(member: dict = Depends(require_member_user)) -> dict:
+    return service().member_referrals(member["client_id"], member["case_id"])
+
+
+@app.post("/api/member/referrals")
+def create_member_referral(
+    member: dict = Depends(require_member_user),
+    prospect_name: str = Form(...),
+    prospect_email: str = Form(""),
+    prospect_phone: str = Form(""),
+    relationship: str = Form(""),
+    notes: str = Form(""),
+) -> dict:
+    try:
+        return service().create_member_referral(
+            member["client_id"],
+            member["case_id"],
+            prospect_name,
+            prospect_email,
+            prospect_phone,
+            relationship,
+            notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.get("/api/member/profile")
@@ -1072,54 +1136,396 @@ def update_member_profile(
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
+@app.get("/api/member/critical-role-projects")
+def critical_role_projects(token: str = Header(alias="Authorization", default="")) -> list[dict]:
+    parsed = token.removeprefix("Bearer ").strip()
+    if not parsed:
+        return service().critical_role_projects()
+    member = service().member_session(parsed)
+    return service().critical_role_projects(member["client_id"], member["case_id"])
+
+
 @app.post("/api/member/critical-role-projects")
-async def create_critical_role_project(request: Request, member: dict = Depends(require_member_user)) -> dict:
+def create_critical_role_project(
+    token: str = Header(alias="Authorization", default=""),
+    organization_name: str = Form(""),
+    organization_unit: str = Form(""),
+    organization_location: str = Form(""),
+    organization_website: str = Form(""),
+    employment_type: str = Form(""),
+    role_title: str = Form(""),
+    role_start_date: str = Form(""),
+    role_end_date: str = Form(""),
+    is_current_role: bool = Form(False),
+    project_name: str = Form(""),
+    project_start_date: str = Form(""),
+    project_end_date: str = Form(""),
+    project_status: str = Form(""),
+    organization_achievements: str = Form(""),
+    organization_distinctiveness: str = Form(""),
+    role_summary: str = Form(""),
+    role_responsibilities: str = Form(""),
+    role_evolution: str = Form(""),
+    leadership_scope: str = Form(""),
+    cross_functional_partners: str = Form(""),
+    project_summary: str = Form(""),
+    business_need: str = Form(""),
+    strategic_importance: str = Form(""),
+    contributions_summary: str = Form(""),
+    innovation_originality: str = Form(""),
+    business_value_summary: str = Form(""),
+    quantitative_metrics: str = Form(""),
+    revenue_impact: str = Form(""),
+    cost_savings: str = Form(""),
+    efficiency_gain: str = Form(""),
+    user_or_customer_impact: str = Form(""),
+    market_or_geographic_impact: str = Form(""),
+    compliance_or_risk_impact: str = Form(""),
+    peer_distinction_summary: str = Form(""),
+    mentorship_leadership: str = Form(""),
+    executive_visibility: str = Form(""),
+    evidence_available: str = Form(""),
+    attorney_friendly_summary: str = Form(""),
+    workflow_status: str = Form("draft"),
+) -> dict:
     try:
-        form = await request.form()
-        return service().save_critical_role_project(member["client_id"], member["case_id"], **dict(form))
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
+        return service().create_critical_role_project(
+            client_id=member["client_id"] if member else None,
+            case_id=member["case_id"] if member else None,
+            organization_name=organization_name,
+            organization_unit=organization_unit,
+            organization_location=organization_location,
+            organization_website=organization_website,
+            employment_type=employment_type,
+            role_title=role_title,
+            role_start_date=role_start_date,
+            role_end_date=role_end_date,
+            is_current_role=is_current_role,
+            project_name=project_name,
+            project_start_date=project_start_date,
+            project_end_date=project_end_date,
+            project_status=project_status,
+            organization_achievements=organization_achievements,
+            organization_distinctiveness=organization_distinctiveness,
+            role_summary=role_summary,
+            role_responsibilities=role_responsibilities,
+            role_evolution=role_evolution,
+            leadership_scope=leadership_scope,
+            cross_functional_partners=cross_functional_partners,
+            project_summary=project_summary,
+            business_need=business_need,
+            strategic_importance=strategic_importance,
+            contributions_summary=contributions_summary,
+            innovation_originality=innovation_originality,
+            business_value_summary=business_value_summary,
+            quantitative_metrics=quantitative_metrics,
+            revenue_impact=revenue_impact,
+            cost_savings=cost_savings,
+            efficiency_gain=efficiency_gain,
+            user_or_customer_impact=user_or_customer_impact,
+            market_or_geographic_impact=market_or_geographic_impact,
+            compliance_or_risk_impact=compliance_or_risk_impact,
+            peer_distinction_summary=peer_distinction_summary,
+            mentorship_leadership=mentorship_leadership,
+            executive_visibility=executive_visibility,
+            evidence_available=evidence_available,
+            attorney_friendly_summary=attorney_friendly_summary,
+            workflow_status=workflow_status,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.patch("/api/member/critical-role-projects/{project_id}")
-async def update_critical_role_project(project_id: str, request: Request, member: dict = Depends(require_member_user)) -> dict:
+def update_critical_role_project(
+    project_id: str,
+    token: str = Header(alias="Authorization", default=""),
+    organization_name: str = Form(""),
+    organization_unit: str = Form(""),
+    organization_location: str = Form(""),
+    organization_website: str = Form(""),
+    employment_type: str = Form(""),
+    role_title: str = Form(""),
+    role_start_date: str = Form(""),
+    role_end_date: str = Form(""),
+    is_current_role: bool = Form(False),
+    project_name: str = Form(""),
+    project_start_date: str = Form(""),
+    project_end_date: str = Form(""),
+    project_status: str = Form(""),
+    organization_achievements: str = Form(""),
+    organization_distinctiveness: str = Form(""),
+    role_summary: str = Form(""),
+    role_responsibilities: str = Form(""),
+    role_evolution: str = Form(""),
+    leadership_scope: str = Form(""),
+    cross_functional_partners: str = Form(""),
+    project_summary: str = Form(""),
+    business_need: str = Form(""),
+    strategic_importance: str = Form(""),
+    contributions_summary: str = Form(""),
+    innovation_originality: str = Form(""),
+    business_value_summary: str = Form(""),
+    quantitative_metrics: str = Form(""),
+    revenue_impact: str = Form(""),
+    cost_savings: str = Form(""),
+    efficiency_gain: str = Form(""),
+    user_or_customer_impact: str = Form(""),
+    market_or_geographic_impact: str = Form(""),
+    compliance_or_risk_impact: str = Form(""),
+    peer_distinction_summary: str = Form(""),
+    mentorship_leadership: str = Form(""),
+    executive_visibility: str = Form(""),
+    evidence_available: str = Form(""),
+    attorney_friendly_summary: str = Form(""),
+    workflow_status: str = Form("draft"),
+) -> dict:
     try:
-        form = await request.form()
-        return service().save_critical_role_project(member["client_id"], member["case_id"], project_id=project_id, **dict(form))
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
+        return service().update_critical_role_project(
+            project_id,
+            client_id=member["client_id"] if member else None,
+            case_id=member["case_id"] if member else None,
+            organization_name=organization_name,
+            organization_unit=organization_unit,
+            organization_location=organization_location,
+            organization_website=organization_website,
+            employment_type=employment_type,
+            role_title=role_title,
+            role_start_date=role_start_date,
+            role_end_date=role_end_date,
+            is_current_role=is_current_role,
+            project_name=project_name,
+            project_start_date=project_start_date,
+            project_end_date=project_end_date,
+            project_status=project_status,
+            organization_achievements=organization_achievements,
+            organization_distinctiveness=organization_distinctiveness,
+            role_summary=role_summary,
+            role_responsibilities=role_responsibilities,
+            role_evolution=role_evolution,
+            leadership_scope=leadership_scope,
+            cross_functional_partners=cross_functional_partners,
+            project_summary=project_summary,
+            business_need=business_need,
+            strategic_importance=strategic_importance,
+            contributions_summary=contributions_summary,
+            innovation_originality=innovation_originality,
+            business_value_summary=business_value_summary,
+            quantitative_metrics=quantitative_metrics,
+            revenue_impact=revenue_impact,
+            cost_savings=cost_savings,
+            efficiency_gain=efficiency_gain,
+            user_or_customer_impact=user_or_customer_impact,
+            market_or_geographic_impact=market_or_geographic_impact,
+            compliance_or_risk_impact=compliance_or_risk_impact,
+            peer_distinction_summary=peer_distinction_summary,
+            mentorship_leadership=mentorship_leadership,
+            executive_visibility=executive_visibility,
+            evidence_available=evidence_available,
+            attorney_friendly_summary=attorney_friendly_summary,
+            workflow_status=workflow_status,
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.delete("/api/member/critical-role-projects/{project_id}")
-def remove_critical_role_project(project_id: str, member: dict = Depends(require_member_user)) -> dict:
+def delete_critical_role_project(project_id: str, token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        return service().delete_critical_role_project(member["client_id"], member["case_id"], project_id)
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
+        return service().delete_critical_role_project(
+            project_id,
+            client_id=member["client_id"] if member else None,
+            case_id=member["case_id"] if member else None,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
+@app.get("/api/member/original-contributions")
+def original_contribution_entries(token: str = Header(alias="Authorization", default="")) -> list[dict]:
+    parsed = token.removeprefix("Bearer ").strip()
+    if not parsed:
+        return service().original_contribution_entries()
+    member = service().member_session(parsed)
+    return service().original_contribution_entries(member["client_id"], member["case_id"])
+
+
 @app.post("/api/member/original-contributions")
-async def create_original_contribution(request: Request, member: dict = Depends(require_member_user)) -> dict:
+def create_original_contribution_entry(
+    token: str = Header(alias="Authorization", default=""),
+    contribution_title: str = Form(""),
+    contribution_category: str = Form(""),
+    field_of_expertise: str = Form(""),
+    job_title: str = Form(""),
+    organization_name: str = Form(""),
+    project_name: str = Form(""),
+    contribution_start_date: str = Form(""),
+    contribution_end_date: str = Form(""),
+    contribution_status: str = Form(""),
+    originality_summary: str = Form(""),
+    challenging_paradigms: str = Form(""),
+    prior_state_of_field: str = Form(""),
+    work_vs_external_context: str = Form(""),
+    personal_role: str = Form(""),
+    distinct_contribution_summary: str = Form(""),
+    technical_or_business_problem: str = Form(""),
+    solution_or_innovation: str = Form(""),
+    unique_features: str = Form(""),
+    impact_metrics: str = Form(""),
+    adoption_scale: str = Form(""),
+    beneficiary_summary: str = Form(""),
+    time_savings: str = Form(""),
+    cost_savings: str = Form(""),
+    revenue_impact: str = Form(""),
+    quality_or_risk_impact: str = Form(""),
+    field_wide_impact: str = Form(""),
+    recognition_and_influence: str = Form(""),
+    media_or_public_mentions: str = Form(""),
+    adoption_letters_targets: str = Form(""),
+    evidence_available: str = Form(""),
+    attorney_friendly_summary: str = Form(""),
+    workflow_status: str = Form("draft"),
+) -> dict:
     try:
-        form = await request.form()
-        return service().save_original_contribution(member["client_id"], member["case_id"], **dict(form))
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
+        return service().create_original_contribution_entry(
+            client_id=member["client_id"] if member else None,
+            case_id=member["case_id"] if member else None,
+            contribution_title=contribution_title,
+            contribution_category=contribution_category,
+            field_of_expertise=field_of_expertise,
+            job_title=job_title,
+            organization_name=organization_name,
+            project_name=project_name,
+            contribution_start_date=contribution_start_date,
+            contribution_end_date=contribution_end_date,
+            contribution_status=contribution_status,
+            originality_summary=originality_summary,
+            challenging_paradigms=challenging_paradigms,
+            prior_state_of_field=prior_state_of_field,
+            work_vs_external_context=work_vs_external_context,
+            personal_role=personal_role,
+            distinct_contribution_summary=distinct_contribution_summary,
+            technical_or_business_problem=technical_or_business_problem,
+            solution_or_innovation=solution_or_innovation,
+            unique_features=unique_features,
+            impact_metrics=impact_metrics,
+            adoption_scale=adoption_scale,
+            beneficiary_summary=beneficiary_summary,
+            time_savings=time_savings,
+            cost_savings=cost_savings,
+            revenue_impact=revenue_impact,
+            quality_or_risk_impact=quality_or_risk_impact,
+            field_wide_impact=field_wide_impact,
+            recognition_and_influence=recognition_and_influence,
+            media_or_public_mentions=media_or_public_mentions,
+            adoption_letters_targets=adoption_letters_targets,
+            evidence_available=evidence_available,
+            attorney_friendly_summary=attorney_friendly_summary,
+            workflow_status=workflow_status,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.patch("/api/member/original-contributions/{entry_id}")
-async def update_original_contribution(entry_id: str, request: Request, member: dict = Depends(require_member_user)) -> dict:
+def update_original_contribution_entry(
+    entry_id: str,
+    token: str = Header(alias="Authorization", default=""),
+    contribution_title: str = Form(""),
+    contribution_category: str = Form(""),
+    field_of_expertise: str = Form(""),
+    job_title: str = Form(""),
+    organization_name: str = Form(""),
+    project_name: str = Form(""),
+    contribution_start_date: str = Form(""),
+    contribution_end_date: str = Form(""),
+    contribution_status: str = Form(""),
+    originality_summary: str = Form(""),
+    challenging_paradigms: str = Form(""),
+    prior_state_of_field: str = Form(""),
+    work_vs_external_context: str = Form(""),
+    personal_role: str = Form(""),
+    distinct_contribution_summary: str = Form(""),
+    technical_or_business_problem: str = Form(""),
+    solution_or_innovation: str = Form(""),
+    unique_features: str = Form(""),
+    impact_metrics: str = Form(""),
+    adoption_scale: str = Form(""),
+    beneficiary_summary: str = Form(""),
+    time_savings: str = Form(""),
+    cost_savings: str = Form(""),
+    revenue_impact: str = Form(""),
+    quality_or_risk_impact: str = Form(""),
+    field_wide_impact: str = Form(""),
+    recognition_and_influence: str = Form(""),
+    media_or_public_mentions: str = Form(""),
+    adoption_letters_targets: str = Form(""),
+    evidence_available: str = Form(""),
+    attorney_friendly_summary: str = Form(""),
+    workflow_status: str = Form("draft"),
+) -> dict:
     try:
-        form = await request.form()
-        return service().save_original_contribution(member["client_id"], member["case_id"], entry_id=entry_id, **dict(form))
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
+        return service().update_original_contribution_entry(
+            entry_id,
+            client_id=member["client_id"] if member else None,
+            case_id=member["case_id"] if member else None,
+            contribution_title=contribution_title,
+            contribution_category=contribution_category,
+            field_of_expertise=field_of_expertise,
+            job_title=job_title,
+            organization_name=organization_name,
+            project_name=project_name,
+            contribution_start_date=contribution_start_date,
+            contribution_end_date=contribution_end_date,
+            contribution_status=contribution_status,
+            originality_summary=originality_summary,
+            challenging_paradigms=challenging_paradigms,
+            prior_state_of_field=prior_state_of_field,
+            work_vs_external_context=work_vs_external_context,
+            personal_role=personal_role,
+            distinct_contribution_summary=distinct_contribution_summary,
+            technical_or_business_problem=technical_or_business_problem,
+            solution_or_innovation=solution_or_innovation,
+            unique_features=unique_features,
+            impact_metrics=impact_metrics,
+            adoption_scale=adoption_scale,
+            beneficiary_summary=beneficiary_summary,
+            time_savings=time_savings,
+            cost_savings=cost_savings,
+            revenue_impact=revenue_impact,
+            quality_or_risk_impact=quality_or_risk_impact,
+            field_wide_impact=field_wide_impact,
+            recognition_and_influence=recognition_and_influence,
+            media_or_public_mentions=media_or_public_mentions,
+            adoption_letters_targets=adoption_letters_targets,
+            evidence_available=evidence_available,
+            attorney_friendly_summary=attorney_friendly_summary,
+            workflow_status=workflow_status,
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
+        raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
 
 @app.delete("/api/member/original-contributions/{entry_id}")
-def remove_original_contribution(entry_id: str, member: dict = Depends(require_member_user)) -> dict:
+def delete_original_contribution_entry(entry_id: str, token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        return service().delete_original_contribution(member["client_id"], member["case_id"], entry_id)
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
+        return service().delete_original_contribution_entry(
+            entry_id,
+            client_id=member["client_id"] if member else None,
+            case_id=member["case_id"] if member else None,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
 
@@ -1144,9 +1550,10 @@ def evidence(q: str = "") -> list[dict]:
 
 @app.get("/api/member/planner")
 def planner_items(token: str = Header(alias="Authorization", default="")) -> list[dict]:
-    member = optional_member_user(token)
-    if not member:
+    parsed = token.removeprefix("Bearer ").strip()
+    if not parsed:
         return service().planner_items()
+    member = service().member_session(parsed)
     return service().planner_items(member["client_id"], member["case_id"])
 
 
@@ -1164,7 +1571,8 @@ def create_planner_item(
     folder_id: str = Form(""),
 ) -> dict:
     try:
-        member = optional_member_user(token)
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
         return service().create_planner_item(
             member_role=member_role,
             issued_by=issued_by,
@@ -1197,7 +1605,8 @@ def update_planner_item(
     folder_id: str = Form(""),
 ) -> dict:
     try:
-        member = optional_member_user(token)
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
         kwargs = {}
         for key, value in {
             "member_role": member_role,
@@ -1225,7 +1634,8 @@ def update_planner_item(
 @app.delete("/api/member/planner/{item_id}")
 def delete_planner_item(item_id: str, token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        member = optional_member_user(token)
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
         return service().delete_planner_item(item_id, member["client_id"] if member else None, member["case_id"] if member else None)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
@@ -1234,7 +1644,8 @@ def delete_planner_item(item_id: str, token: str = Header(alias="Authorization",
 @app.get("/api/criteria/{criterion_code}/workspace")
 def criterion_workspace(criterion_code: str, q: str = "", token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        member = optional_member_user(token)
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
         return service().criterion_workspace(
             criterion_code,
             q.strip(),
@@ -1279,7 +1690,8 @@ async def upload_evidence(
 ) -> dict:
     try:
         payload = await file.read()
-        member = optional_member_user(token)
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
         return service().upload_evidence(
             criterion_code=criterion_code,
             document_type=document_type,
@@ -1307,9 +1719,9 @@ async def upload_evidence(
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
-    except S3ConfigError as exc:
+    except GoogleDriveConfigError as exc:
         raise HTTPException(status_code=400, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
-    except S3StorageError as exc:
+    except GoogleDriveUploadError as exc:
         raise HTTPException(status_code=502, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
@@ -1318,7 +1730,8 @@ async def upload_evidence(
 @app.post("/api/criteria/{criterion_code}/folders")
 def create_folder(criterion_code: str, name: str = Form(...), parent_id: str = Form(""), color: str = Form("#1f6f5b"), token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        member = optional_member_user(token)
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
         return service().create_folder(
             criterion_code,
             name,
@@ -1334,7 +1747,8 @@ def create_folder(criterion_code: str, name: str = Form(...), parent_id: str = F
 @app.patch("/api/folders/{folder_id}")
 def update_folder(folder_id: str, name: str = Form(""), color: str = Form(""), parent_id: str | None = Form(None), token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        member = optional_member_user(token)
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
         kwargs = {}
         if name != "":
             kwargs["name"] = name
@@ -1355,7 +1769,8 @@ def update_folder(folder_id: str, name: str = Form(""), color: str = Form(""), p
 @app.delete("/api/folders/{folder_id}")
 def delete_folder(folder_id: str, token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        member = optional_member_user(token)
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
         return service().delete_folder(folder_id, member["client_id"] if member else None, member["case_id"] if member else None)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={"ok": False, "status": "failed", "error": str(exc)}) from exc
@@ -1364,7 +1779,8 @@ def delete_folder(folder_id: str, token: str = Header(alias="Authorization", def
 @app.patch("/api/evidence/{evidence_id}/folder")
 def move_evidence(evidence_id: str, folder_id: str = Form(""), token: str = Header(alias="Authorization", default="")) -> dict:
     try:
-        member = optional_member_user(token)
+        parsed = token.removeprefix("Bearer ").strip()
+        member = service().member_session(parsed) if parsed else None
         return service().move_evidence_to_folder(
             evidence_id,
             folder_id or None,
@@ -1377,7 +1793,8 @@ def move_evidence(evidence_id: str, folder_id: str = Form(""), token: str = Head
 
 @app.delete("/api/evidence/{evidence_id}")
 def delete_evidence(evidence_id: str, token: str = Header(alias="Authorization", default="")) -> dict:
-    member = optional_member_user(token)
+    parsed = token.removeprefix("Bearer ").strip()
+    member = service().member_session(parsed) if parsed else None
     result = service().archive_evidence(
         evidence_id,
         "member_delete",

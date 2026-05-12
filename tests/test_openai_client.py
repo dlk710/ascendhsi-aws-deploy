@@ -2,8 +2,10 @@ import unittest
 from unittest.mock import patch
 import urllib.error
 import json
+import io
+import zipfile
 
-from app.openai_client import OpenAIService, fallback_portal_assistant, fallback_support_ticket
+from app.openai_client import OpenAIService, extract_document_excerpt, fallback_portal_assistant, fallback_support_ticket
 
 
 class OpenAIServiceTests(unittest.TestCase):
@@ -65,6 +67,76 @@ class OpenAIServiceTests(unittest.TestCase):
         })
         self.assertTrue(result["executive_summary"])
         self.assertTrue(result["clarification_questions"])
+
+    def test_endeavor_letter_falls_back_when_disabled(self):
+        service = OpenAIService({"enabled": False, "api_key_env": "OPENAI_API_KEY"})
+        result = service.generate_endeavor_letter(
+            {
+                "member_name": "Vas",
+                "profile": {"current_title": "Scientist", "primary_field": "Applied AI"},
+                "criteria_summary": [{"code": "judging", "name": "Judging", "evidence_count": 2}],
+                "evidence_files": [{"title": "Reviewer invitation", "criterion_name": "Judging"}],
+                "parsed_evidence": [{"title": "Reviewer invitation", "excerpt": "Invitation to review conference papers.", "excerpt_available": True}],
+                "tasks": [],
+                "planner_items": [],
+                "recent_messages": [],
+            },
+            {"proposed_endeavor": "Continue building applied AI systems in the United States."},
+        )
+        self.assertTrue(result["title"])
+        self.assertTrue(result["sections"])
+        self.assertTrue(result["compiled_prompt"])
+        self.assertLessEqual(result["estimated_page_count"], 2)
+        self.assertIn("expert EB1A Attorney", result["normalized_prompt_config"]["who_you_are"])
+        self.assertTrue(all(not section["heading"] for section in result["sections"]))
+
+    def test_recommendation_letter_falls_back_when_disabled(self):
+        service = OpenAIService({"enabled": False, "api_key_env": "OPENAI_API_KEY"})
+        result = service.generate_recommendation_letter(
+            {
+                "member_name": "Vas",
+                "profile": {"current_title": "Senior Product Manager", "primary_field": "AI product infrastructure"},
+                "criteria_summary": [{"code": "leading_critical_role", "name": "Leading or Critical Role", "evidence_count": 1}],
+                "evidence_files": [{"title": "Project metrics", "criterion_name": "Leading or Critical Role"}],
+                "parsed_evidence": [{"title": "Project metrics", "excerpt": "Reduced review time by 42%.", "excerpt_available": True}],
+                "selected_project": {
+                    "title": "Evidence Automation",
+                    "criterion_name": "Leading or Critical Role",
+                    "impact": "Reduced review time by 42%.",
+                },
+                "letter_kind": "dependent",
+            },
+            {
+                "recommender_name": "Dana Smith",
+                "recommender_title": "VP Product",
+                "recommender_organization": "Global Trust Platform",
+                "facts_to_confirm": "Confirm the 42% review-time improvement.",
+            },
+        )
+        self.assertEqual(result["source"], "disabled")
+        self.assertIn("Evidence Automation", result["plain_text"])
+        self.assertEqual(len(result["sections"]), 4)
+        self.assertTrue(result["compiled_prompt"])
+        self.assertLessEqual(result["estimated_page_count"], 2)
+
+    def test_extract_document_excerpt_reads_docx_text(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr(
+                "word/document.xml",
+                """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                  <w:body>
+                    <w:p><w:r><w:t>Sample endeavor text for EB1A review.</w:t></w:r></w:p>
+                  </w:body>
+                </w:document>""",
+            )
+        excerpt = extract_document_excerpt(
+            "sample.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            buffer.getvalue(),
+        )
+        self.assertIn("Sample endeavor text", excerpt)
 
     def test_analyze_evidence_falls_back_on_rate_limit(self):
         service = OpenAIService({"enabled": True, "api_key": "test-key", "timeout_seconds": 1})

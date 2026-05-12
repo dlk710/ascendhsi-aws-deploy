@@ -108,3 +108,5 @@ curl -sS https://dq5ab404dg57q.cloudfront.net/ready
 - The Terraform scaffolding under `deploy/aws/terraform/` is designed around S3 + Athena log analysis instead of a CloudWatch-first monitoring stack.
 - The frontend runtime config pattern means the same built artifact can point at different API hosts per environment.
 - The React portal shell uses non-blocking hydration after login; keep this behavior when changing portal bootstrapping so perceived login performance stays fast.
+- The React API client supports relative `/api/*` calls for local Vite proxy and CloudFront path routing; do not rebuild absolute localhost URLs into deployed bundles.
+- The referral-program release adds `referral_settings` and `member_referrals` tables plus member/leader APIs, so deploy backend changes before expecting the cloud frontend referral screens to save data.

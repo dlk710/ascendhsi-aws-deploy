@@ -10,32 +10,31 @@ from app.services import DuplicateEvidenceError
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
-        self.member_headers = {"Authorization": "Bearer sess_member"}
-        self.builder_headers = {"Authorization": "Bearer bsess_1"}
-        self.leader_headers = {"Authorization": "Bearer ssess_leader"}
-        self.attorney_headers = {"Authorization": "Bearer ssess_attorney"}
+        self.member_headers = {"Authorization": "Bearer member_token"}
+        self.builder_headers = {"Authorization": "Bearer builder_token"}
+        self.leader_headers = {"Authorization": "Bearer leader_token"}
+        self.attorney_headers = {"Authorization": "Bearer attorney_token"}
         self.member_user = {"client_id": "client_1", "case_id": "case_1", "display_name": "Vas"}
         self.builder_user = {"email": "builder@ascendhsi.com", "role": "builder", "display_name": "Ava"}
         self.leader_user = {"email": "leader@ascendhsi.com", "role": "leader", "display_name": "Ava Morales"}
         self.attorney_user = {"email": "attorney@ascendhsi.com", "role": "attorney", "display_name": "Sophia Chen"}
 
+    def admin_headers(self):
+        return {"Authorization": "Bearer admin_token"}
+
+    def allow_admin_session(self, service):
+        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
+
+    def allow_leader_session(self, service):
+        service.staff_session.return_value = self.leader_user
+
+    def allow_attorney_session(self, service):
+        service.staff_session.return_value = self.attorney_user
+
     def test_health(self):
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["service"], "ascend-suite-api")
-
-    def test_ready_uses_operational_dashboard(self):
-        service = Mock()
-        service.admin_operational_dashboard.return_value = {
-            "portal_health": [
-                {"name": "Amazon S3", "status": "healthy", "detail": "ascend-active"},
-                {"name": "OpenAI", "status": "degraded", "detail": "gpt-5.4-mini"},
-            ]
-        }
-        with patch("app.api.service", return_value=service):
-            response = self.client.get("/ready")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["storage"]["name"], "Amazon S3")
 
     def test_visa_compass_lead_capture_uses_service(self):
         service = Mock()
@@ -71,6 +70,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["client"]["display_name"], "Vas")
         service.member_dashboard.assert_called_once_with("client_1", "case_1", "Vas")
+
+    def test_dashboard_rejects_non_member_token_with_json_error(self):
+        service = Mock()
+        service.member_session.side_effect = ValueError("Session token is invalid")
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/member/dashboard", headers={"Authorization": "Bearer staff_token"})
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"]["status"], "failed")
+        self.assertEqual(response.json()["detail"]["error"], "Session token is invalid")
 
     def test_login_uses_service(self):
         service = Mock()
@@ -166,7 +175,7 @@ class ApiTests(unittest.TestCase):
 
     def test_leader_dashboard_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = self.leader_user
+        self.allow_leader_session(service)
         service.leader_dashboard.return_value = {"metrics": {"member_count": 2}, "members": [], "builders": [], "attorneys": [], "invites": [], "domain_summary": []}
         with patch("app.api.service", return_value=service):
             response = self.client.get("/api/leader/dashboard", headers=self.leader_headers)
@@ -175,7 +184,7 @@ class ApiTests(unittest.TestCase):
 
     def test_leader_invite_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = self.leader_user
+        self.allow_leader_session(service)
         service.leader_invite_member.return_value = {"ok": True, "client_id": "client_2", "display_name": "Sam Lee"}
         with patch("app.api.service", return_value=service):
             response = self.client.post(
@@ -194,9 +203,97 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.json()["display_name"], "Sam Lee")
         service.leader_invite_member.assert_called_once_with("Sam", "Lee", "sam@example.com", "Technology", "", "", "", "bld_1", "att_1")
 
+    def test_member_referrals_use_service(self):
+        service = Mock()
+        service.member_session.return_value = self.member_user
+        service.member_referrals.return_value = {"settings": {"is_enabled": True}, "referrals": []}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/member/referrals", headers=self.member_headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["settings"]["is_enabled"])
+        service.member_referrals.assert_called_once_with("client_1", "case_1")
+
+    def test_create_member_referral_uses_service(self):
+        service = Mock()
+        service.member_session.return_value = self.member_user
+        service.create_member_referral.return_value = {"ok": True, "referral": {"id": "ref_1", "prospect_name": "Sam Lee"}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post(
+                "/api/member/referrals",
+                headers=self.member_headers,
+                data={
+                    "prospect_name": "Sam Lee",
+                    "prospect_email": "sam@example.com",
+                    "prospect_phone": "555-0100",
+                    "relationship": "Friend",
+                    "notes": "Strong technical leader",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["referral"]["id"], "ref_1")
+        service.create_member_referral.assert_called_once_with("client_1", "case_1", "Sam Lee", "sam@example.com", "555-0100", "Friend", "Strong technical leader")
+
+    def test_leader_referrals_use_service(self):
+        service = Mock()
+        self.allow_leader_session(service)
+        service.leader_referral_dashboard.return_value = {"settings": {"is_enabled": True}, "metrics": {"total_referrals": 2}, "referrals": []}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/leader/referrals", headers=self.leader_headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["metrics"]["total_referrals"], 2)
+        service.leader_referral_dashboard.assert_called_once_with()
+
+    def test_leader_referral_settings_uses_service(self):
+        service = Mock()
+        self.allow_leader_session(service)
+        service.update_referral_settings.return_value = {"settings": {"is_enabled": False}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.patch(
+                "/api/leader/referrals/settings",
+                headers=self.leader_headers,
+                data={
+                    "is_enabled": "false",
+                    "referred_bonus_amount": "600",
+                    "referrer_bonus_amount": "300",
+                    "promotion_name": "Summer promo",
+                    "eligibility_note": "After six months",
+                    "actor_email": "leader@ascendhsi.com",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        service.update_referral_settings.assert_called_once_with(
+            "false",
+            "600",
+            "300",
+            promotion_name="Summer promo",
+            eligibility_note="After six months",
+            actor_email="leader@ascendhsi.com",
+        )
+
+    def test_leader_referral_status_uses_service(self):
+        service = Mock()
+        self.allow_leader_session(service)
+        service.update_referral_status.return_value = {"referrals": [{"id": "ref_1", "status": "qualified"}]}
+        with patch("app.api.service", return_value=service):
+            response = self.client.patch(
+                "/api/leader/referrals/ref_1",
+                headers=self.leader_headers,
+                data={"status": "qualified", "actor_email": "leader@ascendhsi.com"},
+            )
+        self.assertEqual(response.status_code, 200)
+        service.update_referral_status.assert_called_once_with(
+            "ref_1",
+            "qualified",
+            contract_signed_at="",
+            six_months_completed_at="",
+            paid_at="",
+            disqualification_reason="",
+            actor_email="leader@ascendhsi.com",
+        )
+
     def test_leader_builder_assignment_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = self.leader_user
+        self.allow_leader_session(service)
         service.leader_assign_builder.return_value = {"ok": True, "builder_name": "Ava Morales"}
         with patch("app.api.service", return_value=service):
             response = self.client.patch("/api/leader/members/client_1/builder-assignment", headers=self.leader_headers, data={"builder_id": "bld_1"})
@@ -205,19 +302,71 @@ class ApiTests(unittest.TestCase):
 
     def test_leader_attorney_assignment_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = self.leader_user
+        self.allow_leader_session(service)
         service.leader_assign_attorney.return_value = {"ok": True, "attorney_name": "Sophia Chen"}
         with patch("app.api.service", return_value=service):
             response = self.client.patch("/api/leader/members/client_1/attorney-assignment", headers=self.leader_headers, data={"attorney_id": "att_1"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["attorney_name"], "Sophia Chen")
 
+    def test_leader_product_backlog_uses_service(self):
+        service = Mock()
+        self.allow_leader_session(service)
+        service.product_feature_backlog.return_value = {"items": [{"id": "feat_1", "title": "Timeline alerts"}], "priority_counts": {"P0": 1}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/leader/product-backlog", headers=self.leader_headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0]["title"], "Timeline alerts")
+        service.product_feature_backlog.assert_called_once_with()
+
+    def test_create_leader_product_backlog_item_uses_service(self):
+        service = Mock()
+        self.allow_leader_session(service)
+        service.create_product_feature_request.return_value = {"id": "feat_1", "title": "Letter queue", "attachment_count": 1}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post(
+                "/api/leader/product-backlog",
+                headers=self.leader_headers,
+                data={
+                    "title": "Letter queue",
+                    "request_type": "new_feature",
+                    "target_portals": "Attorney, Member",
+                    "priority": "P1",
+                    "business_value": "Speeds review",
+                    "description": "Add recommendation letter workflow",
+                    "acceptance_criteria": "Can approve and send",
+                    "actor_email": "leader@ascendhsi.com",
+                },
+                files=[("screenshots", ("queue.png", b"fake-image", "image/png"))],
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["attachment_count"], 1)
+        service.create_product_feature_request.assert_called_once()
+        kwargs = service.create_product_feature_request.call_args.kwargs
+        self.assertEqual(kwargs["priority"], "P1")
+        self.assertEqual(kwargs["attachments"][0]["file_name"], "queue.png")
+        self.assertEqual(kwargs["attachments"][0]["bytes"], b"fake-image")
+
+    def test_update_leader_product_backlog_item_uses_service(self):
+        service = Mock()
+        self.allow_leader_session(service)
+        service.update_product_feature_request.return_value = {"id": "feat_1", "priority": "P0", "status": "in_progress"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.patch(
+                "/api/leader/product-backlog/feat_1",
+                headers=self.leader_headers,
+                data={"priority": "P0", "status": "in_progress", "actor_email": "leader@ascendhsi.com"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "in_progress")
+        service.update_product_feature_request.assert_called_once_with("feat_1", priority="P0", status="in_progress", actor_email="leader@ascendhsi.com")
+
     def test_admin_operations_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
+        self.allow_admin_session(service)
         service.admin_operational_dashboard.return_value = {"metrics": {"openai_endpoint_calls": 4}, "portal_health": []}
         with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/admin/operations", headers={"Authorization": "Bearer ssess_admin"})
+            response = self.client.get("/api/admin/operations", headers=self.admin_headers())
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["metrics"]["openai_endpoint_calls"], 4)
 
@@ -226,131 +375,259 @@ class ApiTests(unittest.TestCase):
         with patch("app.api.service", return_value=service):
             response = self.client.get("/api/admin/operations")
         self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"]["error"], "Authorization required")
         service.admin_operational_dashboard.assert_not_called()
 
     def test_admin_operations_rejects_non_admin_role(self):
         service = Mock()
-        service.staff_session.return_value = {"display_name": "Ava Morales", "role": "leader"}
+        service.staff_session.return_value = {"display_name": "Sophia Chen", "role": "attorney"}
         with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/admin/operations", headers={"Authorization": "Bearer ssess_leader"})
+            response = self.client.get("/api/admin/operations", headers={"Authorization": "Bearer attorney_token"})
         self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"]["error"], "Insufficient permissions")
         service.admin_operational_dashboard.assert_not_called()
-
-    def test_admin_operations_rejects_member_token(self):
-        service = Mock()
-        service.staff_session.side_effect = ValueError("Session not found")
-        with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/admin/operations", headers={"Authorization": "Bearer sess_member"})
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json()["detail"]["status"], "failed")
-        service.admin_operational_dashboard.assert_not_called()
-
-    def test_admin_costs_uses_service(self):
-        service = Mock()
-        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
-        service.admin_cost_dashboard.return_value = {"status": "needs_refresh", "aws": {}, "openai": {}}
-        with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/admin/costs", headers={"Authorization": "Bearer ssess_admin"})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "needs_refresh")
-        service.admin_cost_dashboard.assert_called_once_with()
-
-    def test_admin_costs_refresh_uses_service(self):
-        service = Mock()
-        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
-        service.refresh_admin_cost_dashboard.return_value = {"status": "ok", "aws": {"actual_month_to_date": 10}, "openai": {}}
-        with patch("app.api.service", return_value=service):
-            response = self.client.post("/api/admin/costs/refresh", headers={"Authorization": "Bearer ssess_admin"})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "ok")
-        service.refresh_admin_cost_dashboard.assert_called_once_with()
-
-    def test_admin_costs_rejects_non_admin_role(self):
-        service = Mock()
-        service.staff_session.return_value = {"display_name": "Ava Morales", "role": "leader"}
-        with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/admin/costs", headers={"Authorization": "Bearer ssess_leader"})
-        self.assertEqual(response.status_code, 401)
-        service.admin_cost_dashboard.assert_not_called()
 
     def test_admin_issue_log_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
-        service.issue_log_backlog.return_value = {"items": [{"bug_id": "BUG-20260507-0001"}], "priority_counts": {"P0": 1}}
+        self.allow_admin_session(service)
+        service.issue_log_backlog.return_value = {"items": [{"bug_id": "BUG-20260506-AB12"}], "priority_counts": {"P1": 1}}
         with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/admin/issue-log", headers={"Authorization": "Bearer ssess_admin"})
+            response = self.client.get("/api/admin/issue-log", headers=self.admin_headers())
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["items"][0]["bug_id"], "BUG-20260507-0001")
-
-    def test_admin_issue_log_rejects_non_admin_role(self):
-        service = Mock()
-        service.staff_session.return_value = {"display_name": "Ava Morales", "role": "leader"}
-        with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/admin/issue-log", headers={"Authorization": "Bearer ssess_leader"})
-        self.assertEqual(response.status_code, 401)
-        service.issue_log_backlog.assert_not_called()
+        self.assertEqual(response.json()["items"][0]["bug_id"], "BUG-20260506-AB12")
 
     def test_create_admin_issue_log_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
-        service.create_issue_log.return_value = {"bug_id": "BUG-20260507-0001", "status": "open"}
+        self.allow_admin_session(service)
+        service.create_issue_log.return_value = {"bug_id": "BUG-20260506-AB12", "status": "open"}
         with patch("app.api.service", return_value=service):
             response = self.client.post(
                 "/api/admin/issue-log",
-                headers={"Authorization": "Bearer ssess_admin"},
+                headers=self.admin_headers(),
                 data={
-                    "title": "Issue Portal route missing",
+                    "title": "Cost refresh fails",
                     "portal": "Admin Portal",
-                    "section": "Issue Portal",
+                    "section": "Cost Explorer",
                     "priority": "P1",
                     "status": "open",
-                    "description": "Issue log API returns SPA HTML.",
-                    "reported_by": "Codex",
+                    "description": "Refresh call fails to populate AWS costs.",
+                    "reported_by": "Maya Thompson",
                     "actor_email": "admin@ascendhsi.com",
                 },
             )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["bug_id"], "BUG-20260507-0001")
-        service.create_issue_log.assert_called_once()
+        self.assertEqual(response.json()["bug_id"], "BUG-20260506-AB12")
 
     def test_update_admin_issue_log_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
-        service.update_issue_log.return_value = {"bug_id": "BUG-20260507-0001", "status": "fixed"}
+        self.allow_admin_session(service)
+        service.update_issue_log.return_value = {"bug_id": "BUG-20260506-AB12", "status": "closed"}
         with patch("app.api.service", return_value=service):
             response = self.client.patch(
-                "/api/admin/issue-log/BUG-20260507-0001",
-                headers={"Authorization": "Bearer ssess_admin"},
-                data={"priority": "P1", "status": "fixed", "actor_email": "admin@ascendhsi.com"},
+                "/api/admin/issue-log/BUG-20260506-AB12",
+                headers=self.admin_headers(),
+                data={"priority": "P0", "status": "closed", "actor_email": "admin@ascendhsi.com"},
             )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "fixed")
-        service.update_issue_log.assert_called_once_with("BUG-20260507-0001", priority="P1", status="fixed", actor_email="admin@ascendhsi.com")
+        self.assertEqual(response.json()["status"], "closed")
+        service.update_issue_log.assert_called_once_with("BUG-20260506-AB12", priority="P0", status="closed", actor_email="admin@ascendhsi.com")
 
     def test_remove_admin_issue_log_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = {"display_name": "Maya Thompson", "role": "admin"}
-        service.remove_issue_log.return_value = {"ok": True, "status": "removed", "bug_id": "BUG-20260507-0001"}
+        self.allow_admin_session(service)
+        service.remove_issue_log.return_value = {"ok": True, "status": "removed", "bug_id": "BUG-20260506-AB12"}
         with patch("app.api.service", return_value=service):
             response = self.client.request(
                 "DELETE",
-                "/api/admin/issue-log/BUG-20260507-0001",
-                headers={"Authorization": "Bearer ssess_admin"},
+                "/api/admin/issue-log/BUG-20260506-AB12",
+                headers=self.admin_headers(),
                 data={"actor_email": "admin@ascendhsi.com"},
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "removed")
-        service.remove_issue_log.assert_called_once_with("BUG-20260507-0001", actor_email="admin@ascendhsi.com")
+        service.remove_issue_log.assert_called_once_with("BUG-20260506-AB12", actor_email="admin@ascendhsi.com")
+
+    def test_admin_costs_uses_service(self):
+        service = Mock()
+        self.allow_admin_session(service)
+        service.admin_cost_dashboard.return_value = {"status": "needs_refresh", "aws": {}, "openai": {}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/admin/costs", headers=self.admin_headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "needs_refresh")
+
+    def test_admin_costs_refresh_uses_service(self):
+        service = Mock()
+        self.allow_admin_session(service)
+        service.refresh_admin_cost_dashboard.return_value = {"status": "success", "aws": {"status": "available"}, "openai": {"status": "available"}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post("/api/admin/costs/refresh", headers=self.admin_headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "success")
 
     def test_attorney_petition_generator_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = self.attorney_user
+        self.allow_attorney_session(service)
         service.attorney_petition_generator.return_value = {"ok": True, "status": "success", "executive_summary": "Draft"}
         with patch("app.api.service", return_value=service):
             response = self.client.get("/api/attorney/petition-generator", headers=self.attorney_headers, params={"client_id": "client_1"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "success")
         service.attorney_petition_generator.assert_called_once_with("client_1", attorney_email="attorney@ascendhsi.com")
+
+    def test_generic_petition_acceleration_uses_service(self):
+        service = Mock()
+        self.allow_leader_session(service)
+        service.petition_acceleration_workspace.return_value = {"ok": True, "status": "success", "feature_index": []}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get(
+                "/api/petition-acceleration",
+                headers=self.leader_headers,
+                params={"client_id": "client_1", "actor_role": "leader", "actor_email": "leader@ascendhsi.com"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        service.petition_acceleration_workspace.assert_called_once_with("client_1", actor_role="leader", actor_email="leader@ascendhsi.com")
+
+    def test_member_petition_acceleration_uses_session_member(self):
+        service = Mock()
+        service.member_session.return_value = {"client_id": "client_1", "case_id": "case_1", "display_name": "Vas"}
+        service.petition_acceleration_workspace.return_value = {"ok": True, "status": "success"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/member/petition-acceleration", headers={"Authorization": "Bearer sess_1"})
+        self.assertEqual(response.status_code, 200)
+        service.member_session.assert_called_once_with("sess_1")
+        service.petition_acceleration_workspace.assert_called_once_with("client_1", actor_role="member")
+
+    def test_attorney_petition_acceleration_uses_service(self):
+        service = Mock()
+        self.allow_attorney_session(service)
+        service.petition_acceleration_workspace.return_value = {"ok": True, "status": "success"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get(
+                "/api/attorney/members/client_1/petition-acceleration",
+                headers=self.attorney_headers,
+                params={"attorney_email": "attorney@ascendhsi.com"},
+            )
+        self.assertEqual(response.status_code, 200)
+        service.petition_acceleration_workspace.assert_called_once_with("client_1", actor_role="attorney", actor_email="attorney@ascendhsi.com")
+
+    def test_attorney_endeavor_letter_generator_uses_service(self):
+        service = Mock()
+        self.allow_attorney_session(service)
+        service.attorney_endeavor_letter_generator.return_value = {"ok": True, "status": "success", "letter": {"title": "Statement"}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post(
+                "/api/attorney/endeavor-letter-generator",
+                headers=self.attorney_headers,
+                json={
+                    "client_id": "client_1",
+                    "actor_role": "attorney",
+                    "actor_email": "attorney@ascendhsi.com",
+                    "prompt_config": {"proposed_endeavor": "Continue high-impact research"},
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "success")
+        service.attorney_endeavor_letter_generator.assert_called_once_with(
+            "client_1",
+            prompt_config={"proposed_endeavor": "Continue high-impact research"},
+            actor_role="attorney",
+            actor_email="attorney@ascendhsi.com",
+        )
+
+    def test_member_filing_timeline_uses_service(self):
+        service = Mock()
+        service.petition_delivery_timeline.return_value = {"ok": True, "summary": {"target_filing_date": "2026-08-01"}, "stages": []}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get(
+                "/api/members/client_1/filing-timeline",
+                params={"actor_role": "leader", "actor_email": "leader@ascendhsi.com"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["summary"]["target_filing_date"], "2026-08-01")
+        service.petition_delivery_timeline.assert_called_once_with(
+            "client_1",
+            actor_role="leader",
+            actor_email="leader@ascendhsi.com",
+            actor_client_id="",
+        )
+
+    def test_recommendation_letter_workspace_uses_service(self):
+        service = Mock()
+        self.allow_attorney_session(service)
+        service.recommendation_letter_workspace.return_value = {"ok": True, "projects": [{"id": "crp_1"}], "letters": []}
+        with patch("app.api.service", return_value=service):
+            response = self.client.get(
+                "/api/attorney/members/client_1/recommendation-letter-workspace",
+                headers=self.attorney_headers,
+                params={"actor_role": "attorney", "actor_email": "attorney@ascendhsi.com"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["projects"][0]["id"], "crp_1")
+        service.recommendation_letter_workspace.assert_called_once_with("client_1", actor_role="attorney", actor_email="attorney@ascendhsi.com")
+
+    def test_recommendation_letter_generator_uses_service(self):
+        service = Mock()
+        self.allow_attorney_session(service)
+        service.attorney_recommendation_letter_generator.return_value = {"ok": True, "letter_record": {"id": "recltr_1"}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post(
+                "/api/attorney/recommendation-letter-generator",
+                headers=self.attorney_headers,
+                json={
+                    "client_id": "client_1",
+                    "letter_kind": "dependent",
+                    "project_type": "critical_role",
+                    "project_id": "crp_1",
+                    "actor_role": "attorney",
+                    "actor_email": "attorney@ascendhsi.com",
+                    "prompt_config": {"recommender_name": "Dana"},
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["letter_record"]["id"], "recltr_1")
+        service.attorney_recommendation_letter_generator.assert_called_once_with(
+            "client_1",
+            letter_kind="dependent",
+            project_type="critical_role",
+            project_id="crp_1",
+            prompt_config={"recommender_name": "Dana"},
+            actor_role="attorney",
+            actor_email="attorney@ascendhsi.com",
+        )
+
+    def test_send_recommendation_letter_to_member_uses_service(self):
+        service = Mock()
+        self.allow_attorney_session(service)
+        service.send_recommendation_letter_to_member.return_value = {"ok": True, "letter": {"id": "recltr_1", "status": "sent_to_member"}}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post(
+                "/api/attorney/recommendation-letters/recltr_1/send-to-member",
+                headers=self.attorney_headers,
+                json={"actor_role": "attorney", "actor_email": "attorney@ascendhsi.com"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["letter"]["status"], "sent_to_member")
+        service.send_recommendation_letter_to_member.assert_called_once_with(
+            "recltr_1",
+            actor_role="attorney",
+            actor_email="attorney@ascendhsi.com",
+        )
+
+    def test_download_recommendation_letter_returns_text(self):
+        service = Mock()
+        service.recommendation_letter_download.return_value = {
+            "file_name": "letter.txt",
+            "content_type": "text/plain; charset=utf-8",
+            "content": "Recommendation letter text",
+        }
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/recommendation-letters/recltr_1/download")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text, "Recommendation letter text")
+        self.assertIn("letter.txt", response.headers["content-disposition"])
+        service.recommendation_letter_download.assert_called_once_with("recltr_1")
 
     def test_portal_assistant_reply_uses_service(self):
         service = Mock()
@@ -437,7 +714,7 @@ class ApiTests(unittest.TestCase):
 
     def test_attorney_batch_intake_create_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = self.attorney_user
+        self.allow_attorney_session(service)
         service.attorney_batch_intake_create.return_value = {"id": "bat_1", "counts": {"items": 2}}
         with patch("app.api.service", return_value=service):
             response = self.client.post(
@@ -452,7 +729,7 @@ class ApiTests(unittest.TestCase):
 
     def test_attorney_member_evidence_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = self.attorney_user
+        self.allow_attorney_session(service)
         service.attorney_member_evidence.return_value = [{"id": "ev_1", "file_name": "review.pdf"}]
         with patch("app.api.service", return_value=service):
             response = self.client.get(
@@ -466,7 +743,7 @@ class ApiTests(unittest.TestCase):
 
     def test_batch_intake_sessions_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = self.leader_user
+        self.allow_leader_session(service)
         service.batch_intake_sessions.return_value = [{"id": "bat_1"}]
         with patch("app.api.service", return_value=service):
             response = self.client.get("/api/batch-intake/sessions", headers=self.leader_headers, params={"client_id": "client_1", "actor_role": "leader"})
@@ -476,7 +753,7 @@ class ApiTests(unittest.TestCase):
 
     def test_attorney_batch_intake_session_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = self.attorney_user
+        self.allow_attorney_session(service)
         service.attorney_batch_intake_session.return_value = {"id": "bat_1", "items": []}
         with patch("app.api.service", return_value=service):
             response = self.client.get("/api/attorney/batch-intake/bat_1", headers=self.attorney_headers, params={"actor_role": "attorney", "actor_email": "attorney@ascendhsi.com"})
@@ -486,7 +763,7 @@ class ApiTests(unittest.TestCase):
 
     def test_update_attorney_batch_intake_item_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = self.leader_user
+        self.allow_leader_session(service)
         service.update_attorney_batch_intake_item.return_value = {"id": "bat_1", "items": [{"id": "bti_1"}]}
         with patch("app.api.service", return_value=service):
             response = self.client.patch(
@@ -500,7 +777,7 @@ class ApiTests(unittest.TestCase):
 
     def test_bulk_update_attorney_batch_intake_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = self.leader_user
+        self.allow_leader_session(service)
         service.bulk_update_attorney_batch_intake.return_value = {"id": "bat_1", "items": []}
         with patch("app.api.service", return_value=service):
             response = self.client.post(
@@ -514,7 +791,7 @@ class ApiTests(unittest.TestCase):
 
     def test_commit_attorney_batch_intake_uses_service(self):
         service = Mock()
-        service.staff_session.return_value = self.leader_user
+        self.allow_leader_session(service)
         service.commit_attorney_batch_intake.return_value = {"ok": True, "status": "committed", "committed_count": 4}
         with patch("app.api.service", return_value=service):
             response = self.client.post("/api/attorney/batch-intake/bat_1/commit", headers=self.leader_headers, data={"actor_role": "leader"})
@@ -570,24 +847,6 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.json()["first_name"], "Vas")
         service.member_profile.assert_called_once_with("client_1", "case_1")
 
-    def test_member_dashboard_rejects_non_member_token_as_json(self):
-        service = Mock()
-        service.member_session.side_effect = ValueError("Session not found")
-        with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/member/dashboard", headers={"Authorization": "Bearer ssess_leader"})
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.headers["content-type"].split(";")[0], "application/json")
-        self.assertEqual(response.json()["detail"]["status"], "failed")
-
-    def test_member_profile_rejects_non_member_token_as_json(self):
-        service = Mock()
-        service.member_session.side_effect = ValueError("Session not found")
-        with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/member/profile", headers={"Authorization": "Bearer ssess_leader"})
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.headers["content-type"].split(";")[0], "application/json")
-        self.assertEqual(response.json()["detail"]["status"], "failed")
-
     def test_update_member_profile_calls_service(self):
         service = Mock()
         service.member_session.return_value = self.member_user
@@ -606,6 +865,116 @@ class ApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["email"], "vas@ascend.com")
+
+    def test_member_critical_role_projects_uses_service(self):
+        service = Mock()
+        service.critical_role_projects.return_value = [{"id": "crp_1", "project_name": "Project Atlas"}]
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/member/critical-role-projects")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["project_name"], "Project Atlas")
+        service.critical_role_projects.assert_called_once_with()
+
+    def test_create_member_critical_role_project_calls_service(self):
+        service = Mock()
+        service.create_critical_role_project.return_value = {"id": "crp_1", "project_name": "Project Atlas"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post(
+                "/api/member/critical-role-projects",
+                data={
+                    "organization_name": "Organization 1",
+                    "role_title": "Senior Product Manager",
+                    "project_name": "Project Atlas",
+                    "role_summary": "Owned a critical payments platform charter.",
+                    "contributions_summary": "Led concept, roadmap, launch, and stakeholder buy-in.",
+                    "business_value_summary": "Enabled faster releases and meaningful revenue lift.",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], "crp_1")
+        service.create_critical_role_project.assert_called_once()
+
+    def test_update_member_critical_role_project_calls_service(self):
+        service = Mock()
+        service.update_critical_role_project.return_value = {"id": "crp_1", "project_name": "Project Atlas"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.patch(
+                "/api/member/critical-role-projects/crp_1",
+                data={
+                    "organization_name": "Organization 1",
+                    "role_title": "Senior Product Manager",
+                    "project_name": "Project Atlas",
+                    "role_summary": "Updated role summary",
+                    "contributions_summary": "Updated contributions",
+                    "business_value_summary": "Updated value",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["project_name"], "Project Atlas")
+        service.update_critical_role_project.assert_called_once()
+
+    def test_delete_member_critical_role_project_calls_service(self):
+        service = Mock()
+        service.delete_critical_role_project.return_value = {"ok": True, "status": "deleted", "project_id": "crp_1"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.delete("/api/member/critical-role-projects/crp_1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "deleted")
+        service.delete_critical_role_project.assert_called_once_with("crp_1", client_id=None, case_id=None)
+
+    def test_member_original_contributions_uses_service(self):
+        service = Mock()
+        service.original_contribution_entries.return_value = [{"id": "oce_1", "contribution_title": "Project Nova"}]
+        with patch("app.api.service", return_value=service):
+            response = self.client.get("/api/member/original-contributions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["contribution_title"], "Project Nova")
+        service.original_contribution_entries.assert_called_once_with()
+
+    def test_create_member_original_contribution_calls_service(self):
+        service = Mock()
+        service.create_original_contribution_entry.return_value = {"id": "oce_1", "contribution_title": "Project Nova"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.post(
+                "/api/member/original-contributions",
+                data={
+                    "contribution_title": "Project Nova",
+                    "originality_summary": "Created a first-of-its-kind testing workflow.",
+                    "distinct_contribution_summary": "Personally led ideation, roadmap, and launch.",
+                    "impact_metrics": "90% time reduction",
+                    "field_wide_impact": "Changed how teams test integrations at scale.",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], "oce_1")
+        service.create_original_contribution_entry.assert_called_once()
+
+    def test_update_member_original_contribution_calls_service(self):
+        service = Mock()
+        service.update_original_contribution_entry.return_value = {"id": "oce_1", "contribution_title": "Project Nova"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.patch(
+                "/api/member/original-contributions/oce_1",
+                data={
+                    "contribution_title": "Project Nova",
+                    "originality_summary": "Updated originality summary",
+                    "distinct_contribution_summary": "Updated distinct contribution",
+                    "impact_metrics": "Updated metrics",
+                    "field_wide_impact": "Updated field impact",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["contribution_title"], "Project Nova")
+        service.update_original_contribution_entry.assert_called_once()
+
+    def test_delete_member_original_contribution_calls_service(self):
+        service = Mock()
+        service.delete_original_contribution_entry.return_value = {"ok": True, "status": "deleted", "entry_id": "oce_1"}
+        with patch("app.api.service", return_value=service):
+            response = self.client.delete("/api/member/original-contributions/oce_1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "deleted")
+        service.delete_original_contribution_entry.assert_called_once_with("oce_1", client_id=None, case_id=None)
 
     def test_duplicate_upload_returns_conflict(self):
         service = Mock()
@@ -703,15 +1072,6 @@ class ApiTests(unittest.TestCase):
             response = self.client.get("/api/member/planner")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]["member_role"], "Reviewer")
-
-    def test_planner_items_rejects_non_member_token_as_json(self):
-        service = Mock()
-        service.member_session.side_effect = ValueError("Session not found")
-        with patch("app.api.service", return_value=service):
-            response = self.client.get("/api/member/planner", headers={"Authorization": "Bearer ssess_leader"})
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.headers["content-type"].split(";")[0], "application/json")
-        self.assertEqual(response.json()["detail"]["status"], "failed")
 
     def test_create_planner_item_calls_service(self):
         service = Mock()

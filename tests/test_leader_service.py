@@ -21,7 +21,7 @@ class LeaderPortalServiceTests(unittest.TestCase):
         )
         patches = [
             patch("app.services.load_app_config", return_value=self.config),
-            patch("app.services.load_storage_config", return_value={"enabled": False, "provider": "s3", "bucket_env": "ASCEND_STORAGE_BUCKET"}),
+            patch("app.services.load_google_drive_config", return_value={"folder_id": "folder", "folder_url": "url", "mode": "test"}),
             patch("app.services.load_openai_config", return_value={"enabled": False}),
         ]
         self.patchers = patches
@@ -50,10 +50,16 @@ class LeaderPortalServiceTests(unittest.TestCase):
         self.assertTrue(dashboard["watchlist"])
         self.assertIn("stage_label", dashboard["members"][0])
         self.assertIn("risk_level", dashboard["members"][0])
+        self.assertIn("member_uid", dashboard["members"][0])
+        self.assertIn("builder_id", dashboard["members"][0])
+        self.assertIn("attorney_id", dashboard["members"][0])
         self.assertIn("first_name", dashboard["members"][0])
         self.assertIn("last_name", dashboard["members"][0])
         self.assertIn("email", dashboard["members"][0])
         self.assertIn("phone", dashboard["members"][0])
+        self.assertGreaterEqual(dashboard["members"][0]["member_uid"], 100001)
+        self.assertGreaterEqual(dashboard["builders"][0]["builder_uid"], 200001)
+        self.assertGreaterEqual(dashboard["attorneys"][0]["attorney_uid"], 300001)
 
     def test_staff_login_rejects_credentials_for_wrong_portal(self):
         with self.assertRaises(ValueError) as context:
@@ -64,6 +70,44 @@ class LeaderPortalServiceTests(unittest.TestCase):
 
         result = self.service.login_staff("leader@ascendhsi.com", DEFAULT_MEMBER_PASSWORD, {}, "leader")
         self.assertEqual(result["user"]["role"], "leader")
+
+    def test_messages_use_numeric_actor_keys_with_legacy_visibility(self):
+        leader_actor = self.service._actor_identity("leader", "leader@ascendhsi.com")
+        member_actor = self.service._actor_identity("member", actor_client_id="client_1")
+
+        self.assertEqual(leader_actor["key"], str(leader_actor["numeric_identifier"]))
+        self.assertEqual(member_actor["key"], str(member_actor["numeric_identifier"]))
+        self.assertNotEqual(leader_actor["key"], leader_actor["email"])
+        self.assertNotEqual(member_actor["key"], member_actor["client_id"])
+
+        sent = self.service.send_message(
+            "leader",
+            "Numeric identity check",
+            "Please confirm the numeric message key.",
+            "member",
+            member_actor["key"],
+            actor_email="leader@ascendhsi.com",
+        )
+
+        self.assertEqual(sent["sender_key"], leader_actor["key"])
+        self.assertEqual(sent["recipient_key"], member_actor["key"])
+        member_messages = self.service.message_center("member", actor_client_id="client_1")
+        self.assertEqual(member_messages["unread_count"], 1)
+
+        self.service.conn.execute(
+            """
+            INSERT INTO messages(
+              id, thread_id, sender_role, sender_key, sender_name,
+              recipient_role, recipient_key, recipient_name, subject, body
+            )
+            VALUES (?, ?, 'leader', ?, 'Ava Morales', 'member', ?, 'Vas', 'Legacy message', 'Legacy body')
+            """,
+            ("msg_legacy", "thd_legacy", leader_actor["legacy_key"], member_actor["legacy_key"]),
+        )
+        self.service.conn.commit()
+
+        legacy_visible = self.service.message_center("member", actor_client_id="client_1")
+        self.assertTrue(any(thread["thread_id"] == "thd_legacy" for thread in legacy_visible["threads"]))
 
     def test_leader_dashboard_flags_unassigned_members_for_attention(self):
         self.service.leader_invite_member(
@@ -144,6 +188,61 @@ class LeaderPortalServiceTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(invite_count, 1)
         self.assertEqual(account_count, 1)
+
+    def test_referral_program_tracks_member_submission_and_leader_status(self):
+        summary = self.service.create_member_referral(
+            "client_1",
+            "case_1",
+            "Riya Patel",
+            "riya.referral@example.com",
+            "",
+            "Friend",
+            "Strong technology leader interested in Ascend.",
+        )
+
+        referral = summary["referral"]
+        self.assertEqual(referral["status"], "submitted")
+        self.assertEqual(referral["referrer_bonus_amount"], 250)
+        self.assertEqual(referral["referred_bonus_amount"], 500)
+
+        leader_dashboard = self.service.leader_referral_dashboard()
+        self.assertEqual(leader_dashboard["metrics"]["total_referrals"], 1)
+        self.assertEqual(leader_dashboard["referrals"][0]["prospect_email"], "riya.referral@example.com")
+
+        qualified = self.service.update_referral_status(referral["id"], "qualified", actor_email="leader@ascendhsi.com")
+        updated = qualified["referrals"][0]
+        self.assertEqual(updated["status"], "qualified")
+        self.assertTrue(updated["eligible_at"])
+        self.assertEqual(qualified["metrics"]["pending_payout_amount"], 750)
+
+    def test_referral_program_can_be_disabled_and_amounts_configured(self):
+        disabled = self.service.update_referral_settings(
+            "false",
+            "600",
+            "300",
+            promotion_name="Summer growth promo",
+            eligibility_note="Paid after contract and six months.",
+            actor_email="leader@ascendhsi.com",
+        )
+
+        self.assertFalse(disabled["settings"]["is_enabled"])
+        self.assertEqual(disabled["settings"]["referred_bonus_amount"], 600)
+        self.assertEqual(disabled["settings"]["referrer_bonus_amount"], 300)
+
+        with self.assertRaises(ValueError):
+            self.service.create_member_referral("client_1", "case_1", "Paused Prospect", "paused@example.com")
+
+        self.service.update_referral_settings(
+            "true",
+            "600",
+            "300",
+            promotion_name="Summer growth promo",
+            eligibility_note="Paid after contract and six months.",
+            actor_email="leader@ascendhsi.com",
+        )
+        summary = self.service.create_member_referral("client_1", "case_1", "Active Prospect", "active@example.com")
+        self.assertEqual(summary["referral"]["referred_bonus_amount"], 600)
+        self.assertEqual(summary["referral"]["referrer_bonus_amount"], 300)
 
     def test_leader_invite_blocks_registered_existing_member_email(self):
         with patch.object(self.service, "_send_member_registration_email", return_value={"status": "sent", "sent_at": "2026-05-08T00:00:00"}):

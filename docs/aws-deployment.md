@@ -10,6 +10,8 @@ This document describes the AWS shape for deploying the Ascend product suite aft
 - readiness endpoint for load balancers and container health checks
 - Athena-first operational analysis with logs routed to S3 instead of a CloudWatch-centric monitoring stack
 - non-blocking portal hydration after login, so role shells render while live data refreshes
+- relative frontend API URL handling for local Vite proxy, CloudFront, and future custom domains
+- member and leader referral-program workflows with configurable incentives and payout tracking
 - Dockerfiles and AWS deployment artifacts under `deploy/aws/`
 
 ## Current Dev Deployment
@@ -183,6 +185,15 @@ curl -sS https://dq5ab404dg57q.cloudfront.net/ready
 ```
 
 For portal smoke tests, validate login and initial data APIs for Member, Profile Builder, Leader, Attorney, and Admin.
+
+The May 12, 2026 referral release should also validate:
+
+- `GET /api/member/referrals`
+- `POST /api/member/referrals`
+- `GET /api/leader/referrals`
+- `PATCH /api/leader/referrals/settings`
+- `PATCH /api/leader/referrals/{referral_id}`
+- Member and Leader portal hydration should move past `Loading Ascend portal...` or show the retry panel if a dependency fails.
 
 ## Environment Variables
 

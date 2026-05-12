@@ -22,21 +22,21 @@ class StorageTests(unittest.TestCase):
             self.assertIn("clients/client_1/cases/case_1/evidence/judging", stored.local_path)
             self.assertEqual(Path(stored.local_path).read_text(encoding="utf-8"), "hello")
 
-    def test_store_uses_s3_when_enabled(self):
+    def test_store_uses_google_drive_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "source.txt"
             source.write_text("hello", encoding="utf-8")
-            object_storage = Mock()
-            object_storage.enabled = True
-            object_storage.ensure_folder_path.return_value = "active/clients/client_1/cases/case_1/evidence/judging/ev_1/original"
-            object_storage.upload_file.return_value = {"id": "active/clients/client_1/cases/case_1/evidence/judging/review.txt", "webViewLink": "https://signed.example.com/review.txt"}
-            storage = EvidenceStorage(root / "uploads", root / "drive", object_storage)
+            drive = Mock()
+            drive.enabled = True
+            drive.ensure_folder_path.return_value = "folder-id"
+            drive.upload_file.return_value = {"id": "drive-file-id", "webViewLink": "https://drive/file"}
+            storage = EvidenceStorage(root / "uploads", root / "drive", drive)
             stored = storage.store("client_1", "case_1", "judging", "review.txt", source)
-            object_storage.ensure_folder_path.assert_called_once()
-            object_storage.upload_file.assert_called_once()
+            drive.ensure_folder_path.assert_called_once()
+            drive.upload_file.assert_called_once()
             self.assertEqual(stored.local_path, "")
-            self.assertEqual(stored.drive_file_id, "active/clients/client_1/cases/case_1/evidence/judging/review.txt")
+            self.assertEqual(stored.drive_file_id, "drive-file-id")
             self.assertIn("clients/client_1/cases/case_1/evidence/judging", stored.drive_path)
 
 

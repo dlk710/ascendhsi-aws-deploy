@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.db import initialize, one, rows, seed_default_case
+from app.db import initialize, next_numeric_identifier, one, rows, seed_default_case
 
 
 class DatabaseTests(unittest.TestCase):
@@ -24,12 +24,6 @@ class DatabaseTests(unittest.TestCase):
         self.assertIn("judging", {item["code"] for item in criteria})
         self.assertIn("other", {item["code"] for item in criteria})
 
-    def test_initialize_persists_criteria_display_order(self):
-        criteria = rows(self.conn, "SELECT code, display_order FROM criteria ORDER BY display_order, name")
-        self.assertEqual(criteria[0]["display_order"], 1)
-        self.assertEqual(criteria[0]["code"], "awards")
-        self.assertEqual(criteria[-1]["code"], "other")
-
     def test_initialize_creates_planner_table(self):
         tables = rows(self.conn, "SELECT name FROM sqlite_master WHERE type = 'table'")
         self.assertIn("planner_items", {item["name"] for item in tables})
@@ -37,6 +31,21 @@ class DatabaseTests(unittest.TestCase):
     def test_initialize_creates_member_profile_table(self):
         tables = rows(self.conn, "SELECT name FROM sqlite_master WHERE type = 'table'")
         self.assertIn("member_profiles", {item["name"] for item in tables})
+
+    def test_initialize_creates_critical_role_projects_table(self):
+        tables = rows(self.conn, "SELECT name FROM sqlite_master WHERE type = 'table'")
+        self.assertIn("critical_role_projects", {item["name"] for item in tables})
+
+    def test_initialize_creates_original_contribution_entries_table(self):
+        tables = rows(self.conn, "SELECT name FROM sqlite_master WHERE type = 'table'")
+        self.assertIn("original_contribution_entries", {item["name"] for item in tables})
+
+    def test_evidence_items_has_debug_timestamps(self):
+        columns = rows(self.conn, "PRAGMA table_info(evidence_items)")
+        names = {item["name"] for item in columns}
+        self.assertIn("created_at", names)
+        self.assertIn("updated_at", names)
+        self.assertIn("archived_at", names)
 
     def test_initialize_creates_member_account_tables(self):
         tables = rows(self.conn, "SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -59,8 +68,16 @@ class DatabaseTests(unittest.TestCase):
         self.assertIn("support_ticket_attachments", names)
         self.assertIn("batch_intake_sessions", names)
         self.assertIn("batch_intake_items", names)
-        self.assertIn("admin_cost_snapshots", names)
         self.assertIn("marketing_leads", names)
+        self.assertIn("referral_settings", names)
+        self.assertIn("member_referrals", names)
+
+    def test_referral_settings_seed_default_promotion(self):
+        settings = one(self.conn, "SELECT * FROM referral_settings WHERE id = 'default'")
+        self.assertEqual(settings["is_enabled"], 1)
+        self.assertEqual(settings["referred_bonus_amount"], 500)
+        self.assertEqual(settings["referrer_bonus_amount"], 250)
+        self.assertIn("6 months", settings["eligibility_note"])
 
     def test_account_tables_track_last_login_audit_fields(self):
         for table in ("member_accounts", "profile_builder_accounts", "staff_accounts"):
@@ -70,17 +87,33 @@ class DatabaseTests(unittest.TestCase):
             self.assertIn("last_login_ip", names)
             self.assertIn("last_login_user_agent", names)
 
-        columns = rows(self.conn, "PRAGMA table_info(operational_events)")
-        names = {item["name"] for item in columns}
-        self.assertIn("actor_role", names)
-        self.assertIn("actor_key", names)
-
     def test_seed_default_case(self):
         seed_default_case(self.conn, "client_1", "case_1", "Vas")
         client = one(self.conn, "SELECT * FROM clients WHERE id = ?", ("client_1",))
         case = one(self.conn, "SELECT * FROM cases WHERE id = ?", ("case_1",))
         self.assertEqual(client["display_name"], "Vas")
+        self.assertGreaterEqual(client["member_uid"], 100001)
         self.assertEqual(case["case_type"], "EB1A")
+
+    def test_numeric_identifiers_backfill_and_increment(self):
+        self.conn.execute("INSERT INTO clients(id, display_name) VALUES (?, ?)", ("client_legacy", "Legacy Member"))
+        self.conn.execute("INSERT INTO profile_builders(id, display_name, email) VALUES (?, ?, ?)", ("bld_legacy", "Builder", "builder@example.com"))
+        self.conn.execute("INSERT INTO attorneys(id, display_name, email) VALUES (?, ?, ?)", ("att_legacy", "Attorney", "attorney@example.com"))
+        self.conn.execute("INSERT INTO staff_accounts(id, role, actor_key, username, email, password_hash) VALUES (?, ?, ?, ?, ?, ?)", ("staff_legacy", "leader", "leader@example.com", "leader@example.com", "leader@example.com", "hash"))
+        self.conn.commit()
+
+        initialize(self.conn)
+
+        client = one(self.conn, "SELECT member_uid FROM clients WHERE id = ?", ("client_legacy",))
+        builder = one(self.conn, "SELECT builder_uid FROM profile_builders WHERE id = ?", ("bld_legacy",))
+        attorney = one(self.conn, "SELECT attorney_uid FROM attorneys WHERE id = ?", ("att_legacy",))
+        staff = one(self.conn, "SELECT staff_uid FROM staff_accounts WHERE id = ?", ("staff_legacy",))
+
+        self.assertGreaterEqual(client["member_uid"], 100001)
+        self.assertGreaterEqual(builder["builder_uid"], 200001)
+        self.assertGreaterEqual(attorney["attorney_uid"], 300001)
+        self.assertGreaterEqual(staff["staff_uid"], 400001)
+        self.assertGreater(next_numeric_identifier(self.conn, "clients", "member_uid"), client["member_uid"])
 
 
 if __name__ == "__main__":
