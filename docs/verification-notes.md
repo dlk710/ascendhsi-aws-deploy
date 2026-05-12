@@ -12,9 +12,9 @@ This document records recent live verification results for the Ascend product su
 
 ### Overall Result
 
-Status: pass locally, AWS deployment in progress
+Status: pass locally, AWS frontend deployed, backend ECS stabilization fix in progress
 
-The backend now exposes a lightweight `/ready` endpoint in the shared product code, matching the AWS deployment workflow and load-balancer smoke checks without running the full admin dashboard on every health probe. CORS origins can also be configured with `ASCEND_CORS_ORIGINS` while preserving local defaults.
+The backend now exposes a lightweight `/ready` endpoint in the shared product code, matching the AWS deployment workflow and load-balancer smoke checks without running the full admin dashboard on every health probe. CORS origins can also be configured with `ASCEND_CORS_ORIGINS` while preserving local defaults. The AWS deployment path now also honors runtime path overrides, older and newer S3 evidence bucket environment names, and a 120-second ECS health-check grace period for safer Fargate rollouts.
 
 ### Automated Checks
 
@@ -24,10 +24,13 @@ The backend now exposes a lightweight `/ready` endpoint in the shared product co
 - AWS deployment repo React production build: pass
 - Direct local `GET /ready` through FastAPI TestClient: `200`
 - `/ready` regression test confirms the health probe does not instantiate the full service layer.
+- Runtime config regression tests confirm AWS container paths can be redirected to `/tmp/ascend`.
+- Evidence S3 regression tests confirm AWS deployment env names map to the active and archive evidence buckets.
 
 ### Release Notes
 
 - The AWS backend deployment workflow now prints recent ECS service events and stopped-task details if the service does not stabilize.
+- ECS service updates now set `health-check-grace-period-seconds` to `120`; Terraform mirrors the same setting.
 - Local runtime data under `data/` remains intentionally uncommitted.
 
 ## Verification Run: 2026-05-12

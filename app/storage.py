@@ -29,11 +29,21 @@ class StoredFile:
 
 class S3StorageClient:
     def __init__(self):
-        self.bucket = os.environ.get("ASCEND_EVIDENCE_S3_BUCKET", "").strip()
-        self.region = os.environ.get("ASCEND_EVIDENCE_S3_REGION", "").strip()
-        self.prefix = os.environ.get("ASCEND_EVIDENCE_S3_PREFIX", "").strip().strip("/")
-        self.kms_key_id = os.environ.get("ASCEND_EVIDENCE_S3_KMS_KEY_ID", "").strip()
-        self.endpoint_url = os.environ.get("ASCEND_EVIDENCE_S3_ENDPOINT_URL", "").strip()
+        self.bucket = self._env("ASCEND_EVIDENCE_S3_BUCKET", "ASCEND_STORAGE_BUCKET")
+        self.archive_bucket = self._env("ASCEND_EVIDENCE_S3_ARCHIVE_BUCKET", "ASCEND_ARCHIVE_BUCKET") or self.bucket
+        self.region = self._env("ASCEND_EVIDENCE_S3_REGION", "AWS_REGION")
+        self.prefix = self._env("ASCEND_EVIDENCE_S3_PREFIX", "ASCEND_STORAGE_PREFIX").strip("/")
+        self.archive_prefix = self._env("ASCEND_EVIDENCE_S3_ARCHIVE_PREFIX", "ASCEND_ARCHIVE_PREFIX").strip("/") or "archive"
+        self.kms_key_id = self._env("ASCEND_EVIDENCE_S3_KMS_KEY_ID", "ASCEND_S3_KMS_KEY_ID")
+        self.server_side_encryption = self._env("ASCEND_EVIDENCE_S3_SERVER_SIDE_ENCRYPTION", "ASCEND_S3_SERVER_SIDE_ENCRYPTION") or "AES256"
+        self.endpoint_url = self._env("ASCEND_EVIDENCE_S3_ENDPOINT_URL", "AWS_S3_ENDPOINT_URL")
+
+    def _env(self, *names: str) -> str:
+        for name in names:
+            value = os.environ.get(name, "").strip()
+            if value:
+                return value
+        return ""
 
     @property
     def enabled(self) -> bool:
@@ -65,30 +75,38 @@ class S3StorageClient:
         if self.kms_key_id:
             extra_args["ServerSideEncryption"] = "aws:kms"
             extra_args["SSEKMSKeyId"] = self.kms_key_id
+        elif self.server_side_encryption:
+            extra_args["ServerSideEncryption"] = self.server_side_encryption
         self._client().upload_file(str(source_path), self.bucket, key, ExtraArgs=extra_args)
         return self.uri_for_key(key)
 
     def archive_uri(self, source_uri: str) -> str:
         key = self.key_from_uri(source_uri)
-        if key.startswith("archive/"):
-            return self.uri_for_key(key)
-        return self.uri_for_key(f"archive/{key}")
+        if key.startswith(f"{self.archive_prefix}/"):
+            return f"s3://{self.archive_bucket}/{key}"
+        return f"s3://{self.archive_bucket}/{self.archive_prefix}/{key}"
 
     def key_from_uri(self, uri: str) -> str:
-        prefix = f"s3://{self.bucket}/"
-        if uri.startswith(prefix):
-            return uri[len(prefix):].strip("/")
+        if uri.startswith("s3://"):
+            _, _, path = uri[5:].partition("/")
+            return path.strip("/")
         return uri.strip("/")
 
     def move_to_archive(self, source_uri: str) -> str:
         source_key = self.key_from_uri(source_uri)
         archive_key = self.key_from_uri(self.archive_uri(source_uri))
         if source_key == archive_key:
-            return self.uri_for_key(archive_key)
+            return f"s3://{self.archive_bucket}/{archive_key}"
         client = self._client()
-        client.copy_object(Bucket=self.bucket, CopySource={"Bucket": self.bucket, "Key": source_key}, Key=archive_key)
+        extra_args = {}
+        if self.kms_key_id:
+            extra_args["ServerSideEncryption"] = "aws:kms"
+            extra_args["SSEKMSKeyId"] = self.kms_key_id
+        elif self.server_side_encryption:
+            extra_args["ServerSideEncryption"] = self.server_side_encryption
+        client.copy_object(Bucket=self.archive_bucket, CopySource={"Bucket": self.bucket, "Key": source_key}, Key=archive_key, **extra_args)
         client.delete_object(Bucket=self.bucket, Key=source_key)
-        return self.uri_for_key(archive_key)
+        return f"s3://{self.archive_bucket}/{archive_key}"
 
 
 class EvidenceStorage:

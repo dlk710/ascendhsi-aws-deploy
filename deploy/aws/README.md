@@ -110,3 +110,4 @@ curl -sS https://dq5ab404dg57q.cloudfront.net/ready
 - The React portal shell uses non-blocking hydration after login; keep this behavior when changing portal bootstrapping so perceived login performance stays fast.
 - The React API client supports relative `/api/*` calls for local Vite proxy and CloudFront path routing; do not rebuild absolute localhost URLs into deployed bundles.
 - The referral-program release adds `referral_settings` and `member_referrals` tables plus member/leader APIs, so deploy backend changes before expecting the cloud frontend referral screens to save data.
+- AWS backend tasks use runtime path overrides for `/tmp/ascend`, S3 bucket aliases for evidence storage, and a 120-second ECS health-check grace period during rollouts.

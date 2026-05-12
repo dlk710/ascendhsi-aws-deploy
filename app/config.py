@@ -30,9 +30,15 @@ def _env_list(name: str, fallback: list[str]) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _configured_path(env_name: str, configured: str) -> Path:
+    raw_path = os.environ.get(env_name, "").strip() or configured
+    path = Path(raw_path).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
 def load_app_config() -> AppConfig:
     raw = load_json("config/app.json")
-    database_path = ROOT / raw["database_path"]
+    database_path = _configured_path("ASCEND_DATABASE_PATH", raw["database_path"])
     legacy_database_paths = [path for path in (ROOT / "data/db").glob("*.sqlite") if path != database_path]
     if not database_path.exists() and legacy_database_paths:
         database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -40,8 +46,8 @@ def load_app_config() -> AppConfig:
     return AppConfig(
         app_name=raw["app_name"],
         database_path=database_path,
-        upload_root=ROOT / raw["upload_root"],
-        drive_mirror_root=ROOT / raw["drive_mirror_root"],
+        upload_root=_configured_path("ASCEND_UPLOAD_ROOT", raw["upload_root"]),
+        drive_mirror_root=_configured_path("ASCEND_MIRROR_ROOT", raw["drive_mirror_root"]),
         default_client=raw["default_client"],
     )
 

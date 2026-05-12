@@ -92,7 +92,8 @@ jobs:
           aws ecs update-service \
             --cluster "${ECS_CLUSTER}" \
             --service "${ECS_SERVICE}" \
-            --task-definition "${NEXT_TASK_DEFINITION}"
+            --task-definition "${NEXT_TASK_DEFINITION}" \
+            --health-check-grace-period-seconds 120
           aws ecs wait services-stable \
             --cluster "${ECS_CLUSTER}" \
             --services "${ECS_SERVICE}"
@@ -102,25 +103,22 @@ jobs:
         run: |
           set +euo pipefail
           echo "Recent ECS service events"
-          aws ecs describe-services \
+          SERVICE_JSON="$(aws ecs describe-services \
             --cluster "${ECS_CLUSTER}" \
-            --services "${ECS_SERVICE}" \
-            --query 'services[0].events[0:10].[createdAt,message]' \
-            --output table
+            --services "${ECS_SERVICE}")"
+          printf '%s' "${SERVICE_JSON}" | jq -r '.services[0].events[0:10][] | [.createdAt, .message] | @tsv'
           echo "Current service deployments"
-          aws ecs describe-services \
-            --cluster "${ECS_CLUSTER}" \
-            --services "${ECS_SERVICE}" \
-            --query 'services[0].deployments[*].{status:status,taskDefinition:taskDefinition,desired:desiredCount,running:runningCount,pending:pendingCount,failed:failedTasks,rollout:rolloutState,reason:rolloutStateReason}' \
-            --output table
-          echo "Recent tasks"
-          TASK_ARNS="$(aws ecs list-tasks --cluster "${ECS_CLUSTER}" --service-name "${ECS_SERVICE}" --desired-status STOPPED --query 'taskArns[0:5]' --output text)"
-          if [ -n "${TASK_ARNS}" ] && [ "${TASK_ARNS}" != "None" ]; then
+          printf '%s' "${SERVICE_JSON}" | jq -r '.services[0].deployments[] | [.status, .taskDefinition, .desiredCount, .runningCount, .pendingCount, .failedTasks, .rolloutState, .rolloutStateReason] | @tsv'
+          echo "Recent stopped or drained tasks from ECS service events"
+          TASK_IDS="$(printf '%s' "${SERVICE_JSON}" | jq -r '.services[0].events[].message' | sed -nE 's/.*task ([0-9a-f]+).*/\1/p' | head -5 | tr '\n' ' ')"
+          if [ -n "${TASK_IDS}" ]; then
             aws ecs describe-tasks \
               --cluster "${ECS_CLUSTER}" \
-              --tasks ${TASK_ARNS} \
+              --tasks ${TASK_IDS} \
               --query 'tasks[*].{taskArn:taskArn,lastStatus:lastStatus,stoppedReason:stoppedReason,containers:containers[*].{name:name,lastStatus:lastStatus,exitCode:exitCode,reason:reason}}' \
               --output json
+          else
+            echo "No task identifiers were present in recent service events."
           fi
 
       - name: Smoke test

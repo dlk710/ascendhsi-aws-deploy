@@ -151,6 +151,7 @@ This is cheaper and simpler for historical analysis, but it is not real-time ale
 - run on ECS Fargate behind an ALB
 - expose `/health` and `/ready`
 - pass config through environment variables and Secrets Manager
+- keep a 120-second ECS health-check grace period so new tasks can start cleanly before ALB replacement decisions are made
 
 ### Data
 
@@ -207,6 +208,7 @@ The May 12, 2026 referral release should also validate:
 - `ASCEND_CORS_ORIGINS`
 - `ASCEND_STORAGE_BUCKET`
 - `ASCEND_ARCHIVE_BUCKET`
+- `ASCEND_EVIDENCE_S3_BUCKET` and `ASCEND_EVIDENCE_S3_ARCHIVE_BUCKET` are also supported as forward-compatible aliases for the same evidence storage flow.
 - `AWS_REGION`
 - `ASCEND_STORAGE_PUBLIC_BASE_URL`
 - `ASCEND_S3_SERVER_SIDE_ENCRYPTION`
