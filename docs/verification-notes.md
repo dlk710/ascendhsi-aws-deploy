@@ -31,6 +31,7 @@ The backend now exposes a lightweight `/ready` endpoint in the shared product co
 
 - The AWS backend deployment workflow now prints recent ECS service events and stopped-task details if the service does not stabilize.
 - ECS service updates now set `health-check-grace-period-seconds` to `120`; Terraform mirrors the same setting.
+- The AWS backend image requirements include `reportlab`, which is required at FastAPI import time for Critical Role and Original Contribution PDF export routes.
 - Local runtime data under `data/` remains intentionally uncommitted.
 
 ## Verification Run: 2026-05-12

@@ -116,10 +116,11 @@ jobs:
               --cluster "${ECS_CLUSTER}" \
               --tasks ${TASK_IDS} \
               --query 'tasks[*].{taskArn:taskArn,lastStatus:lastStatus,stoppedReason:stoppedReason,containers:containers[*].{name:name,lastStatus:lastStatus,exitCode:exitCode,reason:reason}}' \
-              --output json
+              --output json || true
           else
             echo "No task identifiers were present in recent service events."
           fi
+          exit 0
 
       - name: Smoke test
         run: |
